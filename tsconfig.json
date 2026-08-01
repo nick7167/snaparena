@@ -11,6 +11,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // scripts/ are executed directly by Node's native TypeScript stripping
+    // (`node scripts/ingest.ts`), which requires explicit .ts import specifiers.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [

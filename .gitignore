@@ -32,6 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the example carries no secrets and must be committed, or nobody can
+# work out what the app needs to run.
+!.env.local.example
+
+# Ingested track data: large, regenerable via `npm run ingest`, and derived from
+# a third-party catalogue rather than authored here.
+/data/
 
 # vercel
 .vercel
