@@ -10,6 +10,8 @@ export const matchMode = v.union(
   v.literal("ranked"),
   v.literal("room"),
   v.literal("daily"),
+  /** Same format as ranked, against a bot. Awards XP and badges but never rating. */
+  v.literal("practice"),
 );
 
 export const matchStatus = v.union(
@@ -31,15 +33,43 @@ export const matchPhase = v.union(
   v.literal("guessing"),
   v.literal("reveal"),
   v.literal("standings"),
-  v.literal("set_break"),
+  v.literal("milestone"),
   v.literal("match_end"),
 );
 
-/** One player's line in a completed set. */
-const setStanding = v.object({
+/** Damage dealt to one player by a round. */
+const roundDamageEntry = v.object({
   userId: v.id("users"),
-  points: v.number(),
-  totalElapsedMs: v.number(),
+  damage: v.number(),
+  hpAfter: v.number(),
+});
+
+/**
+ * One closed round.
+ *
+ * Stored rather than recomputed from guesses so the results timeline can never
+ * disagree with the health that was actually applied — the multiplier, the tie
+ * rules and the score curve could all be retuned later, and a recomputed history
+ * would silently rewrite past matches.
+ */
+const roundLogEntry = v.object({
+  roundIndex: v.number(),
+  trackId: v.id("tracks"),
+  /** "tier" | "time" | "song" — why the round went the way it did. */
+  outcome: v.string(),
+  winnerId: v.optional(v.id("users")),
+  /** Present only when the round was settled on reaction time. */
+  timeGapMs: v.optional(v.number()),
+  multiplier: v.number(),
+  damage: v.array(roundDamageEntry),
+  results: v.array(
+    v.object({
+      userId: v.id("users"),
+      points: v.number(),
+      elapsedMs: v.optional(v.number()),
+      solved: v.boolean(),
+    }),
+  ),
 });
 
 export default defineSchema({
@@ -60,10 +90,51 @@ export default defineSchema({
     /** Career counters, kept here so badge evaluation is a single read. */
     rankedWins: v.optional(v.number()),
     snapGuesses: v.optional(v.number()),
+
+    // --- profile ------------------------------------------------------------
+    /** Set once onboarding completes; its absence is what triggers the modal. */
+    onboardedAt: v.optional(v.number()),
+    bio: v.optional(v.string()),
+    /** Hidden pending review after a report. */
+    bioHidden: v.optional(v.boolean()),
+    preferredCategoryIds: v.optional(v.array(v.id("categories"))),
+
+    // --- bots ---------------------------------------------------------------
+    /**
+     * Bots are ordinary user rows so every existing query, join and match flow
+     * works unchanged — there is no parallel identity system. They are excluded
+     * from the global leaderboard and badged everywhere they appear.
+     */
+    isBot: v.optional(v.boolean()),
+    botPersonaId: v.optional(v.string()),
+
+    // --- guests -------------------------------------------------------------
+    /**
+     * Anonymous daily players. Same reasoning as bots: an ordinary user row means
+     * every existing match, guess and score path works unchanged rather than needing
+     * a parallel identity system.
+     *
+     * A guest is created by `daily.start` from a client-held token, holds
+     * `clerkId: "guest:<token>"`, and may only ever play the daily. They are excluded
+     * from both leaderboards, never enter matchmaking, and earn no rating, XP or
+     * badges. Signing in migrates their run and retires the row.
+     */
+    isGuest: v.optional(v.boolean()),
+    /** Set once a guest's run has been claimed by a real account. */
+    guestClaimedAt: v.optional(v.number()),
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_handle", ["handle"])
     .index("by_elo", ["elo"]),
+
+  /** Bio reports, for manual review. No automated takedown. */
+  reports: defineTable({
+    reportedUserId: v.id("users"),
+    reporterUserId: v.id("users"),
+    reason: v.string(),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  }).index("by_reported", ["reportedUserId"]),
 
   /** Awarded badges. One row per player per badge; `by_user_badge` enforces uniqueness. */
   userBadges: defineTable({
@@ -136,6 +207,13 @@ export default defineSchema({
     vetoPoolIds: v.optional(v.array(v.id("categories"))),
     /** Wall-clock after which the veto phase auto-closes with whatever was banned. */
     vetoDeadline: v.optional(v.number()),
+    /**
+     * Ban order for the turn-based draft, lower-rated player first. Bans alternate
+     * through this list, so index N is whose turn it is.
+     */
+    banOrder: v.optional(v.array(v.id("users"))),
+    /** How many bans have been placed; indexes into banOrder. */
+    banTurn: v.optional(v.number()),
     currentRound: v.number(),
     /** Server wall-clock at which the current round was dispatched. */
     roundStartedAt: v.optional(v.number()),
@@ -145,19 +223,17 @@ export default defineSchema({
     phase: v.optional(matchPhase),
     /** Wall-clock the current phase ends at; drives every countdown ring in the UI. */
     phaseEndsAt: v.optional(v.number()),
-    /** Zero-based set index. Daily runs stay on set 0 throughout. */
-    currentSet: v.optional(v.number()),
-    /** Closed sets, in order. Drives the set-break podium and match resolution. */
-    setResults: v.optional(
-      v.array(
-        v.object({
-          setIndex: v.number(),
-          winnerId: v.optional(v.id("users")),
-          decidedOnTime: v.boolean(),
-          standings: v.array(setStanding),
-        }),
-      ),
-    ),
+    /**
+     * Every closed round, in order. The standings beat reads the last entry, the
+     * results timeline reads them all — one source of truth rather than a separate
+     * "last round" field that could drift.
+     */
+    roundLog: v.optional(v.array(roundLogEntry)),
+    /**
+     * DEPRECATED: superseded by roundLog. Kept on the validator only so matches
+     * created before the change still load; removed once they age out.
+     */
+    lastRoundDamage: v.optional(v.array(roundDamageEntry)),
     /** True once the match has fallen through to a single sudden-death song. */
     suddenDeath: v.optional(v.boolean()),
     roomId: v.optional(v.id("rooms")),
@@ -179,8 +255,23 @@ export default defineSchema({
     ratingDelta: v.optional(v.number()),
     /** This player's veto bans. Undefined means they have not banned yet. */
     bannedCategoryIds: v.optional(v.array(v.id("categories"))),
-    /** Sets taken. Ranked ends when this reaches SETS_TO_WIN. */
-    setsWon: v.optional(v.number()),
+
+    // --- health duel --------------------------------------------------------
+    /** Remaining health. Reaching zero eliminates the player. */
+    hp: v.optional(v.number()),
+    /** Low-water mark across the match, for the comeback badge. */
+    lowestHp: v.optional(v.number()),
+    /** Round at which HP hit zero; still null while alive. */
+    eliminatedAtRound: v.optional(v.number()),
+    /**
+     * Highest round index this client has fully buffered.
+     *
+     * The guessing clock does not start until every player has reported the current
+     * round, which is what stops a slow connection producing a truncated song.
+     */
+    readyForRound: v.optional(v.number()),
+    /** Set when the player passes; the round can end once everyone is done. */
+    passedRound: v.optional(v.number()),
     /** XP earned from this match, kept for the results screen breakdown. */
     xpEarned: v.optional(v.number()),
     /** Badge ids newly unlocked by this match, for the post-match celebration. */
@@ -236,6 +327,11 @@ export default defineSchema({
     perRoundMs: v.array(v.number()),
     perRoundPoints: v.array(v.number()),
     completedAt: v.number(),
+    /**
+     * Denormalised from the user row so the board can exclude guests without a
+     * lookup per run. Cleared when a real account claims the run.
+     */
+    isGuest: v.optional(v.boolean()),
   })
     .index("by_user_date", ["userId", "date"])
     .index("by_date_points", ["date", "totalPoints"]),

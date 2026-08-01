@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "ingest": "node scripts/ingest.ts",
     "ingest:smoke": "node scripts/ingest.ts --artists 2",
-    "import-tracks": "node --env-file=.env.local scripts/import-tracks.ts"
+    "import-tracks": "node --env-file=.env.local scripts/import-tracks.ts",
+    "seed-bots": "node --env-file=.env.local scripts/seed-bots.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { SONGS_PER_SET, STARTING_ELO } from "../src/engine/config";
+import { DUEL_STARTING_HP, ROOM_STARTING_HP, STARTING_ELO } from "../src/engine/config";
 import {
   applyCategoryResults,
   applyMatchResult,
@@ -117,6 +117,9 @@ async function applyProgression(
 ): Promise<void> {
   const user = await ctx.db.get(player.userId);
   if (!user) return;
+  // Bots earn nothing. Their rating is a fixed persona property and levelling them
+  // up would put synthetic accounts on progression leaderboards.
+  if (user.isBot) return;
 
   const mine = guesses.filter(
     (guess) => guess.userId === player.userId && guess.correct,
@@ -126,12 +129,12 @@ async function applyProgression(
   ).length;
 
   const won = match.winnerId === player.userId;
-  const setsWon = player.setsWon ?? 0;
+  const roundsWon = countRoundsWon(match, player.userId, guesses);
 
   const xpAward = awardMatchXp({
     mode: match.mode,
     won,
-    setsWon,
+    roundsWon,
     correctGuesses: mine.length,
     snapGuesses,
   });
@@ -148,33 +151,48 @@ async function applyProgression(
   const badges = await awardBadges(ctx, match, player, user, {
     won,
     totalSnapGuesses: totalSnaps,
-    hadPerfectSet: hasPerfectSet(match, player.userId),
-    wonAfterLosingFirstSet: lostFirstSet(match, player.userId) && won,
+    // Finishing on full health means the opponent never once out-scored them.
+    tookNoDamage: (player.hp ?? 0) >= startingHpFor(match.mode),
+    wonFromCritical:
+      (player.lowestHp ?? player.hp ?? 0) < startingHpFor(match.mode) * 0.25,
     wonSuddenDeath: won && match.suddenDeath === true,
   });
 
   await ctx.db.patch(player._id, { xpEarned: xpAward.total, badgesEarned: badges });
 }
 
-/** True if the player swept every song of any set they won. */
-function hasPerfectSet(match: Doc<"matches">, userId: Id<"users">): boolean {
-  return (match.setResults ?? []).some((set) => {
-    if (set.winnerId !== userId) return false;
-    const mine = set.standings.find((entry) => entry.userId === userId);
-    const others = set.standings.filter((entry) => entry.userId !== userId);
-    // A clean sweep: scored on every song, and nobody else scored at all.
-    return (
-      mine !== undefined &&
-      mine.points > 0 &&
-      others.every((entry) => entry.points === 0) &&
-      set.standings.length > 1
-    );
-  });
+/** Starting health for the mode, so badge thresholds compare against the right baseline. */
+function startingHpFor(mode: Doc<"matches">["mode"]): number {
+  return mode === "room" ? ROOM_STARTING_HP : DUEL_STARTING_HP;
 }
 
-function lostFirstSet(match: Doc<"matches">, userId: Id<"users">): boolean {
-  const first = (match.setResults ?? [])[0];
-  return first !== undefined && first.winnerId !== undefined && first.winnerId !== userId;
+/**
+ * Rounds in which this player out-scored every opponent.
+ *
+ * Replaces the old set count: with no sets, a round win is the natural unit of
+ * progress to pay XP on.
+ */
+function countRoundsWon(
+  match: Doc<"matches">,
+  userId: Id<"users">,
+  guesses: Doc<"guesses">[],
+): number {
+  let won = 0;
+
+  for (let round = 0; round < match.trackIds.length; round++) {
+    const pointsFor = (id: Id<"users">) =>
+      guesses
+        .filter((g) => g.roundIndex === round && g.userId === id && g.correct)
+        .reduce((sum, g) => sum + g.points, 0);
+
+    const mine = pointsFor(userId);
+    if (mine === 0) continue;
+
+    const others = match.playerIds.filter((id) => id !== userId).map(pointsFor);
+    if (others.every((points) => mine > points)) won++;
+  }
+
+  return won;
 }
 
 /** Evaluates badges and inserts only the ones the player does not already hold. */
@@ -186,8 +204,8 @@ async function awardBadges(
   facts: {
     won: boolean;
     totalSnapGuesses: number;
-    hadPerfectSet: boolean;
-    wonAfterLosingFirstSet: boolean;
+    tookNoDamage: boolean;
+    wonFromCritical: boolean;
     wonSuddenDeath: boolean;
   },
 ): Promise<string[]> {
@@ -200,8 +218,8 @@ async function awardBadges(
     totalRankedWins: user.rankedWins ?? 0,
     totalRankedMatches: user.gamesPlayed,
     totalSnapGuesses: facts.totalSnapGuesses,
-    hadPerfectSet: facts.hadPerfectSet,
-    wonAfterLosingFirstSet: facts.wonAfterLosingFirstSet,
+    tookNoDamage: facts.tookNoDamage,
+    wonFromCritical: facts.wonFromCritical,
     wonSuddenDeath: facts.wonSuddenDeath,
     // Compare against the rating the opponent held going in, not after this match.
     opponentEloAdvantage: (player.ratingBefore ?? STARTING_ELO) < (opponentDoc?.elo ?? 0)
@@ -330,5 +348,4 @@ async function persistCategoryRatings(
   }
 }
 
-/** Exported for tests and for the set-break UI. */
-export const songsPerSet = SONGS_PER_SET;
+

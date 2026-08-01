@@ -9,10 +9,51 @@ import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { RoundRunner } from "@/game/RoundRunner";
-import { VETO_BANS_PER_PLAYER } from "@/engine/config";
+import { DUEL_STARTING_HP, VETO_BANS_PER_PLAYER, VETO_PHASE_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
+import { Avatar, BotBadge, PhaseTimer } from "@/game/ui";
+import { Button, ButtonLink } from "@/ui/Button";
+import { Card } from "@/ui/Surface";
 
+/**
+ * Ranked is sign-in only, and always will be — a ladder needs a persistent identity to
+ * mean anything. Only the daily is open to anonymous players.
+ */
 export default function RankedPage() {
+  return (
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-10">
+      <SignedOut>
+        <div className="flex flex-col items-start gap-4 px-4">
+          <h1 className="font-display text-display-1 font-extrabold">Ranked 1v1</h1>
+          <p className="text-body-lg text-secondary">
+            Sign in to play ranked and earn a rating.
+          </p>
+          <SignInButton mode="modal">
+            <Button size="lg">Sign in</Button>
+          </SignInButton>
+          <p className="text-body-sm text-muted">
+            Want to play right now without an account? Today&rsquo;s challenge is open
+            to everyone.
+          </p>
+          <ButtonLink variant="secondary" href="/daily">
+            Play today&rsquo;s challenge
+          </ButtonLink>
+        </div>
+      </SignedOut>
+
+      <SignedIn>
+        <RankedHome />
+      </SignedIn>
+    </div>
+  );
+}
+
+/**
+ * Split out from the page so `activeMatch` is only subscribed inside the SignedIn
+ * gate. Called above it, the query threw "Not signed in" for every signed-out
+ * visitor — harmless to the render but a real error in the console on every load.
+ */
+function RankedHome() {
   const [joined, setJoined] = useState<Id<"matches"> | null>(null);
   // A reload mid-match must drop you back in, not lose the match. Derived rather
   // than copied into state via an effect — `activeMatch` only returns live
@@ -21,28 +62,10 @@ export default function RankedPage() {
   const matchId = joined ?? existing ?? null;
   const setMatchId = setJoined;
 
-  return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-10">
-      <SignedOut>
-        <div className="px-4">
-          <h1 className="text-3xl font-black">Ranked 1v1</h1>
-          <p className="mt-2 text-white/60">Sign in to play ranked and earn a rating.</p>
-          <SignInButton mode="modal">
-            <button className="mt-4 rounded-lg bg-white px-5 py-3 font-medium text-black">
-              Sign in
-            </button>
-          </SignInButton>
-        </div>
-      </SignedOut>
-
-      <SignedIn>
-        {matchId ? (
-          <RankedMatch matchId={matchId} onLeave={() => setMatchId(null)} />
-        ) : (
-          <Queue onMatched={setMatchId} />
-        )}
-      </SignedIn>
-    </div>
+  return matchId ? (
+    <RankedMatch matchId={matchId} onLeave={() => setMatchId(null)} />
+  ) : (
+    <Queue onMatched={setMatchId} />
   );
 }
 
@@ -71,7 +94,7 @@ function Queue({ onMatched }: { onMatched: (id: Id<"matches">) => void }) {
     return () => clearInterval(id);
   }, [status?.inQueue, tryMatchmake, onMatched]);
 
-  if (!status) return <p className="px-4 text-white/50">Loading…</p>;
+  if (!status) return <p className="text-body text-muted px-4">Loading…</p>;
 
   if (status.inQueue) {
     const waitingSeconds = Math.floor(status.waitingMs / 1000);
@@ -79,57 +102,104 @@ function Queue({ onMatched }: { onMatched: (id: Id<"matches">) => void }) {
 
     return (
       <div className="flex flex-col gap-4 px-4">
-        <h1 className="text-3xl font-black">Searching…</h1>
-        <p className="tabular-nums text-white/60">
+        <h1 className="font-display text-display-1 font-extrabold">Searching…</h1>
+        <p className="text-body text-secondary tabular-nums">
           {waitingSeconds}s — widening the rating range
         </p>
 
-        <div className="h-1 overflow-hidden rounded-full bg-white/10">
+        <div className="bg-ink-inset h-1 overflow-hidden rounded-full">
           <motion.div
-            className="h-full w-1/3 rounded-full bg-gradient-to-r from-cyan-400 to-fuchsia-500"
+            className="bg-gold h-full w-1/3 rounded-full"
             animate={{ x: ["-100%", "300%"] }}
             transition={{ repeat: Infinity, duration: 1.4, ease: "easeInOut" }}
           />
         </div>
 
         {alone && waitingSeconds > 15 && (
-          <div className="rounded-lg border border-white/10 p-4 text-sm text-white/60">
-            <p className="mb-2">
-              Nobody else is queued right now. The ladder is new — it fills up at peak hours.
+          <Card className="text-body text-secondary flex flex-col items-start gap-3 p-4">
+            <p>
+              Nobody else is queued right now. The ladder is new — it fills up at peak
+              hours.
             </p>
-            <Link href="/daily" className="text-cyan-400 hover:underline">
-              Play today&rsquo;s challenge instead →
+            <Link href="/daily" className="text-paper rounded-xs font-semibold underline">
+              Play today&rsquo;s challenge instead
             </Link>
-          </div>
+          </Card>
         )}
 
-        <button
-          onClick={() => void dequeue({})}
-          className="w-fit rounded-lg border border-white/20 px-4 py-2 hover:bg-white/10"
-        >
+        <Button variant="secondary" className="w-fit" onClick={() => void dequeue({})}>
           Cancel
-        </button>
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-4 px-4">
-      <h1 className="text-3xl font-black">Ranked 1v1</h1>
-      <p className="text-white/60">
-        Best of three sets. Both players ban {VETO_BANS_PER_PLAYER} categories, then race
-        through three songs a set. First to two sets takes the match.
+      <h1 className="font-display text-display-1 font-extrabold">Ranked 1v1</h1>
+      <p className="text-body text-secondary">
+        Both players start on {DUEL_STARTING_HP} HP. Whoever is slower on a song loses
+        health equal to the gap — and the duel runs until someone hits zero. You each
+        ban {VETO_BANS_PER_PLAYER} categories first, taking turns.
       </p>
-      <motion.button
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
-        onClick={() => void enqueue({})}
-        className="w-fit rounded-lg bg-gradient-to-r from-cyan-400 to-fuchsia-500 px-6 py-3
-                   font-semibold text-black"
-      >
+      <Button size="lg" className="w-fit" onClick={() => void enqueue({})}>
         Find a match
-      </motion.button>
+      </Button>
+
+      <PracticeCard onStarted={onMatched} />
     </div>
+  );
+}
+
+/**
+ * Practice against a bot.
+ *
+ * Kept strictly separate from ranked so nobody is ever surprised by a synthetic
+ * opponent in a rated match — the trade is stated up front, and you choose it.
+ */
+function PracticeCard({ onStarted }: { onStarted: (id: Id<"matches">) => void }) {
+  const startPractice = useMutation(api.bots.startPractice);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  return (
+    <Card className="mt-4 flex flex-col items-start gap-3 p-5">
+      <div className="flex items-center gap-2">
+        <h2 className="text-body-lg font-semibold">Practice</h2>
+        <BotBadge />
+      </div>
+      <p className="text-body text-secondary">
+        No queue — a bot near your rating, right now. Same ban draft and health duel as
+        ranked. <span className="text-paper font-medium">XP and badges count; rating does not.</span>
+      </p>
+      <Button
+        variant="secondary"
+        loading={starting}
+        onClick={async () => {
+          setStarting(true);
+          setError(null);
+          const result = await startPractice({});
+          if (result.status === "started" && result.matchId) {
+            play("whoosh");
+            onStarted(result.matchId);
+          } else {
+            setError(
+              result.status === "no-bots-seeded"
+                ? "No bots seeded yet — run `npm run seed-bots`."
+                : "Not enough tracks in the catalogue.",
+            );
+            setStarting(false);
+          }
+        }}
+      >
+        Play a bot
+      </Button>
+      {error && (
+        <p className="text-body-sm text-signal-text" role="alert">
+          {error}
+        </p>
+      )}
+    </Card>
   );
 }
 
@@ -148,63 +218,96 @@ function RankedMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeave: ()
     return () => clearInterval(id);
   }, [matchId, heartbeat, claimForfeit]);
 
-  if (!match) return <p className="px-4 text-white/50">Loading…</p>;
+  if (!match) return <p className="text-body text-muted px-4">Loading…</p>;
   if (match.phase === "veto") return <VetoPhase matchId={matchId} />;
 
   return <RoundRunner matchId={matchId} onPlayAgain={onLeave} />;
 }
 
-/** Symmetric ban phase — both players ban the same number, so ranked stays fair. */
+/**
+ * Turn-based ban draft.
+ *
+ * Alternating rather than simultaneous, so each ban is a read on your opponent.
+ * The lower-rated player bans first.
+ */
 function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
-  const categories = useQuery(api.tracks.categories, {});
-  const submitBans = useMutation(api.ranked.submitBans);
+  const draft = useQuery(api.ranked.draftState, { matchId });
+  const submitBan = useMutation(api.ranked.submitBan);
   const expireVeto = useMutation(api.ranked.expireVeto);
+  const [error, setError] = useState<string | null>(null);
+  const [placing, setPlacing] = useState(false);
 
-  const [selected, setSelected] = useState<Id<"categories">[]>([]);
-  const [submitted, setSubmitted] = useState(false);
-
-  // Someone has to close the phase if the opponent idles; the client drives it.
+  // Someone has to close the phase if a player idles; the client drives it.
   useEffect(() => {
     const id = setInterval(() => void expireVeto({ matchId }), 2000);
     return () => clearInterval(id);
   }, [matchId, expireVeto]);
 
-  function toggle(id: Id<"categories">) {
-    setSelected((current) =>
-      current.includes(id)
-        ? current.filter((value) => value !== id)
-        : current.length < VETO_BANS_PER_PLAYER
-          ? [...current, id]
-          : current,
-    );
-  }
+  if (!draft) return <p className="text-body text-muted px-4">Loading draft…</p>;
 
-  if (!categories) return <p className="px-4 text-white/50">Loading…</p>;
+  const opponentName = draft.opponent?.displayName ?? "Opponent";
+
+  async function ban(categoryId: Id<"categories">) {
+    setPlacing(true);
+    setError(null);
+    try {
+      // Awaited BEFORE any optimistic UI change. Flipping state first is what left
+      // the old build stuck on "Waiting for opponent…" with the error invisible.
+      await submitBan({ matchId, categoryId });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not place that ban");
+    } finally {
+      setPlacing(false);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4 px-4">
-      <h1 className="text-2xl font-black">Ban {VETO_BANS_PER_PLAYER} categories</h1>
-      <p className="text-white/60">
-        Your opponent bans too. Whatever survives is what you&rsquo;ll be playing.
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {!draft.isMyTurn && draft.opponent && (
+            <Avatar url={draft.opponent.avatarUrl} name={opponentName} className="h-8 w-8" />
+          )}
+          <h1 className="font-display text-display-2 truncate font-extrabold">
+            {draft.isMyTurn ? "Ban a category" : `${opponentName} is banning…`}
+          </h1>
+          {!draft.isMyTurn && draft.opponent?.isBot && <BotBadge />}
+        </div>
+        <span className="font-display text-body text-secondary shrink-0 font-bold tabular-nums">
+          {draft.bansPlaced}/{draft.totalBans}
+        </span>
+      </div>
+
+      {/* The turn clock, so "their turn ends automatically" is something you can
+          watch rather than something we promise. */}
+      <PhaseTimer endsAt={draft.deadline} durationMs={VETO_PHASE_MS} />
+
+      <p className="text-body text-secondary">
+        {draft.isMyTurn
+          ? "Take away something they are good at. Whatever survives is what you both play."
+          : "Watch what they take — you ban next."}
       </p>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {categories.map((category) => {
-          const banned = selected.includes(category._id);
+        {draft.pool.map((category) => {
+          const banned = category.banned;
           return (
             <motion.button
-              key={category._id}
-              whileTap={{ scale: 0.95 }}
+              key={category.id}
+              whileTap={draft.isMyTurn && !banned ? { scale: 0.95 } : undefined}
               onClick={() => {
-                play(banned ? "tick" : "wrong");
-                toggle(category._id);
+                play("wrong");
+                void ban(category.id);
               }}
-              disabled={submitted}
-              className={`rounded-lg border px-3 py-4 text-sm transition ${
-                banned
-                  ? "border-rose-500 bg-rose-500/20 text-rose-200 line-through"
-                  : "border-white/15 hover:bg-white/10"
-              } disabled:opacity-50`}
+              disabled={!draft.isMyTurn || banned || placing}
+              className={`text-body min-h-16 rounded-md border px-3 py-4 font-medium
+                          transition-colors disabled:cursor-not-allowed ${
+                            banned
+                              ? "border-signal bg-ink-700 text-muted line-through"
+                              : draft.isMyTurn
+                                ? "border-line-strong bg-ink-700 hover:bg-ink-600 text-paper"
+                                : "border-line text-muted"
+                          }`}
             >
               {category.name}
             </motion.button>
@@ -212,17 +315,23 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
         })}
       </div>
 
-      <button
-        disabled={selected.length !== VETO_BANS_PER_PLAYER || submitted}
-        onClick={async () => {
-          setSubmitted(true);
-          await submitBans({ matchId, categoryIds: selected });
-        }}
-        className="w-fit rounded-lg bg-gradient-to-r from-cyan-400 to-fuchsia-500 px-6 py-3
-                   font-semibold text-black disabled:opacity-40"
-      >
-        {submitted ? "Waiting for opponent…" : "Confirm bans"}
-      </button>
+      {error && (
+        <p className="text-body-sm text-signal-text" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!draft.isMyTurn && (
+        <p className="text-body-sm text-muted">
+          Their turn ends automatically if they take too long.
+        </p>
+      )}
+
+      {draft.opponent?.isBot && (
+        <p className="text-body-sm text-muted">
+          Bots draft too — they take away the categories they are worst at.
+        </p>
+      )}
     </div>
   );
 }

@@ -38,19 +38,91 @@ export interface ScoreTier {
 
 export type ScoreTierId = ScoreTier["id"];
 
-/** Songs in one set. */
-export const SONGS_PER_SET = 3;
+/**
+ * The modes a match can run in.
+ *
+ * `practice` uses the ranked format against a bot: it awards XP and badges but
+ * never rating, so the ladder stays a measure of play against humans.
+ */
+export type GameMode = "ranked" | "room" | "daily" | "practice";
 
-/** Sets a ranked player must win to take the match. */
-export const SETS_TO_WIN = 2;
+// ---------------------------------------------------------------------------
+// Health duel
+// ---------------------------------------------------------------------------
 
-/** Hard ceiling on sets, so a 1-1 match resolves in the third rather than running on. */
-export const MAX_SETS = 3;
+/**
+ * Starting health for a ranked or practice duel.
+ *
+ * Sized against an average round gap of ~45 points: 500 HP lands a typical duel at
+ * 9-12 songs, roughly 8-11 minutes. Raise for longer duels, lower for shorter — it
+ * is the single lever on match length.
+ */
+export const DUEL_STARTING_HP = 500;
 
-/** Rooms always play the full three sets — see resolveRoomMatch() for why. */
-export const ROOM_SETS = 3;
+/** Health in a room. Same pool; the median rule is what paces eliminations. */
+export const ROOM_STARTING_HP = 500;
 
-/** The daily challenge stays a flat solo run; sets need an opponent to mean anything. */
+/**
+ * Damage escalation. Every `DAMAGE_RAMP_EVERY` rounds the multiplier gains
+ * `DAMAGE_RAMP_STEP`, applied equally to both players.
+ *
+ * This is what guarantees a duel terminates: two evenly-matched players trade small
+ * gaps early, but by round 7 the same gap does 2.5x the damage.
+ */
+export const DAMAGE_RAMP_EVERY = 2;
+export const DAMAGE_RAMP_STEP = 0.5;
+
+/**
+ * Damage when both players land the same tier.
+ *
+ * Tier scoring only has four buckets, so two players hitting the same one is the
+ * common case rather than the exception. Treating that as a draw dealt no damage and
+ * let duels run the full round cap without anyone being knocked out. The faster
+ * player now wins, and the slower takes damage proportional to how much slower.
+ */
+export const TIE_DAMAGE_PER_SECOND = 10;
+
+/**
+ * Ceiling on tie damage.
+ *
+ * Sits just above the smallest genuine tier win (SOLID→LATE = 15), so winning on
+ * time never hurts more than winning on tier. Tiers stay the dominant signal;
+ * time is the decider, not the driver.
+ */
+export const TIE_DAMAGE_CAP = 30;
+
+/**
+ * Base damage to BOTH players when nobody answers.
+ *
+ * Scaled by the round ramp like every other kind of damage. Holding it flat was tried
+ * first and played badly: late in a duel every real round hits for 2-5x while a dead
+ * round barely moved the bars, so stalling on hard tracks stopped the duel making
+ * progress. A round nobody could get should still cost what the round is worth.
+ */
+export const SONG_WINS_DAMAGE = 15;
+
+/**
+ * Hard ceiling on duel length.
+ *
+ * Tier scoring produces frequent exact ties, and a tied round deals zero damage —
+ * so without a cap two closely-matched players could duel indefinitely. At the cap
+ * the higher HP wins, then total points, then sudden death.
+ */
+export const MAX_DUEL_ROUNDS = 18;
+
+/** Rounds that must be played before surrender unlocks. */
+export const SURRENDER_FROM_ROUND = 2;
+
+/** A longer momentum beat fires every this many rounds. */
+export const MILESTONE_EVERY_ROUNDS = 3;
+
+/**
+ * How long the server will wait for every client to buffer its clip before starting
+ * the round anyway. Without a cap, one broken client could stall a match forever.
+ */
+export const READY_TIMEOUT_MS = 10_000;
+
+/** The daily challenge stays a flat solo run; HP needs an opponent to mean anything. */
 export const DAILY_SONGS = 5;
 
 /**
@@ -73,8 +145,10 @@ export const PHASE_DURATIONS_MS = {
   countdown: 3_000,
   guessing: ROUND_DURATION_MS,
   reveal: 6_000,
+  /** HP bars drain and the damage number flies off. */
   standings: 4_000,
-  set_break: 6_000,
+  /** Longer momentum beat every few rounds; also announces the multiplier stepping up. */
+  milestone: 6_000,
 } as const;
 
 export type MatchPhase = keyof typeof PHASE_DURATIONS_MS | "veto" | "match_end";
@@ -187,13 +261,22 @@ export const RECONNECT_GRACE_MS = 20_000;
  * top has three divisions (III → II → I as you climb), because a visible sub-step
  * gives players progress to feel between full promotions.
  */
+/**
+ * Accents are presentation values, but they are read server-side: convex/matches.ts
+ * resolves a rating through rankForElo and ships `rank.tier.accent` on the scoreboard.
+ * Only the hex strings changed in the overhaul — the shape, the thresholds and the wire
+ * format are untouched.
+ *
+ * Legend is paper-white on purpose. The top of every ladder in this app is the absence
+ * of hue: the top score tier is white too, and nothing else may be.
+ */
 export const RANK_TIERS: readonly RankTier[] = [
-  { id: "bronze", name: "Bronze", minElo: 0, divisions: 3, accent: "#c07a45" },
-  { id: "silver", name: "Silver", minElo: 900, divisions: 3, accent: "#b6c2cf" },
-  { id: "gold", name: "Gold", minElo: 1100, divisions: 3, accent: "#f2c14e" },
-  { id: "platinum", name: "Platinum", minElo: 1300, divisions: 3, accent: "#4fd1c5" },
-  { id: "diamond", name: "Diamond", minElo: 1500, divisions: 3, accent: "#7aa2ff" },
-  { id: "legend", name: "Legend", minElo: 1750, divisions: 1, accent: "#ff5cf0" },
+  { id: "bronze", name: "Bronze", minElo: 0, divisions: 3, accent: "#a9663c" },
+  { id: "silver", name: "Silver", minElo: 900, divisions: 3, accent: "#9fb0c4" },
+  { id: "gold", name: "Gold", minElo: 1100, divisions: 3, accent: "#f0b429" },
+  { id: "platinum", name: "Platinum", minElo: 1300, divisions: 3, accent: "#5fc4b8" },
+  { id: "diamond", name: "Diamond", minElo: 1500, divisions: 3, accent: "#8aacf5" },
+  { id: "legend", name: "Legend", minElo: 1750, divisions: 1, accent: "#f4f1ea" },
 ] as const;
 
 export interface RankTier {
@@ -220,7 +303,8 @@ export const XP_AWARDS = {
   matchComplete: 50,
   rankedWin: 120,
   rankedLoss: 40,
-  setWon: 30,
+  /** A round in which you out-scored every opponent. */
+  roundWon: 18,
   perCorrectGuess: 10,
   /** Bonus on top of perCorrectGuess when the guess lands in the top tier. */
   snapBonus: 15,

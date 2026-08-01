@@ -6,7 +6,7 @@
  * keeps a bad session from feeling wasted.
  */
 
-import { XP_AWARDS, XP_BASE, XP_CURVE_EXPONENT } from "./config";
+import { XP_AWARDS, XP_BASE, XP_CURVE_EXPONENT, type GameMode } from "./config";
 
 /** Total XP required to have reached a given level. Level 1 starts at 0. */
 export function xpForLevel(level: number): number {
@@ -65,9 +65,9 @@ export interface XpAward {
  * disconnect-forfeit rule exists to remove.
  */
 export function awardMatchXp(params: {
-  mode: "ranked" | "room" | "daily";
+  mode: GameMode;
   won: boolean;
-  setsWon: number;
+  roundsWon: number;
   correctGuesses: number;
   snapGuesses: number;
 }): XpAward {
@@ -86,7 +86,7 @@ export function awardMatchXp(params: {
     add(params.won ? "Victory" : "Match played", params.won ? XP_AWARDS.rankedWin : XP_AWARDS.rankedLoss);
   }
 
-  add(`Sets won x${params.setsWon}`, params.setsWon * XP_AWARDS.setWon);
+  add(`Rounds won x${params.roundsWon}`, params.roundsWon * XP_AWARDS.roundWon);
   add(`Correct x${params.correctGuesses}`, params.correctGuesses * XP_AWARDS.perCorrectGuess);
   add(`Snap calls x${params.snapGuesses}`, params.snapGuesses * XP_AWARDS.snapBonus);
 

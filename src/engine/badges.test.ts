@@ -7,8 +7,8 @@ const context = (overrides: Partial<BadgeContext> = {}): BadgeContext => ({
   totalRankedWins: 1,
   totalRankedMatches: 1,
   totalSnapGuesses: 0,
-  hadPerfectSet: false,
-  wonAfterLosingFirstSet: false,
+  tookNoDamage: false,
+  wonFromCritical: false,
   wonSuddenDeath: false,
   opponentEloAdvantage: 0,
   ...overrides,
@@ -63,12 +63,12 @@ describe("evaluateBadges", () => {
     expect(earned).toContain("snap_100");
   });
 
-  it("awards the comeback only when the match was actually won", () => {
+  it("awards the comeback only when the duel was actually won", () => {
     expect(
-      evaluateBadges(context({ wonAfterLosingFirstSet: true, won: true })),
+      evaluateBadges(context({ wonFromCritical: true, won: true })),
     ).toContain("comeback");
     expect(
-      evaluateBadges(context({ wonAfterLosingFirstSet: true, won: false })),
+      evaluateBadges(context({ wonFromCritical: true, won: false })),
     ).not.toContain("comeback");
   });
 
@@ -87,8 +87,15 @@ describe("evaluateBadges", () => {
   });
 
   it("still awards mode-agnostic badges in rooms", () => {
-    expect(evaluateBadges(context({ mode: "room", hadPerfectSet: true }))).toContain(
-      "perfect_set",
+    expect(evaluateBadges(context({ mode: "room", tookNoDamage: true }))).toContain(
+      "flawless",
+    );
+  });
+
+  it("does not award flawless for an undamaged loss", () => {
+    // Surviving untouched but losing on the round cap is not a flawless victory.
+    expect(evaluateBadges(context({ won: false, tookNoDamage: true }))).not.toContain(
+      "flawless",
     );
   });
 
@@ -96,8 +103,8 @@ describe("evaluateBadges", () => {
     const earned = evaluateBadges(
       context({
         totalSnapGuesses: 500,
-        hadPerfectSet: true,
-        wonAfterLosingFirstSet: true,
+        tookNoDamage: true,
+        wonFromCritical: true,
         wonSuddenDeath: true,
         opponentEloAdvantage: 300,
         totalRankedMatches: 200,

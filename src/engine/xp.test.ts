@@ -59,7 +59,7 @@ describe("awardMatchXp", () => {
   const base = {
     mode: "ranked" as const,
     won: true,
-    setsWon: 2,
+    roundsWon: 2,
     correctGuesses: 5,
     snapGuesses: 2,
   };
@@ -72,7 +72,7 @@ describe("awardMatchXp", () => {
 
   it("pays more for a win than a loss", () => {
     const win = awardMatchXp(base);
-    const loss = awardMatchXp({ ...base, won: false, setsWon: 0 });
+    const loss = awardMatchXp({ ...base, won: false, roundsWon: 0 });
     expect(win.total).toBeGreaterThan(loss.total);
   });
 
@@ -82,7 +82,7 @@ describe("awardMatchXp", () => {
     const loss = awardMatchXp({
       mode: "ranked",
       won: false,
-      setsWon: 0,
+      roundsWon: 0,
       correctGuesses: 0,
       snapGuesses: 0,
     });
@@ -104,7 +104,7 @@ describe("awardMatchXp", () => {
     const daily = awardMatchXp({
       mode: "daily",
       won: false,
-      setsWon: 0,
+      roundsWon: 0,
       correctGuesses: 5,
       snapGuesses: 0,
     });
@@ -115,7 +115,7 @@ describe("awardMatchXp", () => {
   });
 
   it("omits zero-value lines from the breakdown", () => {
-    const award = awardMatchXp({ ...base, setsWon: 0, snapGuesses: 0 });
+    const award = awardMatchXp({ ...base, roundsWon: 0, snapGuesses: 0 });
     expect(award.breakdown.every((entry) => entry.amount > 0)).toBe(true);
   });
 });

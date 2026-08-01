@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { AUTOCOMPLETE_MIN_CHARS, MAX_SETS, SONGS_PER_SET } from "../src/engine/config";
+import { AUTOCOMPLETE_MIN_CHARS, MAX_DUEL_ROUNDS } from "../src/engine/config";
 import { normalizeTitle } from "../src/engine/normalize";
 
 /**
@@ -82,7 +82,7 @@ export async function pickTracksForMatch(
     excludeTrackIds?: Id<"tracks">[];
   },
 ): Promise<Id<"tracks">[]> {
-  const count = options.count ?? MAX_SETS * SONGS_PER_SET;
+  const count = options.count ?? MAX_DUEL_ROUNDS;
   const banned = new Set(options.bannedCategoryIds.map(String));
   const excluded = new Set((options.excludeTrackIds ?? []).map(String));
 

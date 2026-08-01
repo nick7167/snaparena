@@ -3,16 +3,19 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireUser } from "./users";
 import { difficultyTierForElo, pickTracksForMatch } from "./tracks";
 import {
+  MAX_DUEL_ROUNDS,
   ROOM_MAX_PLAYERS,
   ROOM_MIN_PLAYERS,
-  ROOM_SETS,
-  SONGS_PER_SET,
+  ROOM_STARTING_HP,
   STARTING_ELO,
 } from "../src/engine/config";
-import { enterPhase } from "./phases";
+import { startCountdown } from "./phases";
 
-/** Rooms always run the full distance — see resolveRoomMatch() for why. */
-const ROOM_TRACK_COUNT = ROOM_SETS * SONGS_PER_SET;
+/**
+ * Rooms run until one player survives, so reserve the worst case rather than a
+ * fixed song count.
+ */
+const ROOM_TRACK_COUNT = MAX_DUEL_ROUNDS;
 
 /** Ambiguity-free alphabet: no O/0, no I/1/L. Room codes get read aloud. */
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -167,8 +170,6 @@ export const start = mutation({
       trackIds,
       bannedCategoryIds: [],
       currentRound: 0,
-      currentSet: 0,
-      setResults: [],
       roomId: room._id,
       createdAt: Date.now(),
     });
@@ -179,6 +180,7 @@ export const start = mutation({
         matchId,
         userId: member._id,
         totalPoints: 0,
+        hp: ROOM_STARTING_HP,
         ratingBefore: member.elo,
         forfeited: false,
         lastSeenAt: Date.now(),
@@ -189,7 +191,7 @@ export const start = mutation({
 
     // Rooms skip the VS slam — an eight-way head-to-head does not read — and go
     // straight into the countdown. The server drives every beat from here.
-    await enterPhase(ctx, matchId, "countdown");
+    await startCountdown(ctx, matchId, 0);
 
     return { matchId };
   },

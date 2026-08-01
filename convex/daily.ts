@@ -1,10 +1,18 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { currentUser, requireUser } from "./users";
+import {
+  GUEST_CLERK_PREFIX,
+  actingUser,
+  currentUser,
+  guestByToken,
+  isValidGuestToken,
+  requireUser,
+} from "./users";
 import { pickTracksForMatch } from "./tracks";
-import { enterPhase } from "./phases";
-import { DAILY_SONGS } from "../src/engine/config";
+import { startCountdown } from "./phases";
+import { DAILY_SONGS, PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
+import type { Doc } from "./_generated/dataModel";
 
 /** UTC date key. The daily challenge rolls over at midnight UTC for everyone. */
 export function todayKey(now: number = Date.now()): string {
@@ -36,10 +44,43 @@ async function ensureChallenge(ctx: MutationCtx, date: string): Promise<Id<"trac
   return trackIds;
 }
 
+/**
+ * Finds or creates the guest row for a token.
+ *
+ * The only place a guest row is ever created, and only as a side effect of actually
+ * starting a run — so a token that never plays leaves nothing behind.
+ *
+ * The handle uses a random suffix rather than `allocateHandle`, which derives from a
+ * display name and walks `guest2 … guest50` on collision; with every guest sharing one
+ * base name that would degrade immediately.
+ */
+async function ensureGuest(ctx: MutationCtx, token: string): Promise<Doc<"users">> {
+  const existing = await guestByToken(ctx, token);
+  if (existing) return existing;
+
+  const id = await ctx.db.insert("users", {
+    clerkId: `${GUEST_CLERK_PREFIX}${token}`,
+    handle: `guest_${token.slice(0, 8)}`,
+    displayName: "Guest",
+    elo: STARTING_ELO,
+    gamesPlayed: 0,
+    // Never reaches 0, which is what keeps guests off the global leaderboard.
+    placementsRemaining: PLACEMENT_MATCHES,
+    createdAt: Date.now(),
+    isGuest: true,
+  });
+
+  const guest = await ctx.db.get(id);
+  if (!guest) throw new Error("Failed to create guest");
+  return guest;
+}
+
 export const start = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const user = await requireUser(ctx);
+  // Optional: signed-in players never send one, and a signed-in session always wins
+  // over a token — see actingUser.
+  args: { guestToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const user = await resolveDailyPlayer(ctx, args.guestToken);
     const date = todayKey();
 
     const alreadyPlayed = await ctx.db
@@ -49,6 +90,35 @@ export const start = mutation({
 
     if (alreadyPlayed) {
       return { status: "already-played" as const, run: alreadyPlayed };
+    }
+
+    /**
+     * Resume rather than restart.
+     *
+     * The `alreadyPlayed` check above only fires once a run has been RECORDED, and a
+     * run is only recorded by `complete`. So abandoning a daily part-way and calling
+     * start again used to mint a second match over the same five tracks — which is a
+     * second attempt at the same songs, having already heard them.
+     *
+     * Returning the live match closes that, and doubles as the reload story: refreshing
+     * mid-run drops you back into the match you were in rather than a fresh one.
+     */
+    const myMatches = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .take(10);
+
+    for (const entry of myMatches) {
+      const existing = await ctx.db.get(entry.matchId);
+      if (
+        existing &&
+        existing.mode === "daily" &&
+        existing.status === "active" &&
+        todayKey(existing.createdAt) === date
+      ) {
+        return { status: "started" as const, matchId: existing._id, date };
+      }
     }
 
     const trackIds = await ensureChallenge(ctx, date);
@@ -63,8 +133,6 @@ export const start = mutation({
       trackIds,
       bannedCategoryIds: [],
       currentRound: 0,
-      currentSet: 0,
-      setResults: [],
       createdAt: Date.now(),
     });
 
@@ -79,17 +147,36 @@ export const start = mutation({
 
     // Solo, so no VS screen — but the countdown, reveal and standings beats still
     // apply. The drama is the point, not the opponent.
-    await enterPhase(ctx, matchId, "countdown");
+    await startCountdown(ctx, matchId, 0);
 
     return { status: "started" as const, matchId, date };
   },
 });
 
+/**
+ * The player for a daily action: the signed-in user, or the guest for this token,
+ * creating the guest row on demand.
+ *
+ * Throws rather than returning null so callers keep the shape `requireUser` gave them.
+ */
+async function resolveDailyPlayer(
+  ctx: MutationCtx,
+  guestToken: string | undefined,
+): Promise<Doc<"users">> {
+  const signedIn = await currentUser(ctx);
+  if (signedIn) return signedIn;
+
+  if (!guestToken) throw new Error("Not signed in");
+  if (!isValidGuestToken(guestToken)) throw new Error("Invalid guest token");
+
+  return await ensureGuest(ctx, guestToken);
+}
+
 /** Records the finished run. The daily never affects Elo. */
 export const complete = mutation({
-  args: { matchId: v.id("matches") },
+  args: { matchId: v.id("matches"), guestToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx);
+    const user = await resolveDailyPlayer(ctx, args.guestToken);
     const match = await ctx.db.get(args.matchId);
     if (!match || match.mode !== "daily") throw new Error("Not a daily match");
 
@@ -126,7 +213,55 @@ export const complete = mutation({
       perRoundPoints,
       perRoundMs,
       completedAt: Date.now(),
+      // Denormalised so the board can exclude guests without a lookup per run.
+      isGuest: user.isGuest === true ? true : undefined,
     });
+  },
+});
+
+/**
+ * Moves a guest's runs onto the account that just signed in.
+ *
+ * This is the payoff for playing without an account: the result you already earned
+ * follows you onto the board under your own name, rather than being the price of not
+ * having signed up first.
+ *
+ * Idempotent, and safe to call with a token that has no runs, no guest row, or has
+ * already been claimed.
+ */
+export const claimGuestRun = mutation({
+  args: { guestToken: v.string() },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const guest = await guestByToken(ctx, args.guestToken);
+    if (!guest || guest._id === user._id) return { claimed: 0 };
+
+    const guestRuns = await ctx.db
+      .query("dailyRuns")
+      .withIndex("by_user_date", (q) => q.eq("userId", guest._id))
+      .take(50);
+
+    let claimed = 0;
+
+    for (const run of guestRuns) {
+      // The real account's own run always wins — a signed-in result is the record,
+      // and silently replacing it with an anonymous one would lose real history.
+      const mine = await ctx.db
+        .query("dailyRuns")
+        .withIndex("by_user_date", (q) => q.eq("userId", user._id).eq("date", run.date))
+        .unique();
+
+      if (mine) continue;
+
+      await ctx.db.patch(run._id, { userId: user._id, isGuest: undefined });
+      claimed++;
+    }
+
+    // Retired rather than deleted: `matches` and `guesses` rows still reference it,
+    // and deleting would leave those dangling.
+    await ctx.db.patch(guest._id, { guestClaimedAt: Date.now() });
+
+    return { claimed };
   },
 });
 
@@ -139,6 +274,10 @@ export const leaderboard = query({
     const runs = await ctx.db
       .query("dailyRuns")
       .withIndex("by_date_points", (q) => q.eq("date", date))
+      // Guests play the daily but do not appear on the board — putting a name up is
+      // what signing in buys. Must stay in step with the rank count in `myRun`, or a
+      // guest is told a position against a population the board does not show.
+      .filter((q) => q.neq(q.field("isGuest"), true))
       .order("desc")
       .take(limit);
 
@@ -155,11 +294,16 @@ export const leaderboard = query({
   },
 });
 
-/** The signed-in player's own run and standing, for the result card. */
+/**
+ * The current player's own run and standing, for the result card.
+ *
+ * Works for guests as well as signed-in players — an anonymous run still gets a real
+ * score and a real position, which is the whole reason the daily is worth opening up.
+ */
 export const myRun = query({
-  args: { date: v.optional(v.string()) },
+  args: { date: v.optional(v.string()), guestToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const user = await currentUser(ctx);
+    const user = await actingUser(ctx, args.guestToken);
     if (!user) return null;
 
     const date = args.date ?? todayKey();
@@ -171,18 +315,33 @@ export const myRun = query({
 
     if (!run) return null;
 
-    // Rank by counting better scores. Fine at launch scale; if the daily grows
-    // past a few thousand players this should become a stored rank.
+    // Rank by counting better scores, guests excluded so the position is measured
+    // against exactly the population the board lists.
+    //
+    // Pre-existing scale limit, unchanged by this work: counting with `.collect()`
+    // reads every run for the date. Fine at launch; this becomes a stored rank, or an
+    // @convex-dev/aggregate index, if the daily takes off.
     const better = await ctx.db
       .query("dailyRuns")
       .withIndex("by_date_points", (q) => q.eq("date", date).gt("totalPoints", run.totalPoints))
+      .filter((q) => q.neq(q.field("isGuest"), true))
       .collect();
 
     const total = (await ctx.db
       .query("dailyRuns")
       .withIndex("by_date_points", (q) => q.eq("date", date))
+      .filter((q) => q.neq(q.field("isGuest"), true))
       .collect()).length;
 
-    return { ...run, rank: better.length + 1, totalPlayers: total };
+    // A guest is not in the counted population, so their own run has to be added to
+    // the total — otherwise "#4 of 3" is possible.
+    const isGuest = run.isGuest === true;
+
+    return {
+      ...run,
+      rank: better.length + 1,
+      totalPlayers: isGuest ? total + 1 : total,
+      isGuest,
+    };
   },
 });

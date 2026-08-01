@@ -3,13 +3,22 @@
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { SCORE_TIERS } from "@/engine/config";
+import { Chip } from "@/ui/Surface";
+import { Glyph } from "@/ui/Glyph";
+import { RankEmblem } from "@/ui/RankEmblem";
+import { settle } from "@/ui/motion";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
 /**
- * Shared neon primitives.
+ * Shared game primitives.
  *
- * Palette: violet-black base, electric cyan and magenta accents. Rank colours come
- * from RANK_TIERS so a tier's identity is defined in exactly one place.
+ * Every export here keeps the prop signature it had before the overhaul — these are
+ * called from nine stages and four pages, and this file is a restyle, not a redesign of
+ * the interfaces.
+ *
+ * Palette: deep ink, opaque colour, no gradients. Rank colours still come from
+ * RANK_TIERS via the server payload so a tier's identity is defined in exactly one
+ * place.
  */
 
 export function RankBadge({
@@ -23,35 +32,47 @@ export function RankBadge({
   placements?: number;
   size?: "sm" | "md" | "lg";
 }) {
-  const scale = {
-    sm: "text-xs px-2 py-0.5",
-    md: "text-sm px-2.5 py-1",
-    lg: "text-base px-3 py-1.5",
-  }[size];
-
   // A rating before placements are done is noise, so show progress instead of a
   // rank the player has not actually earned.
   if (placements !== undefined && placements > 0) {
     return (
-      <span className={`rounded-full border border-white/20 text-white/60 ${scale}`}>
+      <span
+        className={`border-line-strong text-muted rounded-full border whitespace-nowrap ${
+          size === "sm" ? "text-label px-2 py-0.5" : "text-body-sm px-2.5 py-1"
+        }`}
+      >
         {placements} placement{placements === 1 ? "" : "s"} left
       </span>
     );
   }
 
+  // The label carries the division as a roman numeral ("Gold II"), which the emblem
+  // also encodes as chevrons — parsing it here keeps rankForElo as the single source.
+  const divisions = divisionFromLabel(label);
+
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full font-semibold ${scale}`}
-      style={{
-        color: accent,
-        backgroundColor: `${accent}1a`,
-        boxShadow: `inset 0 0 0 1px ${accent}55`,
-      }}
-    >
-      <span aria-hidden="true">◆</span>
-      {label}
+    <span className="inline-flex items-center gap-2">
+      <RankEmblem
+        accent={accent}
+        divisions={divisions}
+        size={size === "lg" ? "lg" : size === "sm" ? "sm" : "md"}
+      />
+      <span
+        className={`font-display font-bold whitespace-nowrap ${
+          size === "sm" ? "text-body-sm" : size === "lg" ? "text-display-2" : "text-body"
+        }`}
+        style={{ color: accent }}
+      >
+        {label}
+      </span>
     </span>
   );
+}
+
+/** "Gold II" → 2. Anything without a numeral (Legend) is a single division. */
+function divisionFromLabel(label: string): number {
+  const suffix = label.trim().split(/\s+/).pop();
+  return suffix === "III" ? 3 : suffix === "II" ? 2 : 1;
 }
 
 /** The score tier earned on a round — the thing worth bragging about. */
@@ -59,25 +80,23 @@ export function TierChip({ tierId, size = "md" }: { tierId: string; size?: "sm" 
   const tier = SCORE_TIERS.find((candidate) => candidate.id === tierId);
   if (!tier) return null;
 
-  const colour =
+  // SNAP is pure paper. Nothing else in the app is this bright, which is exactly what
+  // makes it unmistakable — you cannot get "more coloured" than the best call, you get
+  // brighter.
+  const tone =
     tier.id === "snap"
-      ? "#22d3ee"
+      ? "paper"
       : tier.id === "quick"
-        ? "#a3e635"
+        ? "gold"
         : tier.id === "solid"
-          ? "#fbbf24"
-          : "#f87171";
+          ? "neutral"
+          : "neutral";
 
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded font-bold tracking-wider ${
-        size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs"
-      }`}
-      style={{ color: colour, backgroundColor: `${colour}1f` }}
-    >
-      {tier.id === "snap" && <span aria-hidden="true">⚡</span>}
+    <Chip tone={tone} size={size} className="font-display tracking-wider">
+      {tier.id === "snap" && <Glyph name="tier" filled />}
       {tier.label}
-    </span>
+    </Chip>
   );
 }
 
@@ -98,9 +117,16 @@ export function PhaseTimer({
   const progress = durationMs > 0 ? remaining / durationMs : 0;
 
   return (
-    <div className={`h-1 w-full overflow-hidden rounded-full bg-white/10 ${className}`}>
+    <div
+      className={`bg-ink-inset h-1 w-full overflow-hidden rounded-full ${className}`}
+      role="progressbar"
+      aria-valuenow={Math.round(remaining / 1000)}
+      aria-valuemin={0}
+      aria-valuemax={Math.round(durationMs / 1000)}
+      aria-label="Time remaining in this phase"
+    >
       <div
-        className="h-full rounded-full bg-cyan-400 transition-[width] duration-200 ease-linear"
+        className="bg-paper h-full rounded-full transition-[width] duration-200 ease-linear"
         style={{ width: `${Math.min(100, progress * 100)}%` }}
       />
     </div>
@@ -128,7 +154,7 @@ export function Stage({
       initial={reduced ? false : { opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={reduced ? undefined : { opacity: 0, y: -12 }}
-      transition={{ type: "spring", stiffness: 260, damping: 26 }}
+      transition={settle}
       className={`mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 ${className}`}
     >
       {children}
@@ -136,13 +162,64 @@ export function Stage({
   );
 }
 
-/** Small stat pair used across player cards. */
-export function Stat({ label, value }: { label: string; value: ReactNode }) {
+/**
+ * Bot marker.
+ *
+ * Shown everywhere a bot appears. Research on human-bot trust games found bot
+ * opponents draw measurably less good faith than human ones, and disclosure is what
+ * protects trust — players work it out regardless, so hiding it costs more than
+ * labelling ever does.
+ */
+export function BotBadge({ size = "sm" }: { size?: "sm" | "md" }) {
   return (
-    <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wider text-white/40">{label}</span>
-      <span className="tabular-nums text-sm text-white/90">{value}</span>
-    </div>
+    <Chip tone="neutral" size={size} title="This opponent is a bot" className="tracking-wider">
+      <Glyph name="bot" />
+      BOT
+    </Chip>
+  );
+}
+
+/**
+ * Player avatar.
+ *
+ * Supports `color:#rrggbb` values written by onboarding, so a player can pick an
+ * avatar without us hosting any image.
+ */
+export function Avatar({
+  url,
+  name,
+  className = "h-10 w-10",
+}: {
+  url?: string | null;
+  name: string;
+  className?: string;
+}) {
+  const initial = name.trim().charAt(0).toUpperCase() || "?";
+
+  if (url?.startsWith("color:")) {
+    return (
+      <span
+        className={`font-display text-ink-900 flex shrink-0 items-center justify-center rounded-md font-bold ${className}`}
+        style={{ backgroundColor: url.slice(6) }}
+        aria-hidden="true"
+      >
+        {initial}
+      </span>
+    );
+  }
+
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt="" className={`shrink-0 rounded-md object-cover ${className}`} />;
+  }
+
+  return (
+    <span
+      className={`font-display bg-ink-600 text-secondary flex shrink-0 items-center justify-center rounded-md font-bold ${className}`}
+      aria-hidden="true"
+    >
+      {initial}
+    </span>
   );
 }
 
@@ -154,7 +231,7 @@ export function BadgeRow({
   max?: number;
 }) {
   if (badges.length === 0) {
-    return <span className="text-xs text-white/25">No badges yet</span>;
+    return <span className="text-body-sm text-muted">No badges yet</span>;
   }
 
   return (
@@ -163,13 +240,13 @@ export function BadgeRow({
         <span
           key={badge.id}
           title={badge.name}
-          className="rounded bg-white/10 px-1.5 py-0.5 text-sm leading-none"
+          className="bg-ink-600 rounded-xs px-1.5 py-0.5 text-sm leading-none"
         >
           {badge.emoji}
         </span>
       ))}
       {badges.length > max && (
-        <span className="self-center text-xs text-white/40">+{badges.length - max}</span>
+        <span className="text-body-sm text-muted self-center">+{badges.length - max}</span>
       )}
     </div>
   );

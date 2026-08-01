@@ -3,18 +3,24 @@ import { internalMutation, mutation, type MutationCtx } from "./_generated/serve
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  MILESTONE_EVERY_ROUNDS,
   PHASE_DURATIONS_MS,
-  SONGS_PER_SET,
+  READY_TIMEOUT_MS,
+  ROUND_DURATION_MS,
+  VETO_PHASE_MS,
   type MatchPhase,
 } from "../src/engine/config";
 import {
-  isLastRoundOfSet,
-  resolveRankedMatch,
-  resolveSet,
-  setIndexForRound,
-  type SetPlayerResult,
-} from "../src/engine/sets";
-import { ROUND_DURATION_MS } from "../src/engine/config";
+  damageMultiplier,
+  duelDamage,
+  isMilestoneRound,
+  resolveDuel,
+  resolveRoom,
+  roomDamage,
+  type DuelPlayerState,
+  type RoundScore,
+} from "../src/engine/duel";
+import { matchHasBot } from "./bots";
 
 /**
  * Server-driven phase machine.
@@ -29,7 +35,6 @@ import { ROUND_DURATION_MS } from "../src/engine/config";
  * rather than a skipped round.
  */
 
-/** Phases whose end is a wall-clock deadline the client can render a countdown from. */
 function durationFor(phase: MatchPhase): number | null {
   return phase in PHASE_DURATIONS_MS
     ? PHASE_DURATIONS_MS[phase as keyof typeof PHASE_DURATIONS_MS]
@@ -58,73 +63,86 @@ export async function enterPhase(
     ...(phase === "guessing" ? { roundStartedAt: now } : {}),
   });
 
+  // Bots plan their whole round the moment guessing opens, and take their draft turns
+  // the moment the draft opens. This is the single place either phase is ever entered,
+  // so scheduling here cannot be missed.
+  if (phase === "guessing" || phase === "veto") {
+    const match = await ctx.db.get(matchId);
+    if (match && (await matchHasBot(ctx, match))) {
+      if (phase === "veto") {
+        await ctx.scheduler.runAfter(0, internal.bots.draftTurn, { matchId });
+      } else {
+        await ctx.scheduler.runAfter(0, internal.bots.playRound, {
+          matchId,
+          roundIndex: match.currentRound,
+        });
+      }
+    }
+  }
+
   if (duration === null) return;
+
+  // Read back the round we just committed, so the timer is bound to it and cannot
+  // fire against a later round that happens to share this phase name.
+  const committed = await ctx.db.get(matchId);
 
   await ctx.scheduler.runAfter(duration, internal.phases.advance, {
     matchId,
     expectedPhase: phase,
+    expectedRound: committed?.currentRound ?? 0,
   });
 }
 
 /**
- * Collects per-player results for the set a given round belongs to.
+ * Starts the guessing round once every client has buffered its clip.
  *
- * Unsolved songs contribute the full round duration to the tiebreak total, so
- * failing to answer can never rank above answering slowly.
+ * This is the barrier the audio bug needed. Previously the guessing clock started on
+ * a fixed 3s countdown regardless of whether the audio had loaded, so a slow buffer
+ * silently ate part of the round and the song appeared to cut off mid-play.
+ *
+ * `startedWaitingAt` bounds the wait: one broken client cannot stall a match forever.
  */
-async function buildSetResults(
-  ctx: MutationCtx,
-  match: Doc<"matches">,
-  setIndex: number,
-): Promise<SetPlayerResult[]> {
-  const firstRound = setIndex * SONGS_PER_SET;
-  const lastRound = Math.min(firstRound + SONGS_PER_SET, match.trackIds.length);
+export const waitForReady = internalMutation({
+  args: { matchId: v.id("matches"), roundIndex: v.number(), startedWaitingAt: v.number() },
+  handler: async (ctx, args) => {
+    const match = await ctx.db.get(args.matchId);
+    if (!match || match.phase !== "countdown") return;
+    if (match.currentRound !== args.roundIndex) return;
 
-  const guesses = await ctx.db
-    .query("guesses")
-    .withIndex("by_match_round", (q) => q.eq("matchId", match._id))
-    .collect();
+    const players = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .collect();
 
-  return match.playerIds.map((userId) => {
-    let points = 0;
-    let totalElapsedMs = 0;
-
-    for (let round = firstRound; round < lastRound; round++) {
-      const solved = guesses.find(
-        (guess) => guess.roundIndex === round && guess.userId === userId && guess.correct,
-      );
-      points += solved?.points ?? 0;
-      totalElapsedMs += solved ? solved.clientElapsedMs : ROUND_DURATION_MS;
+    // Bots have no audio to buffer, so they are always ready.
+    const humanPlayers: Doc<"matchPlayers">[] = [];
+    for (const player of players) {
+      const user = await ctx.db.get(player.userId);
+      if (!user?.isBot) humanPlayers.push(player);
     }
 
-    return { userId: String(userId), points, totalElapsedMs };
-  });
-}
+    const everyoneReady = humanPlayers.every(
+      (player) => (player.readyForRound ?? -1) >= args.roundIndex,
+    );
+    const timedOut = Date.now() - args.startedWaitingAt >= READY_TIMEOUT_MS;
 
-/**
- * Round-trips an engine-side string id back to a typed player id.
- *
- * The pure engine works in plain strings so it stays free of Convex types. Casting
- * back would silently accept anything; looking the id up in `playerIds` means an
- * unexpected value becomes `undefined` (a drawn set) rather than a corrupt record.
- */
+    if (everyoneReady || timedOut) {
+      await enterPhase(ctx, args.matchId, "guessing");
+      return;
+    }
+
+    // Poll rather than wait on a client callback, so a dropped mutation cannot hang
+    // the match; the timeout above is the hard stop.
+    await ctx.scheduler.runAfter(300, internal.phases.waitForReady, args);
+  },
+});
+
 function toPlayerId(
   match: Doc<"matches">,
   id: string | undefined,
 ): Id<"users"> | undefined {
   if (id === undefined) return undefined;
   return match.playerIds.find((playerId) => String(playerId) === id);
-}
-
-/** Tallies sets won across every closed set. */
-function tallySets(
-  setResults: NonNullable<Doc<"matches">["setResults"]>,
-): Record<string, number> {
-  const tally: Record<string, number> = {};
-  for (const set of setResults) {
-    if (set.winnerId) tally[String(set.winnerId)] = (tally[String(set.winnerId)] ?? 0) + 1;
-  }
-  return tally;
 }
 
 /**
@@ -134,21 +152,44 @@ function tallySets(
  * client call this would hand it the ability to skip its opponent's guessing window.
  */
 export const advance = internalMutation({
-  args: { matchId: v.id("matches"), expectedPhase: v.string() },
+  args: {
+    matchId: v.id("matches"),
+    expectedPhase: v.string(),
+    /**
+     * The round this timer was armed for.
+     *
+     * Guarding on the phase NAME alone is not enough, and the omission was a real
+     * bug: solving a round early jumps straight to the reveal, but that round's
+     * 30-second guessing timer stays armed. It later fires against the *next*
+     * round — which is also called "guessing" — and killed it mid-song. Round 1
+     * always looked fine because it is the first round to leave a stale timer.
+     */
+    expectedRound: v.number(),
+  },
   handler: async (ctx, args) => {
     const match = await ctx.db.get(args.matchId);
     if (!match) return;
     if (match.phase !== args.expectedPhase) return; // already moved on
+    if (match.currentRound !== args.expectedRound) return; // timer from an older round
     if (match.status === "complete" || match.status === "abandoned") return;
 
     switch (match.phase) {
       case "vs_reveal":
-        // The ban draft waits on player input, so it has no scheduled successor.
-        await enterPhase(ctx, match._id, "veto");
+        // Whether there is a draft is decided by whether a pool was built for this
+        // match, not by an allowlist of modes — ranked and practice both build one,
+        // rooms and the daily never do. Gating on the mode is what used to leave
+        // practice without a draft at all.
+        if ((match.vetoPoolIds?.length ?? 0) > 0) {
+          await enterPhase(ctx, match._id, "veto", {
+            vetoDeadline: Date.now() + VETO_PHASE_MS,
+          });
+        } else {
+          await startCountdown(ctx, match._id, match.currentRound);
+        }
         return;
 
       case "countdown":
-        await enterPhase(ctx, match._id, "guessing");
+        // Handled by waitForReady, which owns the transition into guessing.
         return;
 
       case "guessing":
@@ -156,15 +197,15 @@ export const advance = internalMutation({
         return;
 
       case "reveal":
-        await enterPhase(ctx, match._id, "standings");
+        await applyRoundDamage(ctx, match);
         return;
 
       case "standings":
-        await closeRoundAndContinue(ctx, match);
+        await continueOrFinish(ctx, match);
         return;
 
-      case "set_break":
-        await startNextSet(ctx, match);
+      case "milestone":
+        await startCountdown(ctx, match._id, match.currentRound);
         return;
 
       default:
@@ -173,128 +214,184 @@ export const advance = internalMutation({
   },
 });
 
-/**
- * Called once the standings beat finishes: either start the next song, or close the
- * set and decide whether the match continues.
- */
-async function closeRoundAndContinue(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
-  const roundIndex = match.currentRound;
-  const isFinalTrack = roundIndex + 1 >= match.trackIds.length;
+/** Enters the countdown and arms the readiness barrier for the given round. */
+export async function startCountdown(
+  ctx: MutationCtx,
+  matchId: Id<"matches">,
+  roundIndex: number,
+): Promise<void> {
+  await enterPhase(ctx, matchId, "countdown", { currentRound: roundIndex });
 
-  // The daily is a flat solo run: no sets, no podium, no set breaks. Falling
-  // through to the set logic would chop a 5-song run into a 3+2 "series" against
-  // nobody, and resolve it as if the player had won two sets.
-  if (match.mode === "daily") {
-    if (isFinalTrack) {
-      await finishMatch(ctx, match, undefined);
-      return;
-    }
-    await enterPhase(ctx, match._id, "countdown", { currentRound: roundIndex + 1 });
-    return;
-  }
-
-  // Mid-set: straight on to the next song.
-  if (!isLastRoundOfSet(roundIndex) && !isFinalTrack && !match.suddenDeath) {
-    await enterPhase(ctx, match._id, "countdown", { currentRound: roundIndex + 1 });
-    return;
-  }
-
-  // Sudden death is a single decider — whoever took it wins the match outright.
-  if (match.suddenDeath) {
-    const results = await buildSetResults(ctx, match, setIndexForRound(roundIndex));
-    const outcome = resolveSet(results);
-    // The engine works in plain strings so it stays free of Convex types; the id
-    // is round-tripped from match.playerIds rather than blindly cast.
-    await finishMatch(ctx, match, toPlayerId(match, outcome.winnerId));
-    return;
-  }
-
-  const setIndex = setIndexForRound(roundIndex);
-  const results = await buildSetResults(ctx, match, setIndex);
-  const outcome = resolveSet(results);
-
-  const setResults = [
-    ...(match.setResults ?? []),
-    {
-      setIndex,
-      winnerId: toPlayerId(match, outcome.winnerId),
-      decidedOnTime: outcome.decidedOnTime,
-      standings: outcome.standings.map((entry) => ({
-        userId: toPlayerId(match, entry.userId)!,
-        points: entry.points,
-        totalElapsedMs: entry.totalElapsedMs,
-      })),
-    },
-  ];
-
-  if (outcome.winnerId) {
-    const player = await ctx.db
-      .query("matchPlayers")
-      .withIndex("by_match_user", (q) =>
-        q.eq("matchId", match._id).eq("userId", toPlayerId(match, outcome.winnerId)!),
-      )
-      .unique();
-    if (player) await ctx.db.patch(player._id, { setsWon: (player.setsWon ?? 0) + 1 });
-  }
-
-  await ctx.db.patch(match._id, { setResults });
-
-  await enterPhase(ctx, match._id, "set_break", { setResults });
+  await ctx.scheduler.runAfter(PHASE_DURATIONS_MS.countdown, internal.phases.waitForReady, {
+    matchId,
+    roundIndex,
+    startedWaitingAt: Date.now(),
+  });
 }
 
-/** Decides, after a set break, whether to play on, go to sudden death, or finish. */
-async function startNextSet(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
-  const setResults = match.setResults ?? [];
+/** Per-player points and reaction time for the round that just closed. */
+async function roundScores(
+  ctx: MutationCtx,
+  match: Doc<"matches">,
+): Promise<RoundScore[]> {
+  const guesses = await ctx.db
+    .query("guesses")
+    .withIndex("by_match_round", (q) =>
+      q.eq("matchId", match._id).eq("roundIndex", match.currentRound),
+    )
+    .collect();
 
-  // Rooms always run the full distance; ranked can end early at SETS_TO_WIN.
-  if (match.mode === "room") {
-    if (setResults.length * SONGS_PER_SET >= match.trackIds.length) {
+  return match.playerIds.map((userId) => {
+    const solved = guesses.find((guess) => guess.userId === userId && guess.correct);
+    return {
+      userId: String(userId),
+      points: solved?.points ?? 0,
+      // Unsolved contributes the full round, so failing to answer never ranks above
+      // answering slowly.
+      elapsedMs: solved?.clientElapsedMs ?? ROUND_DURATION_MS,
+    };
+  });
+}
+
+/**
+ * Applies the round's damage and moves into the standings beat.
+ *
+ * The daily has no opponent and therefore no damage — it simply advances.
+ */
+async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
+  const scores = await roundScores(ctx, match);
+  const guesses = await ctx.db
+    .query("guesses")
+    .withIndex("by_match_round", (q) =>
+      q.eq("matchId", match._id).eq("roundIndex", match.currentRound),
+    )
+    .collect();
+
+  const results = match.playerIds.map((userId) => {
+    const solved = guesses.find((guess) => guess.userId === userId && guess.correct);
+    return {
+      userId,
+      points: solved?.points ?? 0,
+      elapsedMs: solved?.clientElapsedMs,
+      solved: solved !== undefined,
+    };
+  });
+
+  // The daily is solo: there is nobody to lose health to.
+  const resolution =
+    match.mode === "daily"
+      ? { outcome: "song" as const, winnerId: undefined, damage: [], timeGapMs: undefined }
+      : match.mode === "room"
+        ? roomDamage(scores, match.currentRound)
+        : duelDamage(scores, match.currentRound);
+
+  const applied: { userId: Id<"users">; damage: number; hpAfter: number }[] = [];
+
+  for (const entry of resolution.damage) {
+    const userId = toPlayerId(match, entry.userId);
+    if (!userId) continue;
+
+    const player = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match_user", (q) => q.eq("matchId", match._id).eq("userId", userId))
+      .unique();
+    if (!player) continue;
+
+    // Eliminated players keep guessing for placing, but take no further damage.
+    const alreadyOut = player.eliminatedAtRound !== undefined && player.eliminatedAtRound !== null;
+    const hpBefore = player.hp ?? 0;
+    const hpAfter = alreadyOut ? hpBefore : Math.max(0, hpBefore - entry.damage);
+
+    await ctx.db.patch(player._id, {
+      hp: hpAfter,
+      lowestHp: Math.min(player.lowestHp ?? hpBefore, hpAfter),
+      ...(hpAfter === 0 && !alreadyOut ? { eliminatedAtRound: match.currentRound } : {}),
+    });
+
+    applied.push({ userId, damage: alreadyOut ? 0 : entry.damage, hpAfter });
+  }
+
+  const logEntry = {
+    roundIndex: match.currentRound,
+    trackId: match.trackIds[match.currentRound],
+    outcome: resolution.outcome,
+    winnerId: toPlayerId(match, resolution.winnerId),
+    timeGapMs: resolution.timeGapMs,
+    multiplier: damageMultiplier(match.currentRound),
+    damage: applied,
+    results,
+  };
+
+  await enterPhase(ctx, match._id, "standings", {
+    roundLog: [...(match.roundLog ?? []), logEntry],
+  });
+}
+
+/** Decides after the standings beat whether the match continues, and to which phase. */
+async function continueOrFinish(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
+  const roundsPlayed = match.currentRound + 1;
+
+  if (match.mode === "daily") {
+    if (roundsPlayed >= match.trackIds.length) {
       await finishMatch(ctx, match, undefined);
       return;
     }
-    await enterPhase(ctx, match._id, "countdown", {
-      currentRound: setResults.length * SONGS_PER_SET,
-      currentSet: setResults.length,
-    });
+    await startCountdown(ctx, match._id, roundsPlayed);
     return;
   }
 
-  const status = resolveRankedMatch({
-    setsWon: tallySets(setResults),
-    setsPlayed: setResults.length,
-  });
+  const players = await ctx.db
+    .query("matchPlayers")
+    .withIndex("by_match", (q) => q.eq("matchId", match._id))
+    .collect();
+
+  const states: DuelPlayerState[] = players.map((player) => ({
+    userId: String(player.userId),
+    hp: player.hp ?? 0,
+    totalPoints: player.totalPoints,
+    eliminatedAtRound: player.eliminatedAtRound ?? null,
+  }));
+
+  const status =
+    match.mode === "room"
+      ? resolveRoom(states, roundsPlayed)
+      : resolveDuel(states, roundsPlayed);
 
   if (status.kind === "complete") {
     await finishMatch(ctx, match, toPlayerId(match, status.winnerId));
     return;
   }
 
-  if (status.kind === "sudden-death") {
-    const nextRound = setResults.length * SONGS_PER_SET;
-    if (nextRound >= match.trackIds.length) {
-      // Catalogue exhausted — settle on total points rather than stalling forever.
-      await finishMatch(ctx, match, undefined);
-      return;
-    }
-    await enterPhase(ctx, match._id, "countdown", {
-      currentRound: nextRound,
-      suddenDeath: true,
-    });
+  // Ran out of catalogue before anyone died — settle rather than stall.
+  if (roundsPlayed >= match.trackIds.length) {
+    const ranked = [...states].sort((a, b) => b.hp - a.hp || b.totalPoints - a.totalPoints);
+    const decisive = ranked[1] === undefined || ranked[0].hp !== ranked[1].hp;
+    await finishMatch(ctx, match, decisive ? toPlayerId(match, ranked[0].userId) : undefined);
     return;
   }
 
-  await enterPhase(ctx, match._id, "countdown", {
-    currentRound: status.nextSetIndex * SONGS_PER_SET,
-    currentSet: status.nextSetIndex,
-  });
+  if (status.kind === "sudden-death") {
+    await startCountdown(ctx, match._id, roundsPlayed);
+    await ctx.db.patch(match._id, { suddenDeath: true });
+    return;
+  }
+
+  // A longer momentum beat every few rounds, which also announces the multiplier
+  // stepping up.
+  if (isMilestoneRound(match.currentRound, MILESTONE_EVERY_ROUNDS)) {
+    await enterPhase(ctx, match._id, "milestone", { currentRound: roundsPlayed });
+    return;
+  }
+
+  await startCountdown(ctx, match._id, roundsPlayed);
 }
 
 /**
- * Ends a match. Rating, XP and badges are applied by `ranked.finalize`, which this
- * schedules rather than inlines so the phase machine stays independent of the
+ * Ends a match. Rating, XP and badges are applied by `progression.finalizeMatch`,
+ * scheduled rather than inlined so the phase machine stays independent of the
  * progression rules.
  */
-async function finishMatch(
+export async function finishMatch(
   ctx: MutationCtx,
   match: Doc<"matches">,
   winnerId: Id<"users"> | undefined,
@@ -313,10 +410,10 @@ async function finishMatch(
 }
 
 /**
- * Ends the guessing phase early once every player has solved the current song.
+ * Ends the guessing phase early once every player has either solved or passed.
  *
- * Called from `submitGuess`. The scheduled 30s transition still fires later and is
- * harmlessly ignored, because `advance` checks the phase it expects to be leaving.
+ * The scheduled 30s transition still fires later and is harmlessly ignored, because
+ * `advance` checks the phase it expects to be leaving.
  */
 export async function endGuessingEarly(
   ctx: MutationCtx,
@@ -335,7 +432,17 @@ export async function endGuessingEarly(
     guesses.filter((guess) => guess.correct).map((guess) => String(guess.userId)),
   );
 
-  if (!match.playerIds.every((id) => solvers.has(String(id)))) return;
+  const players = await ctx.db
+    .query("matchPlayers")
+    .withIndex("by_match", (q) => q.eq("matchId", match._id))
+    .collect();
+
+  const everyoneDone = players.every(
+    (player) =>
+      solvers.has(String(player.userId)) || player.passedRound === match.currentRound,
+  );
+
+  if (!everyoneDone) return;
 
   await enterPhase(ctx, match._id, "reveal");
 }
@@ -343,9 +450,8 @@ export async function endGuessingEarly(
 /**
  * Client-callable nudge for a match whose scheduled transition never landed.
  *
- * Convex's scheduler is reliable, but a match stuck on an expired phase would be
- * unrecoverable without this. It only acts once the deadline has genuinely passed,
- * so it cannot be used to rush an opponent.
+ * Only acts once the deadline has genuinely passed, so it cannot be used to rush an
+ * opponent.
  */
 export const nudge = mutation({
   args: { matchId: v.id("matches") },
@@ -357,6 +463,7 @@ export const nudge = mutation({
     await ctx.scheduler.runAfter(0, internal.phases.advance, {
       matchId: args.matchId,
       expectedPhase: match.phase,
+      expectedRound: match.currentRound,
     });
     return { nudged: true as const };
   },

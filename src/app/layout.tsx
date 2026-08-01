@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { SiteHeader } from "./site-header";
+import { AppShell, MobileTopBar, UserProvisioner } from "./app-shell";
+import { ImmersiveProvider } from "./immersive";
+import { OnboardingGate } from "./onboarding";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,9 +16,45 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/**
+ * Display face: the numerals are the emotional content of this game, and Geist's
+ * heaviest weight has no authority at 96px.
+ *
+ * Variable, wght axis only. Archivo also carries a wdth axis (62–125) which would give
+ * condensed broadcast numerals from the same family — deliberately not loaded, because
+ * it grows the woff2 and the plain version needs to be seen on the real reveal and
+ * standings screens first.
+ */
+const archivo = Archivo({
+  variable: "--font-archivo",
+  subsets: ["latin"],
+});
+
+/**
+ * `metadataBase` is what turns the generated Open Graph images into absolute URLs.
+ * Without it Next falls back to http://localhost:3000, and every social preview in
+ * production points at a machine nobody else can reach.
+ *
+ * Set NEXT_PUBLIC_SITE_URL for a custom domain; VERCEL_PROJECT_PRODUCTION_URL covers a
+ * default Vercel deployment.
+ */
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
 export const metadata: Metadata = {
-  title: "Song Race",
-  description: "Race to name the song. One second is all you get.",
+  metadataBase: new URL(siteUrl),
+  title: "SNAP",
+  description: "One second of a song. Name it before they do.",
+  openGraph: {
+    title: "SNAP",
+    description: "One second of a song. Name it before they do.",
+    siteName: "SNAP",
+    type: "website",
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({
@@ -27,12 +65,21 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${archivo.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-neutral-950 text-white">
+      <body className="bg-ink-800 text-paper min-h-full">
         <Providers>
-          <SiteHeader />
-          <main className="flex-1">{children}</main>
+          <ImmersiveProvider>
+            {/* Creates the user row on first sign-in. Mounted at the root so it does
+                not depend on which piece of chrome happens to be visible. */}
+            <UserProvisioner />
+            <AppShell>
+              <MobileTopBar />
+              {children}
+            </AppShell>
+            {/* Blocks until a username is chosen; renders nothing once onboarded. */}
+            <OnboardingGate />
+          </ImmersiveProvider>
         </Providers>
       </body>
     </html>

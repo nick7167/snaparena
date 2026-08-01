@@ -1,26 +1,189 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/**
+ * "Pressing" — design tokens.
+ *
+ * Deep ink surfaces, fully opaque colour, no gradients and no glow. Depth comes from
+ * one device only: a hard 4px bottom edge that collapses when a control is pressed.
+ *
+ * Values are hex rather than oklch (which is what Tailwind v4 ships its own palette in)
+ * because WCAG contrast is defined in sRGB and every ratio noted below was measured
+ * there. Ratios are against --ink-800, the page surface.
+ *
+ * Dark only. There is no light theme — see the plan's scope note.
+ */
+
+@theme {
+  /* Surfaces ------------------------------------------------------------- */
+  --color-ink-900: #0e1017;
+  --color-ink-800: #14171f;
+  --color-ink-700: #1d2230;
+  --color-ink-600: #272e3e;
+  --color-ink-500: #333c4f;
+  --color-ink-inset: #0a0c12;
+
+  /* Text. Named so the generated utilities read well — `--color-text-secondary`
+     would produce `text-text-secondary`. --------------------------------- */
+  --color-paper: #f4f1ea; /* 15.9:1 */
+  --color-secondary: #a8b0c0; /* 8.2:1 */
+  --color-muted: #7a8398; /* 4.7:1 — the AA floor. Smallest legal body text. */
+  --color-faint: #4a5364; /* 2.1:1 — DECORATIVE ONLY. Never content. */
+
+  /* Working colour ------------------------------------------------------- */
+  --color-signal: #e03a2f; /* 4.1:1 — large text, bars, >=24px only */
+  --color-signal-text: #ff6b5e; /* 6.4:1 — same meaning at body size */
+  --color-gold: #f0b429; /* 9.6:1 */
+  --color-teal: #1f9e8c; /* 5.4:1 */
+
+  /* Score tiers. SNAP is pure paper: nothing else in the app is this bright,
+     which is what makes it unmistakable at a glance. */
+  --color-tier-snap: #f4f1ea;
+  --color-tier-quick: #f0b429;
+  --color-tier-solid: #a8b0c0;
+  --color-tier-late: #7a8398;
+
+  /* Borders. `border-line` / `border-line-strong` at the call site. -------- */
+  --color-line: #262b38; /* dividers only — decorative */
+  --color-line-strong: #667186; /* 3.6:1 — meaningful boundaries (inputs, controls) */
+
+  /* Radii. Default is 12px. Nothing between 0 and 4. ---------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Type ----------------------------------------------------------------- */
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --text-display-hero: 96px;
+  --text-display-hero--line-height: 0.9;
+  --text-display-1: 56px;
+  --text-display-1--line-height: 1;
+  --text-display-2: 32px;
+  --text-display-2--line-height: 1.1;
+  --text-numeral: 20px;
+  --text-numeral--line-height: 1;
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 1.5;
+  --text-body: 15px;
+  --text-body--line-height: 1.5;
+  --text-body-sm: 13px;
+  --text-body-sm--line-height: 1.45;
+  --text-label: 11px;
+  --text-label--line-height: 1.2;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/**
+ * Motion vocabulary.
+ *
+ * Four named motions replace the six ad-hoc spring configs the build had grown. The
+ * spring values live in src/ui/motion.ts because motion/react takes them as objects;
+ * these are the CSS-side equivalents for transitions that never touch React.
+ */
+@theme {
+  --ease-ignite: cubic-bezier(0.2, 0, 0, 1);
+  --ease-drain: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html {
+    background-color: var(--color-ink-900);
+  }
+
+  body {
+    background-color: var(--color-ink-800);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    /* The old build set `font-family: Arial` here, which silently beat the Geist
+       variable that layout.tsx was loading. */
+  }
+
+  /* Display type is the numerals. Tabular figures are non-negotiable: a timer that
+     reflows as digits change reads as jitter rather than as a clock. */
+  .font-display {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /**
+   * Focus.
+   *
+   * Preflight ships no cross-browser focus style (only :-moz-focusring), and the
+   * previous build had no :focus-visible anywhere at all — keyboard play was
+   * invisible. This is the single ring used by every interactive element.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-paper);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  /* Pointer users don't get the ring; keyboard users always do. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: var(--color-gold);
+    color: var(--color-ink-900);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /**
+   * The press.
+   *
+   * A solid fill plus a hard, blur-free bottom edge. On press the control travels
+   * down by exactly the edge height and the edge collapses, so the object reads as
+   * having been pushed into the page rather than as having changed colour.
+   *
+   * box-shadow with zero blur — not a drop shadow. There is no blurred shadow
+   * anywhere in this design.
+   */
+  .press {
+    box-shadow: 0 4px 0 0 var(--press-edge, var(--color-ink-500));
+    transition:
+      transform 180ms var(--ease-ignite),
+      box-shadow 180ms var(--ease-ignite);
+  }
+
+  .press:active:not(:disabled) {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 0 var(--press-edge, var(--color-ink-500));
+  }
+
+  .press-sm {
+    box-shadow: 0 2px 0 0 var(--press-edge, var(--color-ink-500));
+  }
+
+  .press-sm:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: 0 0 0 0 var(--press-edge, var(--color-ink-500));
+  }
+}
+
+/**
+ * Motion sensitivity.
+ *
+ * The React components each honour prefers-reduced-motion via usePrefersReducedMotion,
+ * but this catches everything CSS-driven — including the press travel — without every
+ * call site having to remember.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .press:active:not(:disabled),
+  .press-sm:active:not(:disabled) {
+    transform: none;
+  }
 }

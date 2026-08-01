@@ -1,22 +1,22 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { requireUser } from "./users";
-import { difficultyTierForElo, pickTracksForMatch } from "./tracks";
-import { enterPhase } from "./phases";
 import {
-  MAX_SETS,
+  DUEL_STARTING_HP,
   RECONNECT_GRACE_MS,
-  SONGS_PER_SET,
-  STARTING_ELO,
-  VETO_BANS_PER_PLAYER,
-  VETO_PHASE_MS,
-  VETO_POOL_SIZE,
+  SURRENDER_FROM_ROUND,
 } from "../src/engine/config";
-
-/** Full-distance track count. Ranked may end early at 2-0, but tracks are drawn once. */
-const RANKED_TRACK_COUNT = MAX_SETS * SONGS_PER_SET;
+import { canSurrender } from "../src/engine/duel";
+import { enterPhase, finishMatch } from "./phases";
+import {
+  TOTAL_BANS,
+  draftTurnOwner,
+  pickVetoPool,
+  placeBan,
+  startDuelIfDraftDone,
+} from "./draft";
 
 /**
  * Elo band for matchmaking, widening with time spent in queue.
@@ -99,7 +99,9 @@ export const activeMatch = query({
 
     for (const entry of mine) {
       const match = await ctx.db.get(entry.matchId);
-      if (match && match.mode === "ranked" && (match.status === "veto" || match.status === "active")) {
+      // Practice counts too — a reload mid-bot-match should drop you back in.
+      const isDuel = match?.mode === "ranked" || match?.mode === "practice";
+      if (match && isDuel && (match.status === "veto" || match.status === "active")) {
         return match._id;
       }
     }
@@ -159,9 +161,12 @@ export const tryMatchmake = mutation({
       bannedCategoryIds: [],
       vetoPoolIds: pool,
       currentRound: 0,
-      currentSet: 0,
-      setResults: [],
       createdAt: Date.now(),
+      // Lower-rated player bans first: a small, legible equaliser that is never
+      // arbitrary, unlike a coin flip.
+      banOrder:
+        user.elo <= opponent.elo ? [user._id, opponent._id] : [opponent._id, user._id],
+      banTurn: 0,
     });
 
     for (const player of [user, opponent]) {
@@ -169,7 +174,7 @@ export const tryMatchmake = mutation({
         matchId,
         userId: player._id,
         totalPoints: 0,
-        setsWon: 0,
+        hp: DUEL_STARTING_HP,
         ratingBefore: player.elo,
         forfeited: false,
         lastSeenAt: Date.now(),
@@ -183,116 +188,129 @@ export const tryMatchmake = mutation({
   },
 });
 
-/** Chooses the categories offered in the ban phase. */
-async function pickVetoPool(ctx: MutationCtx): Promise<Id<"categories">[]> {
-  const all = await ctx.db.query("categories").collect();
-  const shuffled = [...all];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled.slice(0, VETO_POOL_SIZE).map((category) => category._id);
-}
+/**
+ * Everything the draft screen needs: the pool, what is gone, and whose turn it is.
+ *
+ * Whose turn is decided server-side so the two clients can never disagree about it.
+ */
+export const draftState = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const match = await ctx.db.get(args.matchId);
+    if (!match) return null;
+
+    const turn = match.banTurn ?? 0;
+    const banned = new Set(match.bannedCategoryIds.map(String));
+
+    const pool = await Promise.all(
+      (match.vetoPoolIds ?? []).map(async (categoryId) => {
+        const category = await ctx.db.get(categoryId);
+        return category
+          ? { id: category._id, name: category.name, banned: banned.has(String(categoryId)) }
+          : null;
+      }),
+    );
+
+    // Named rather than "your opponent": watching Seoul Search take away country is
+    // a read on who you are about to play, which is the entire point of a draft.
+    const opponentId = match.playerIds.find((id) => id !== user._id);
+    const opponentDoc = opponentId ? await ctx.db.get(opponentId) : null;
+
+    return {
+      pool: pool.filter((entry) => entry !== null),
+      bansPlaced: turn,
+      totalBans: TOTAL_BANS,
+      isMyTurn: draftTurnOwner(match) === user._id,
+      deadline: match.vetoDeadline ?? null,
+      opponent: opponentDoc
+        ? {
+            displayName: opponentDoc.displayName,
+            handle: opponentDoc.handle,
+            avatarUrl: opponentDoc.avatarUrl ?? null,
+            elo: opponentDoc.elo,
+            isBot: opponentDoc.isBot === true,
+          }
+        : null,
+    };
+  },
+});
 
 /**
- * Records one player's bans. Both players ban the same number of categories, which
- * is what keeps the phase symmetric and therefore fair for a rated match.
+ * Places a single ban in the turn-based draft.
+ *
+ * Alternating rather than simultaneous, so each ban is a read on the opponent —
+ * you see what they took away before choosing your own. The lower-rated player bans
+ * first, which is a small legible equaliser.
  */
-export const submitBans = mutation({
-  args: { matchId: v.id("matches"), categoryIds: v.array(v.id("categories")) },
+export const submitBan = mutation({
+  args: { matchId: v.id("matches"), categoryId: v.id("categories") },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
     const match = await ctx.db.get(args.matchId);
 
     if (!match) throw new Error("No such match");
-    if (match.status !== "veto") throw new Error("Veto phase is over");
-    if (!match.playerIds.some((id) => id === user._id)) throw new Error("Not a player");
+    if (match.phase !== "veto") throw new Error("The draft is over");
 
-    if (args.categoryIds.length !== VETO_BANS_PER_PLAYER) {
-      throw new Error(`Ban exactly ${VETO_BANS_PER_PLAYER} categories`);
-    }
+    if ((match.banTurn ?? 0) >= TOTAL_BANS) throw new Error("The draft is over");
+    if (draftTurnOwner(match) !== user._id) throw new Error("Not your turn");
 
     const pool = new Set((match.vetoPoolIds ?? []).map(String));
-    if (!args.categoryIds.every((id) => pool.has(String(id)))) {
-      throw new Error("Category is not in this match's veto pool");
+    if (!pool.has(String(args.categoryId))) {
+      throw new Error("Category is not in this match's pool");
+    }
+    if (match.bannedCategoryIds.some((id) => id === args.categoryId)) {
+      throw new Error("That category is already banned");
     }
 
-    const already = await ctx.db
-      .query("matchPlayers")
-      .withIndex("by_match_user", (q) => q.eq("matchId", args.matchId).eq("userId", user._id))
-      .unique();
-
-    if (!already) throw new Error("Not a player");
-    if (already.bannedCategoryIds) throw new Error("Bans already submitted");
-
-    await ctx.db.patch(already._id, { bannedCategoryIds: args.categoryIds });
-
-    // The deadline only starts once the player reaches the draft, so it is set here
-    // rather than when the match was created.
-    if (!match.vetoDeadline) {
-      await ctx.db.patch(match._id, { vetoDeadline: Date.now() + VETO_PHASE_MS });
-    }
-
-    await maybeStartMatch(ctx, args.matchId);
-    return { submitted: true as const };
+    await placeBan(ctx, match, args.categoryId);
+    await startDuelIfDraftDone(ctx, args.matchId);
+    return { placed: true as const };
   },
 });
 
 /**
- * Starts the match once both players have banned, or once the veto clock expires.
+ * Concedes the duel.
  *
- * A player who never bans simply gets no bans — the alternative (blocking the
- * match) would let someone grief their opponent by idling.
+ * A ten-minute duel that is already lost is a long time to sit through, and without
+ * this the losing player simply closes the tab — leaving the winner waiting out a
+ * reconnect grace period for nothing. The Elo loss is identical to playing it out.
  */
-async function maybeStartMatch(ctx: MutationCtx, matchId: Id<"matches">): Promise<void> {
-  const match = await ctx.db.get(matchId);
-  if (!match || match.status !== "veto") return;
+export const surrender = mutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const match = await ctx.db.get(args.matchId);
 
-  const players = await ctx.db
-    .query("matchPlayers")
-    .withIndex("by_match", (q) => q.eq("matchId", matchId))
-    .collect();
+    if (!match || match.status !== "active") return { surrendered: false as const };
+    if (match.mode === "daily" || match.mode === "room") {
+      // Rooms eliminate rather than concede; the daily has no opponent.
+      return { surrendered: false as const };
+    }
+    if (!canSurrender(match.currentRound, SURRENDER_FROM_ROUND)) {
+      return { surrendered: false as const };
+    }
 
-  const everyoneBanned = players.every((player) => player.bannedCategoryIds !== undefined);
-  const deadlinePassed = match.vetoDeadline !== undefined && Date.now() >= match.vetoDeadline;
+    const player = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match_user", (q) => q.eq("matchId", args.matchId).eq("userId", user._id))
+      .unique();
+    if (!player) return { surrendered: false as const };
 
-  if (!everyoneBanned && !deadlinePassed) return;
+    await ctx.db.patch(player._id, { forfeited: true, hp: 0 });
 
-  const bannedCategoryIds = players.flatMap((player) => player.bannedCategoryIds ?? []);
+    const opponentId = match.playerIds.find((id) => id !== user._id);
+    await finishMatch(ctx, match, opponentId);
 
-  const users = await Promise.all(match.playerIds.map((id) => ctx.db.get(id)));
-  const ratings = users.map((user) => user?.elo ?? STARTING_ELO);
-  const averageElo = ratings.reduce((sum, value) => sum + value, 0) / (ratings.length || 1);
-
-  const trackIds = await pickTracksForMatch(ctx, {
-    targetTier: difficultyTierForElo(averageElo),
-    bannedCategoryIds,
-    count: RANKED_TRACK_COUNT,
-  });
-
-  if (trackIds.length < RANKED_TRACK_COUNT) {
-    // Not enough catalogue to run the full distance — abandon rather than repeat
-    // songs, which would let a player who already heard one score for free.
-    await ctx.db.patch(matchId, { status: "abandoned", phase: "match_end" });
-    return;
-  }
-
-  await ctx.db.patch(matchId, {
-    status: "active",
-    bannedCategoryIds,
-    trackIds,
-    currentRound: 0,
-    currentSet: 0,
-  });
-
-  await enterPhase(ctx, matchId, "countdown");
-}
+    return { surrendered: true as const };
+  },
+});
 
 /** Client-driven fallback so an idle opponent cannot stall the veto phase forever. */
 export const expireVeto = mutation({
   args: { matchId: v.id("matches") },
   handler: async (ctx, args) => {
-    await maybeStartMatch(ctx, args.matchId);
+    await startDuelIfDraftDone(ctx, args.matchId);
   },
 });
 

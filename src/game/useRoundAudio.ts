@@ -21,9 +21,12 @@ import { createAnalyser, type Analyser } from "@/audio/visualizer";
 
 export type RoundPhase = "idle" | "loading" | "ready" | "playing" | "ended";
 
+/** How long to wait for a clip before declaring it unplayable. */
+const LOAD_TIMEOUT_MS = 8_000;
+
 export interface UseRoundAudioResult {
   phase: RoundPhase;
-  /** True once the clip is fully buffered — the barrier the round start waits on. */
+  /** True once the clip is buffered — the barrier the round start waits on. */
   ready: boolean;
   /** Milliseconds since playback actually began. Feed this to the server. */
   elapsedMs: () => number;
@@ -36,6 +39,8 @@ export interface UseRoundAudioResult {
   start: () => Promise<void>;
   /** Stops audio and freezes the clock. */
   stop: () => void;
+  /** Re-plays the currently unlocked snippet from 0:00 without touching the clock. */
+  replay: () => void;
   /**
    * Frequency analyser for the visualiser, or null when Web Audio is unavailable
    * or the track is CORS-tainted. Callers must degrade rather than fail.
@@ -48,13 +53,23 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
   const startedAtRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const stageRef = useRef(0);
+  const analyserRef = useRef<Analyser | null>(null);
 
-  const [phase, setPhase] = useState<RoundPhase>(previewUrl ? "loading" : "idle");
+  /**
+   * Buffering state is tracked SEPARATELY from the playback phase.
+   *
+   * These used to be one value, and it caused total silence: the round now opens
+   * with a countdown phase during which the UI called stop(), which set the phase
+   * to "ended" — and the `canplaythrough` handler then refused to promote it to
+   * "ready" because it only advanced from "loading". `ready` stayed false forever.
+   * Keeping them independent means a lifecycle call can never clobber load state.
+   */
+  const [loaded, setLoaded] = useState(false);
+  const [phase, setPhase] = useState<RoundPhase>("idle");
   const [displayMs, setDisplayMs] = useState(0);
   const [revealStage, setRevealStage] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState(previewUrl);
-  const analyserRef = useRef<Analyser | null>(null);
   const [analyser, setAnalyser] = useState<Analyser | null>(null);
 
   // Reset for a new track during render rather than inside an effect. Calling
@@ -62,7 +77,8 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
   // during render is React's sanctioned pattern for reacting to a changed prop.
   if (previewUrl !== loadedUrl) {
     setLoadedUrl(previewUrl);
-    setPhase(previewUrl ? "loading" : "idle");
+    setLoaded(false);
+    setPhase("idle");
     setDisplayMs(0);
     setRevealStage(0);
     setError(null);
@@ -77,25 +93,43 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
 
     const audio = new Audio();
     audio.preload = "auto";
-    // Apple's preview CDN sends permissive CORS headers, so this is safe and
-    // keeps the door open for Web Audio analysis later.
+    // Apple's preview CDN sends permissive CORS headers, which is what makes the
+    // Web Audio visualiser possible.
     audio.crossOrigin = "anonymous";
     audio.src = previewUrl;
     audioRef.current = audio;
 
-    const onReady = () => setPhase((current) => (current === "loading" ? "ready" : current));
+    const markLoaded = () => setLoaded(true);
     const onError = () => {
       // A dead preview URL must void the round rather than penalise the player.
       setError("audio-unavailable");
-      setPhase("ended");
     };
 
-    audio.addEventListener("canplaythrough", onReady);
+    audio.addEventListener("canplaythrough", markLoaded);
+    audio.addEventListener("canplay", markLoaded);
     audio.addEventListener("error", onError);
     audio.load();
 
+    // A clip already in the browser cache may settle before the listeners above are
+    // useful, so check readyState directly too. HAVE_FUTURE_DATA (3) is enough to
+    // begin playback. Deferred to a microtask so this is not a synchronous setState
+    // inside an effect body, and guarded so it cannot fire after teardown.
+    queueMicrotask(() => {
+      if (audioRef.current === audio && audio.readyState >= 3) setLoaded(true);
+    });
+
+    // Never hang on "Buffering…" indefinitely — surface a real error instead.
+    const timeout = setTimeout(() => {
+      setLoaded((current) => {
+        if (!current) setError("audio-timeout");
+        return current;
+      });
+    }, LOAD_TIMEOUT_MS);
+
     return () => {
-      audio.removeEventListener("canplaythrough", onReady);
+      clearTimeout(timeout);
+      audio.removeEventListener("canplaythrough", markLoaded);
+      audio.removeEventListener("canplay", markLoaded);
       audio.removeEventListener("error", onError);
       audio.pause();
       audio.src = "";
@@ -118,16 +152,38 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     return performance.now() - startedAtRef.current;
   }, []);
 
+  /**
+   * Stops playback and freezes the clock.
+   *
+   * Deliberately a no-op unless the clip is actually playing: callers stop on every
+   * non-guessing phase, and a clip that has not started yet must keep its load state.
+   */
   const stop = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
     audioRef.current?.pause();
-    setPhase("ended");
+    setPhase((current) => (current === "playing" ? "ended" : current));
+  }, []);
+
+  /**
+   * Re-plays the unlocked snippet on demand.
+   *
+   * The clip goes silent between reveal beats, which reads as a fault rather than a
+   * design. Letting players re-hear what they have makes the silence a choice.
+   * Deliberately does not touch the score clock — replaying is free, waiting is not.
+   */
+  const replay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || startedAtRef.current === null) return;
+    audio.currentTime = 0;
+    void audio.play().catch(() => setError("playback-blocked"));
   }, []);
 
   const start = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
+    // Guard against a double start — the round would otherwise restart its clock.
+    if (startedAtRef.current !== null) return;
 
     // Attach the analyser on first play, not at load: an AudioContext created
     // before a user gesture starts suspended, and by here a gesture has happened.
@@ -192,13 +248,14 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
 
   return {
     phase,
-    ready: phase === "ready" || phase === "playing",
+    ready: loaded && error === null,
     elapsedMs,
     revealStage,
     displayMs,
     error,
     start,
     stop,
+    replay,
     analyser,
   };
 }

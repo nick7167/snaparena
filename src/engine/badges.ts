@@ -1,3 +1,5 @@
+import type { GameMode } from "./config";
+
 /**
  * Badges.
  *
@@ -39,16 +41,16 @@ export const BADGES: readonly BadgeDefinition[] = [
     sortOrder: 21,
   },
   {
-    id: "perfect_set",
-    name: "Perfect Set",
-    description: "Win every song in a set",
+    id: "flawless",
+    name: "Flawless",
+    description: "Win a duel without losing a single point of health",
     emoji: "🔥",
     sortOrder: 30,
   },
   {
     id: "comeback",
     name: "Comeback King",
-    description: "Win a match after losing the first set",
+    description: "Win a duel after dropping below a quarter health",
     emoji: "👑",
     sortOrder: 40,
   },
@@ -89,16 +91,16 @@ export function sortBadges(ids: readonly string[]): BadgeDefinition[] {
 
 /** Everything needed to decide which badges a completed match earned. */
 export interface BadgeContext {
-  readonly mode: "ranked" | "room" | "daily";
+  readonly mode: GameMode;
   readonly won: boolean;
   /** Career totals *including* this match. */
   readonly totalRankedWins: number;
   readonly totalRankedMatches: number;
   readonly totalSnapGuesses: number;
-  /** True if any set was won with a clean sweep of its songs. */
-  readonly hadPerfectSet: boolean;
-  /** True if the player lost set 1 and still won the match. */
-  readonly wonAfterLosingFirstSet: boolean;
+  /** True if the player finished the duel on full health. */
+  readonly tookNoDamage: boolean;
+  /** True if the player dropped below a quarter health and still won. */
+  readonly wonFromCritical: boolean;
   readonly wonSuddenDeath: boolean;
   readonly opponentEloAdvantage: number;
 }
@@ -117,8 +119,8 @@ export function evaluateBadges(context: BadgeContext): string[] {
   }
   if (context.totalSnapGuesses >= 10) earned.push("snap_10");
   if (context.totalSnapGuesses >= 100) earned.push("snap_100");
-  if (context.hadPerfectSet) earned.push("perfect_set");
-  if (context.won && context.wonAfterLosingFirstSet) earned.push("comeback");
+  if (context.won && context.tookNoDamage) earned.push("flawless");
+  if (context.won && context.wonFromCritical) earned.push("comeback");
   if (context.won && context.wonSuddenDeath) earned.push("sudden_death");
   if (context.mode === "ranked" && context.won && context.opponentEloAdvantage >= 200) {
     earned.push("giant_slayer");

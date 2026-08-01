@@ -4,6 +4,7 @@ import { useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import { AUTOCOMPLETE_MIN_CHARS } from "@/engine/config";
+import { Glyph } from "@/ui/Glyph";
 
 interface GuessInputProps {
   onGuess: (text: string) => Promise<{ status: string }>;
@@ -27,6 +28,8 @@ export function GuessInput({
   const [text, setText] = useState("");
   const [lockRemaining, setLockRemaining] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  // -1 means "no suggestion highlighted" — the raw typed text is what submits.
+  const [active, setActive] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const showSuggestions = !suppressSuggestions && text.trim().length >= AUTOCOMPLETE_MIN_CHARS;
@@ -51,6 +54,8 @@ export function GuessInput({
 
   const locked = lockRemaining > 0;
   const inputDisabled = disabled || locked || submitting;
+  const options = showSuggestions ? (suggestions ?? []) : [];
+  const open = options.length > 0;
 
   async function submit(value: string) {
     const trimmed = value.trim();
@@ -60,44 +65,59 @@ export function GuessInput({
     try {
       const result = await onGuess(trimmed);
       if (result.status !== "correct") setText("");
+      setActive(-1);
     } finally {
       setSubmitting(false);
     }
   }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit(text);
-        }}
-      >
-        <input
-          ref={inputRef}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          disabled={inputDisabled}
-          placeholder={locked ? `Locked ${(lockRemaining / 1000).toFixed(1)}s` : "Name the song…"}
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          aria-label="Your guess"
-          className="w-full rounded-lg border border-white/15 bg-black/40 px-4 py-3 text-lg
-                     outline-none placeholder:text-white/30 focus:border-emerald-500
-                     disabled:opacity-50"
-        />
-      </form>
+  /**
+   * Keyboard is the primary input here — this is a typing race, and reaching for the
+   * mouse to pick a suggestion costs more than typing the rest of the title.
+   */
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open) return;
 
-      {showSuggestions && suggestions && suggestions.length > 0 && (
-        <ul className="flex flex-col overflow-hidden rounded-lg border border-white/10">
-          {suggestions.map((title) => (
-            <li key={title}>
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((current) => (current + 1) % options.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((current) => (current <= 0 ? options.length - 1 : current - 1));
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setActive(-1);
+    }
+  }
+
+  return (
+    <div className="relative flex flex-col gap-2">
+      {/* Suggestions sit ABOVE the field, not below: the field is bottom-anchored in
+          the thumb zone and a dropdown there would be under the on-screen keyboard. */}
+      {open && (
+        <ul
+          id="guess-suggestions"
+          role="listbox"
+          aria-label="Track suggestions"
+          className="border-line bg-ink-700 flex flex-col overflow-hidden rounded-md border"
+        >
+          {options.map((title, index) => (
+            <li key={title} role="presentation">
               <button
                 type="button"
+                role="option"
+                aria-selected={index === active}
+                // Prevents the field losing focus before the click registers, which
+                // would otherwise blur mid-race.
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => void submit(title)}
                 disabled={inputDisabled}
-                className="w-full px-4 py-2 text-left text-sm hover:bg-white/10 disabled:opacity-50"
+                className={`text-body block w-full min-h-11 px-4 py-2 text-left transition-colors
+                            disabled:opacity-50 ${
+                              index === active
+                                ? "bg-ink-500 text-paper"
+                                : "text-secondary hover:bg-ink-600 hover:text-paper"
+                            }`}
               >
                 {title}
               </button>
@@ -105,6 +125,47 @@ export function GuessInput({
           ))}
         </ul>
       )}
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          // A highlighted suggestion wins over the raw text — that is what the
+          // highlight promises.
+          void submit(active >= 0 && options[active] ? options[active] : text);
+        }}
+      >
+        <div
+          className={`bg-ink-inset flex items-center gap-3 rounded-md border px-4
+                      transition-colors focus-within:border-paper
+                      ${locked ? "border-signal" : "border-line-strong"}
+                      ${inputDisabled ? "opacity-60" : ""}`}
+        >
+          <span className="text-muted text-lg">
+            <Glyph name={locked ? "timer" : "song"} />
+          </span>
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              setActive(-1);
+            }}
+            onKeyDown={onKeyDown}
+            disabled={inputDisabled}
+            placeholder={locked ? `Locked ${(lockRemaining / 1000).toFixed(1)}s` : "Name the song…"}
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-label="Your guess"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={open ? "guess-suggestions" : undefined}
+            aria-autocomplete="list"
+            className="text-body-lg placeholder:text-muted min-h-13 w-full min-w-0 bg-transparent
+                       outline-none"
+          />
+        </div>
+      </form>
     </div>
   );
 }

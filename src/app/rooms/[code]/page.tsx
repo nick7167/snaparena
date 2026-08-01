@@ -1,10 +1,15 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
 import { RoundRunner } from "@/game/RoundRunner";
+import { Button } from "@/ui/Button";
+import { Card, Chip, SectionLabel } from "@/ui/Surface";
+import { Glyph } from "@/ui/Glyph";
+import { Avatar } from "@/game/ui";
 
 export default function RoomPage() {
   const params = useParams<{ code: string }>();
@@ -33,12 +38,13 @@ export default function RoomPage() {
       <div className="flex flex-col gap-4">
         <RoundRunner matchId={room.activeMatchId} />
         {me?._id === room.hostId && (
-          <button
+          <Button
+            variant="secondary"
+            className="mx-auto w-fit"
             onClick={() => void returnToLobby({ roomId: room.roomId })}
-            className="mx-auto w-fit rounded-lg border border-white/20 px-4 py-2 hover:bg-white/10"
           >
             Back to lobby
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -46,54 +52,158 @@ export default function RoomPage() {
 
   const isHost = me?._id === room.hostId;
 
+  // Empty seats up to the minimum, so "we need one more" is something you can see
+  // rather than a sentence you have to read.
+  const emptySlots = Math.max(0, room.minPlayers - room.members.length);
+
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-6 px-4 py-16">
-      <div className="flex flex-col gap-2">
-        <h1 className="font-mono text-4xl tracking-[0.3em]">{room.code}</h1>
-        <button
+    <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-12">
+      {/* The code is the whole point of the screen — it is what you read out loud. */}
+      <section className="flex flex-col items-center gap-3">
+        <SectionLabel>Room code</SectionLabel>
+        <p className="font-mono text-display-1 text-paper font-bold tracking-[0.25em]">
+          {room.code}
+        </p>
+        <Button
+          variant="secondary"
           onClick={async () => {
             await navigator.clipboard.writeText(window.location.href);
             setCopied(true);
           }}
-          className="w-fit rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10"
         >
+          <Glyph name="song" />
           {copied ? "Link copied" : "Copy invite link"}
-        </button>
-      </div>
+        </Button>
+      </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm uppercase tracking-wide text-white/40">
-          Players ({room.members.length}/{room.maxPlayers})
-        </h2>
-        <ul className="flex flex-col gap-1">
+        <div className="flex items-baseline justify-between">
+          <SectionLabel>Players</SectionLabel>
+          <span className="text-body-sm text-muted tabular-nums">
+            {room.members.length} / {room.maxPlayers}
+          </span>
+        </div>
+
+        <ul className="flex flex-col gap-1.5">
           {room.members.map((member) => (
-            <li
+            <Card
+              as="li"
               key={member.userId}
-              className="flex items-center justify-between rounded bg-white/5 px-3 py-2"
+              emphasis={member.userId === me?._id}
+              className="flex items-center gap-3 px-3 py-2.5"
             >
-              <span>{member.displayName}</span>
-              {member.isHost && <span className="text-xs text-white/40">host</span>}
+              <Avatar
+                url={member.avatarUrl}
+                name={member.displayName}
+                className="size-9"
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-body truncate font-medium">
+                  {member.displayName}
+                </span>
+                <span className="text-body-sm text-muted truncate">@{member.handle}</span>
+              </span>
+              {member.isHost && <Chip size="sm">host</Chip>}
+            </Card>
+          ))}
+
+          {Array.from({ length: emptySlots }, (_, index) => (
+            <li
+              key={`empty-${index}`}
+              className="border-line text-body-sm text-muted flex items-center gap-3
+                         rounded-md border border-dashed px-3 py-2.5"
+            >
+              <span className="bg-ink-700 size-9 shrink-0 rounded-md" aria-hidden="true" />
+              Waiting for a player…
             </li>
           ))}
         </ul>
       </section>
 
-      {isHost ? (
-        <button
-          disabled={!room.canStart}
-          onClick={() => void start({ roomId: room.roomId })}
-          className="rounded-lg bg-emerald-500 px-5 py-3 font-medium text-black
-                     hover:bg-emerald-400 disabled:opacity-40"
-        >
-          {room.canStart ? "Start match" : `Need ${room.minPlayers} players`}
-        </button>
-      ) : (
-        <p className="text-white/50">Waiting for the host to start…</p>
-      )}
+      <div className="flex flex-col gap-3">
+        {isHost ? (
+          <Button
+            size="lg"
+            block
+            disabled={!room.canStart}
+            onClick={() => void start({ roomId: room.roomId })}
+          >
+            {room.canStart
+              ? "Start match"
+              : `Need ${room.minPlayers - room.members.length} more`}
+          </Button>
+        ) : (
+          <p className="text-body text-muted text-center" role="status">
+            Waiting for the host to start…
+          </p>
+        )}
+
+        {/* rooms.leave was built and unreachable — the only way out was closing the tab.
+            Host transfer is handled server-side, so leaving as host is safe. */}
+        {me && room.members.some((member) => member.userId === me._id) && (
+          <LeaveRoom roomId={room.roomId} isHost={isHost} />
+        )}
+      </div>
     </div>
   );
 }
 
+function LeaveRoom({
+  roomId,
+  isHost,
+}: {
+  roomId: Id<"rooms">;
+  isHost: boolean;
+}) {
+  const leave = useMutation(api.rooms.leave);
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
+  if (!confirming) {
+    return (
+      <button
+        onClick={() => setConfirming(true)}
+        className="text-body-sm text-muted hover:text-paper mx-auto flex items-center gap-1.5 rounded-xs px-3 py-2 transition-colors"
+      >
+        <Glyph name="leave" />
+        Leave room
+      </button>
+    );
+  }
+
+  return (
+    <Card className="flex flex-col items-center gap-3 p-4">
+      <p className="text-body-sm text-secondary text-center">
+        {isHost
+          ? "You're the host — hosting passes to whoever joined next."
+          : "Leave this room?"}
+      </p>
+      <div className="flex gap-2">
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={leaving}
+          onClick={async () => {
+            setLeaving(true);
+            await leave({ roomId });
+            router.push("/rooms");
+          }}
+        >
+          Leave
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+          Stay
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex min-h-[50vh] items-center justify-center">{children}</div>;
+  return (
+    <div className="text-body text-secondary flex min-h-[50vh] items-center justify-center px-4 text-center">
+      {children}
+    </div>
+  );
 }
