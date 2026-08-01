@@ -2,14 +2,17 @@
 
 import { motion } from "motion/react";
 import { useEffect } from "react";
-import { PHASE_DURATIONS_MS } from "@/engine/config";
+import { PHASE_DURATIONS_MS, REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
-import { Avatar, BadgeRow, BotBadge, RankBadge, Stage, TierChip } from "./ui";
+import { Avatar, BadgeRow, BotBadge, RankBadge, Stage, TierChip, hpTone, nameFor } from "./ui";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { Card, Chip, Meter } from "@/ui/Surface";
+import { Button } from "@/ui/Button";
 import { Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
-import { hpTone } from "./RoundRunner";
+import { GuessInput } from "./GuessInput";
+import { Waveform } from "./Waveform";
+import type { useRoundAudio } from "./useRoundAudio";
 
 /**
  * The between-round beats. These exist because the drama lives in the gaps: a match
@@ -120,11 +123,19 @@ export function VsReveal({
 function VsCard({ player }: { player: PlayerCardData }) {
   return (
     <Card className="flex flex-col items-center gap-2 p-3 sm:p-4">
-      <Avatar url={player.avatarUrl} name={player.displayName} className="h-14 w-14 text-xl sm:h-20 sm:w-20" />
-      <p className="text-body max-w-full truncate font-semibold">
-        {player.displayName}
-      </p>
-      <p className="text-body-sm text-muted max-w-full truncate">@{player.handle}</p>
+      {/* The avatar's fallback is a single initial, so it takes the handle rather than
+          nameFor — "@" is not an initial. */}
+      <Avatar
+        url={player.avatarUrl}
+        name={player.isBot ? player.displayName : player.handle}
+        className="h-14 w-14 text-xl sm:h-20 sm:w-20"
+      />
+      <p className="text-body max-w-full truncate font-semibold">{nameFor(player)}</p>
+      {/* Only bots carry a second line: their proper name is above, so the handle is
+          extra information rather than the same string twice. */}
+      {player.isBot && (
+        <p className="text-body-sm text-muted max-w-full truncate">@{player.handle}</p>
+      )}
       {player.isBot && <BotBadge />}
       <RankBadge
         label={player.rankLabel}
@@ -223,14 +234,14 @@ export function Countdown({
           {players.map((player) => (
             <div key={player.userId} className="flex flex-1 flex-col gap-1">
               <span className="text-label text-muted truncate">
-                {player.isMe ? "You" : player.displayName}
+                {player.isMe ? "You" : nameFor(player)}
               </span>
               <Meter
                 value={player.hp ?? 0}
                 max={maxHp}
                 height="sm"
                 tone={hpTone(player.hp ?? 0, maxHp)}
-                label={`${player.isMe ? "Your" : `${player.displayName}'s`} health`}
+                label={`${player.isMe ? "Your" : `${nameFor(player)}'s`} health`}
               />
             </div>
           ))}
@@ -352,7 +363,7 @@ export function RevealStage({
               className="text-body flex items-center justify-between gap-3 px-3 py-2.5"
             >
               <span className={player?.isMe ? "text-paper font-semibold" : "text-secondary"}>
-                {player?.isMe ? "You" : (player?.displayName ?? "Player")}
+                {player?.isMe ? "You" : player ? nameFor(player) : "Player"}
               </span>
               <span className="flex items-center gap-3">
                 {result.solved && result.elapsedMs !== null ? (
@@ -372,6 +383,277 @@ export function RevealStage({
             </Card>
           );
         })}
+      </div>
+    </Stage>
+  );
+}
+
+/**
+ * The reveal, for a solo run.
+ *
+ * The duel's reveal is a head-to-head — it lists every player and says "Nobody got this
+ * one" when the round is dead. Neither sentence means anything with one player, so the
+ * daily gets its own: what the song was, and whether you had it.
+ *
+ * This is the only place a daily player ever learns the answer, which is why the daily
+ * results screen does not repeat the track list.
+ */
+export function SoloRevealStage({
+  track,
+  result,
+  roundNumber,
+  totalRounds,
+}: {
+  track: RevealTrack | null;
+  result: RoundResultEntry | null;
+  roundNumber: number;
+  totalRounds: number;
+}) {
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    play("reveal");
+  }, []);
+
+  if (!track) return null;
+
+  const solved = result?.solved === true && result.elapsedMs !== null;
+
+  return (
+    <Stage keyName="solo-reveal" className="items-center py-8 text-center">
+      <p className="text-label text-muted font-semibold tracking-[0.35em] uppercase">
+        Song {roundNumber} of {totalRounds}
+      </p>
+
+      <motion.div
+        initial={reduced ? false : { scale: 0.5, opacity: 0, rotate: -6 }}
+        animate={{ scale: 1, opacity: 1, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 240, damping: 16 }}
+        className="relative"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={track.artworkUrl}
+          alt=""
+          className="border-line size-56 rounded-lg border object-cover sm:size-72"
+        />
+        {track.releaseYear ? (
+          <span className="bg-paper text-ink-900 text-label absolute -bottom-2 left-1/2 -translate-x-1/2 rounded-xs px-2 py-0.5 font-bold tabular-nums">
+            {track.releaseYear}
+          </span>
+        ) : null}
+      </motion.div>
+
+      <motion.div
+        initial={reduced ? false : { opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+        className="mt-3 flex flex-col items-center gap-2"
+      >
+        <h2 className="font-display text-display-2 text-paper font-bold text-balance">
+          {track.title}
+        </h2>
+        <p className="text-body-lg text-secondary">{track.artist}</p>
+
+        <div className="mt-1 flex items-center justify-center gap-2">
+          {track.categoryName && <Chip size="sm">{track.categoryName}</Chip>}
+          {track.difficulty !== undefined && (
+            <Chip size="sm" title={`Difficulty ${track.difficulty} of 5`}>
+              <span aria-hidden="true">
+                {"●".repeat(track.difficulty)}
+                <span className="text-faint">{"●".repeat(5 - track.difficulty)}</span>
+              </span>
+            </Chip>
+          )}
+        </div>
+      </motion.div>
+
+      {/* Stated in the second person, because there is nobody else in the run. */}
+      <motion.div
+        initial={reduced ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="flex items-center justify-center gap-3"
+      >
+        {solved ? (
+          <>
+            <TierChip tierId={tierIdFor(result!.elapsedMs!)} />
+            <span className="font-display text-secondary text-body-lg font-bold tabular-nums">
+              {(result!.elapsedMs! / 1000).toFixed(2)}s
+            </span>
+            <span className="font-display text-paper text-display-2 font-extrabold tabular-nums">
+              +{result!.points}
+            </span>
+          </>
+        ) : (
+          <span className="text-body-lg text-muted">You didn&rsquo;t get this one.</span>
+        )}
+      </motion.div>
+    </Stage>
+  );
+}
+
+/**
+ * The guess instrument.
+ *
+ * Shared by the duel and the daily — the act of naming a song is identical in both, and
+ * this is the one screen where a difference between modes would be felt as a handling
+ * bug rather than as a design.
+ *
+ * Bottom-anchored: the spine owns the middle; the guess field is locked to the bottom so
+ * a thumb never travels and the field does not move when the keyboard opens. Every
+ * millisecond spent reaching for the input is points lost.
+ */
+export function GuessingStage({
+  audio,
+  solved,
+  passed,
+  tierThisRound,
+  pointsThisRound,
+  lockedUntil,
+  feedback,
+  onGuess,
+  onPass,
+}: {
+  audio: ReturnType<typeof useRoundAudio>;
+  solved: boolean;
+  passed: boolean;
+  tierThisRound: string | null;
+  pointsThisRound: number;
+  lockedUntil: number;
+  feedback: string | null;
+  onGuess: (text: string) => Promise<{ status: string }>;
+  onPass: () => void;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const beat = REVEAL_BEATS[audio.revealStage];
+  const nextBeat = REVEAL_BEATS[audio.revealStage + 1];
+
+  if (audio.error !== null) {
+    return (
+      <Stage keyName="audio-error" className="items-center py-16 text-center">
+        <Card className="flex flex-col gap-2 p-6">
+          <p className="text-body-lg text-paper">
+            {audio.error === "audio-timeout"
+              ? "This track took too long to load."
+              : audio.error === "playback-blocked"
+                ? "Your browser blocked audio playback."
+                : "This track's audio failed to load."}
+          </p>
+          <p className="text-body-sm text-muted">The round moves on shortly.</p>
+        </Card>
+      </Stage>
+    );
+  }
+
+  const secondsToNextBeat = nextBeat
+    ? Math.max(0, Math.ceil((nextBeat.atRoundMs - audio.displayMs) / 1000))
+    : null;
+  const secondsLeft = Math.max(0, (ROUND_DURATION_MS - audio.displayMs) / 1000);
+
+  return (
+    <Stage
+      keyName="guessing"
+      className="min-h-[calc(100dvh-var(--match-header,7rem))] justify-between gap-4 py-4"
+    >
+      <div className="flex flex-1 flex-col justify-center gap-4">
+        <Waveform
+          analyser={audio.analyser}
+          active={audio.phase === "playing"}
+          displayMs={audio.displayMs}
+          revealStage={audio.revealStage}
+          beats={REVEAL_BEATS}
+          roundDurationMs={ROUND_DURATION_MS}
+        />
+
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-body-sm text-secondary">
+            <span className="font-display text-paper font-bold tabular-nums">
+              {beat.playToMs / 1000}s
+            </span>{" "}
+            unlocked
+            {secondsToNextBeat !== null && (
+              <span className="text-muted"> · more in {secondsToNextBeat}s</span>
+            )}
+          </span>
+          <span
+            className={`font-display text-display-2 font-extrabold tabular-nums ${
+              secondsLeft <= 5 ? "text-signal-text" : "text-paper"
+            }`}
+          >
+            {secondsLeft.toFixed(1)}
+          </span>
+        </div>
+
+        {/* The clip is silent between unlocks. Saying so — and letting players
+            re-hear it — stops the silence reading as a fault. */}
+        {audio.phase === "playing" && !solved && !passed && (
+          <div className="flex justify-center">
+            <Button variant="secondary" size="sm" onClick={audio.replay}>
+              <Glyph name="sound" />
+              Replay {beat.playToMs / 1000}s
+            </Button>
+          </div>
+        )}
+
+        {!audio.ready && (
+          <p className="text-body-sm text-muted text-center" role="status">
+            Buffering audio…
+          </p>
+        )}
+      </div>
+
+      {/* Thumb zone. */}
+      <div className="flex flex-col gap-3">
+        {feedback && (
+          <motion.p
+            key={feedback}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            // Assertive: this is the answer to something the player just did, and it is
+            // only useful before the round moves on.
+            role="alert"
+            className="text-body text-paper text-center font-medium"
+          >
+            {feedback}
+          </motion.p>
+        )}
+
+        {solved ? (
+          <motion.div
+            initial={reduced ? false : { scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="flex flex-col items-center gap-2 py-4"
+            role="status"
+          >
+            {tierThisRound && <TierChip tierId={tierThisRound} />}
+            <p className="font-display text-display-1 text-paper font-extrabold tabular-nums">
+              +{pointsThisRound}
+            </p>
+            <p className="text-body-sm text-muted">Waiting for the round to end…</p>
+          </motion.div>
+        ) : passed ? (
+          <p className="text-body text-muted py-6 text-center" role="status">
+            Passed. Waiting for the round to end…
+          </p>
+        ) : (
+          <>
+            <GuessInput
+              onGuess={onGuess}
+              disabled={!audio.ready || audio.phase === "ended"}
+              lockedUntil={lockedUntil}
+              suppressSuggestions={audio.revealStage === 0}
+            />
+            <button
+              onClick={onPass}
+              disabled={!audio.ready}
+              className="text-body-sm text-muted hover:text-paper mx-auto rounded-xs px-3 py-2
+                         transition-colors disabled:opacity-40"
+            >
+              I don&rsquo;t know this one
+            </button>
+          </>
+        )}
       </div>
     </Stage>
   );
@@ -472,7 +754,7 @@ export function StandingsStage({
               {outcome === "time" && timeGapMs !== null
                 ? `Same call — decided by ${(timeGapMs / 1000).toFixed(2)}s`
                 : winner && !winner.isMe
-                  ? `${winner.displayName} was on a faster tier`
+                  ? `${nameFor(winner)} was on a faster tier`
                   : "Faster tier wins"}
             </p>
           </>
@@ -505,7 +787,7 @@ export function StandingsStage({
               <div className="text-body flex items-baseline justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-2">
                   <span className={player.isMe ? "text-paper font-semibold" : "text-secondary"}>
-                    {player.isMe ? "You" : player.displayName}
+                    {player.isMe ? "You" : nameFor(player)}
                   </span>
                   {player.isBot && <BotBadge />}
                   {dead && (
@@ -644,7 +926,7 @@ export function MilestoneStage({
               <div className="flex items-center justify-between gap-3">
                 <span className="text-body flex min-w-0 items-center gap-2 font-semibold">
                   <span className="truncate">
-                    {player.isMe ? "You" : player.displayName}
+                    {player.isMe ? "You" : nameFor(player)}
                   </span>
                   {player.isBot && <BotBadge />}
                 </span>
@@ -658,7 +940,7 @@ export function MilestoneStage({
                 value={player.hp ?? 0}
                 max={maxHp}
                 tone={hpTone(player.hp ?? 0, maxHp)}
-                label={`${player.isMe ? "Your" : `${player.displayName}'s`} health`}
+                label={`${player.isMe ? "Your" : `${nameFor(player)}'s`} health`}
               />
 
               <div className="grid grid-cols-3 gap-2 text-center">

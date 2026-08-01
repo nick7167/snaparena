@@ -46,3 +46,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright
+/playwright/.clerk/
+/e2e/screenshots/
+/e2e/.answers.json
+/test-results/
+/playwright-report/
+/blob-report/

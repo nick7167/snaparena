@@ -132,7 +132,7 @@ function Hub() {
   return (
     <div className="flex flex-col gap-8">
       <h1 className="font-display text-display-2 font-extrabold">
-        Welcome back{me?.displayName ? `, ${me.displayName}` : ""}
+        Welcome back{me?.handle ? `, @${me.handle}` : ""}
       </h1>
 
       {me === undefined ? (

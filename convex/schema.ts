@@ -107,6 +107,14 @@ export default defineSchema({
      */
     isBot: v.optional(v.boolean()),
     botPersonaId: v.optional(v.string()),
+    /**
+     * Whoever this player faced in their last practice match.
+     *
+     * Practice picks from the personas nearest the player's rating, and that set never
+     * changes on its own because practice never moves rating — so without remembering
+     * the last opponent the "random" pick would keep landing on the same bot.
+     */
+    lastPracticePersonaId: v.optional(v.string()),
 
     // --- guests -------------------------------------------------------------
     /**
@@ -274,6 +282,27 @@ export default defineSchema({
     passedRound: v.optional(v.number()),
     /** XP earned from this match, kept for the results screen breakdown. */
     xpEarned: v.optional(v.number()),
+    /**
+     * Itemised reasons the XP was awarded ("Rounds won x3"), straight from
+     * `awardMatchXp`. Persisted rather than recomputed because the awards are expected
+     * to be retuned — a recomputed breakdown would silently rewrite what past matches
+     * paid, the same reasoning `roundLog` is stored under.
+     */
+    xpBreakdown: v.optional(
+      v.array(v.object({ reason: v.string(), amount: v.number() })),
+    ),
+    /**
+     * Level either side of this match, so the results screen can animate real progress
+     * and detect a level-up.
+     *
+     * Stored rather than derived: `users.xp` has already moved on by the time anyone
+     * reads this, so the level the player was BEFORE the match is unrecoverable from
+     * the user row alone.
+     */
+    levelBefore: v.optional(v.number()),
+    levelAfter: v.optional(v.number()),
+    /** Lifetime XP after this match, the denominator for the results progress bar. */
+    xpAfter: v.optional(v.number()),
     /** Badge ids newly unlocked by this match, for the post-match celebration. */
     badgesEarned: v.optional(v.array(v.string())),
     forfeited: v.boolean(),

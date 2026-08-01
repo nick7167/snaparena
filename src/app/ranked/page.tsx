@@ -5,15 +5,25 @@ import { SignedIn, SignedOut } from "../auth-gate";
 import { motion } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { RoundRunner } from "@/game/RoundRunner";
 import { DUEL_STARTING_HP, VETO_BANS_PER_PLAYER, VETO_PHASE_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
-import { Avatar, BotBadge, PhaseTimer } from "@/game/ui";
+import { Avatar, BotBadge, PhaseTimer, nameFor } from "@/game/ui";
+import { useNow } from "@/game/usePrefersReducedMotion";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Card } from "@/ui/Surface";
+
+/**
+ * How long a player waits alone before ranked offers them a bot automatically.
+ *
+ * Long enough that a real opponent had a genuine chance to arrive; short enough that
+ * walking away from an empty queue is not the outcome. The manual button is available
+ * from the first second regardless — this is the safety net, not the front door.
+ */
+const BOT_FALLBACK_MS = 90_000;
 
 /**
  * Ranked is sign-in only, and always will be — a ladder needs a persistent identity to
@@ -81,6 +91,19 @@ function Queue({ onMatched }: { onMatched: (id: Id<"matches">) => void }) {
   const enqueue = useMutation(api.ranked.enqueue);
   const dequeue = useMutation(api.ranked.dequeue);
   const tryMatchmake = useMutation(api.ranked.tryMatchmake);
+  const startBotMatch = useMutation(api.bots.startBotMatch);
+
+  // Ticked client-side from the server's `enqueuedAt`. A Convex query does not re-run
+  // on a timer, so anything elapsed has to be computed here or it stands still.
+  const now = useNow(1000);
+
+  const startBot = useCallback(async () => {
+    const result = await startBotMatch({});
+    if (result.status === "started" && result.matchId) {
+      play("whoosh");
+      onMatched(result.matchId);
+    }
+  }, [startBotMatch, onMatched]);
 
   useEffect(() => {
     if (!status?.inQueue) return;
@@ -94,17 +117,49 @@ function Queue({ onMatched }: { onMatched: (id: Id<"matches">) => void }) {
     return () => clearInterval(id);
   }, [status?.inQueue, tryMatchmake, onMatched]);
 
+  const waitingMs = status?.enqueuedAt ? Math.max(0, now - status.enqueuedAt) : 0;
+
+  /**
+   * Automatic bot fallback.
+   *
+   * A queue with nobody in it is a mode that does not exist, and at launch that is
+   * every queue. 90 seconds is long enough that a real opponent genuinely had a chance
+   * to arrive first — the point is to make ranked playable, not to quietly replace it
+   * with bot matches.
+   *
+   * Derived rather than stored, so the banner and the timer below can never disagree
+   * about whether the fallback is running.
+   */
+  const fallingBack =
+    status?.inQueue === true &&
+    status.playersWaiting <= 1 &&
+    waitingMs >= BOT_FALLBACK_MS;
+
+  /**
+   * Announced for three seconds before it fires. Being dropped into a match against
+   * software without warning is precisely what the human-only rule existed to prevent,
+   * and this notice is what replaces that rule.
+   */
+  useEffect(() => {
+    if (!fallingBack) return;
+    const id = setTimeout(() => void startBot(), 3000);
+    return () => clearTimeout(id);
+  }, [fallingBack, startBot]);
+
   if (!status) return <p className="text-body text-muted px-4">Loading…</p>;
 
   if (status.inQueue) {
-    const waitingSeconds = Math.floor(status.waitingMs / 1000);
-    const alone = status.playersWaiting <= 1;
+    const waitingSeconds = Math.floor(waitingMs / 1000);
 
     return (
       <div className="flex flex-col gap-4 px-4">
-        <h1 className="font-display text-display-1 font-extrabold">Searching…</h1>
-        <p className="text-body text-secondary tabular-nums">
-          {waitingSeconds}s — widening the rating range
+        <h1 className="font-display text-display-1 font-extrabold">
+          {fallingBack ? "No humans found" : "Searching…"}
+        </h1>
+        <p className="text-body text-secondary tabular-nums" role="status">
+          {fallingBack
+            ? "Matching you with a bot — this one won't affect your rating."
+            : `${waitingSeconds}s — widening the rating range`}
         </p>
 
         <div className="bg-ink-inset h-1 overflow-hidden rounded-full">
@@ -115,15 +170,27 @@ function Queue({ onMatched }: { onMatched: (id: Id<"matches">) => void }) {
           />
         </div>
 
-        {alone && waitingSeconds > 15 && (
-          <Card className="text-body text-secondary flex flex-col items-start gap-3 p-4">
-            <p>
-              Nobody else is queued right now. The ladder is new — it fills up at peak
-              hours.
+        {/* Offered from the first second rather than after an arbitrary wait: an empty
+            ladder should hand you a game immediately, not make you earn one by
+            waiting. The automatic fallback above is the safety net for someone who
+            walks away, not the primary route. */}
+        {!fallingBack && (
+          <Card className="flex flex-col items-start gap-3 p-4">
+            <p className="text-body text-secondary">
+              Don&rsquo;t want to wait? Play a bot near your rating right now.{" "}
+              <span className="text-paper font-medium">
+                XP and badges count; rating does not.
+              </span>
             </p>
-            <Link href="/daily" className="text-paper rounded-xs font-semibold underline">
-              Play today&rsquo;s challenge instead
-            </Link>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="secondary" onClick={() => void startBot()}>
+                <BotBadge />
+                Play a bot instead
+              </Button>
+              <Link href="/daily" className="text-paper rounded-xs font-semibold underline">
+                Today&rsquo;s challenge
+              </Link>
+            </div>
           </Card>
         )}
 
@@ -245,7 +312,7 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
 
   if (!draft) return <p className="text-body text-muted px-4">Loading draft…</p>;
 
-  const opponentName = draft.opponent?.displayName ?? "Opponent";
+  const opponentName = draft.opponent ? nameFor(draft.opponent) : "Opponent";
 
   async function ban(categoryId: Id<"categories">) {
     setPlacing(true);

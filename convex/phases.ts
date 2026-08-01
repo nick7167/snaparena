@@ -322,9 +322,23 @@ async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promis
     results,
   };
 
-  await enterPhase(ctx, match._id, "standings", {
-    roundLog: [...(match.roundLog ?? []), logEntry],
-  });
+  const roundLog = [...(match.roundLog ?? []), logEntry];
+
+  /**
+   * The daily has no standings beat.
+   *
+   * Standings exists to drain health bars and name a round winner, and a solo run has
+   * neither — it rendered "THE SONG WINS · neither of you got it" at a player with no
+   * opponent. Log the round and go straight on to the next one.
+   */
+  if (match.mode === "daily") {
+    await ctx.db.patch(match._id, { roundLog });
+    const refreshed = await ctx.db.get(match._id);
+    if (refreshed) await continueOrFinish(ctx, refreshed);
+    return;
+  }
+
+  await enterPhase(ctx, match._id, "standings", { roundLog });
 }
 
 /** Decides after the standings beat whether the match continues, and to which phase. */

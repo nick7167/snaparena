@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { XP_AWARDS } from "./config";
+import { PRACTICE_XP_MULTIPLIER, XP_AWARDS } from "./config";
 import { awardMatchXp, levelForXp, xpForLevel } from "./xp";
 
 describe("xpForLevel", () => {
@@ -117,5 +117,50 @@ describe("awardMatchXp", () => {
   it("omits zero-value lines from the breakdown", () => {
     const award = awardMatchXp({ ...base, roundsWon: 0, snapGuesses: 0 });
     expect(award.breakdown.every((entry) => entry.amount > 0)).toBe(true);
+  });
+});
+
+describe("awardMatchXp — practice discount", () => {
+  const base = {
+    won: true,
+    roundsWon: 3,
+    correctGuesses: 6,
+    snapGuesses: 2,
+  };
+
+  it("pays practice roughly half of the equivalent ranked match", () => {
+    // The defect this guards: practice used to out-earn a ranked LOSS while being
+    // instant, unlimited, risk-free and against software — so farming bots was the
+    // fastest way to level and nothing rewarded queueing for a human.
+    const practice = awardMatchXp({ ...base, mode: "practice" });
+    const ranked = awardMatchXp({ ...base, mode: "ranked" });
+
+    expect(practice.total).toBeLessThan(ranked.total * PRACTICE_XP_MULTIPLIER + 10);
+    expect(practice.total).toBeGreaterThan(0);
+  });
+
+  it("never lets practice out-earn a ranked loss", () => {
+    const practice = awardMatchXp({ ...base, mode: "practice" });
+    const rankedLoss = awardMatchXp({ ...base, mode: "ranked", won: false });
+    expect(practice.total).toBeLessThan(rankedLoss.total);
+  });
+
+  it("still sums its own breakdown once discounted", () => {
+    // Scaling the total without scaling the lines would print an itemised list that
+    // visibly disagrees with the number beside it.
+    const award = awardMatchXp({ ...base, mode: "practice" });
+    const summed = award.breakdown.reduce((total, entry) => total + entry.amount, 0);
+    expect(award.total).toBe(summed);
+  });
+
+  it("leaves every other mode at full rate", () => {
+    for (const mode of ["ranked", "daily", "room"] as const) {
+      const award = awardMatchXp({ ...base, mode });
+      const summed = award.breakdown.reduce((total, entry) => total + entry.amount, 0);
+      expect(award.total).toBe(summed);
+    }
+    expect(awardMatchXp({ ...base, mode: "room" }).total).toBeGreaterThan(
+      awardMatchXp({ ...base, mode: "practice" }).total,
+    );
   });
 });

@@ -25,7 +25,9 @@ export type GlyphName =
   | "draw"
   | "song"
   | "settings"
-  | "leave";
+  | "leave"
+  | "user" // the player themselves — profile, account
+  | "chevron"; // a menu that opens
 
 const PATHS: Record<GlyphName, React.ReactNode> = {
   // A struck spark — the SNAP mark.
@@ -88,6 +90,15 @@ const PATHS: Record<GlyphName, React.ReactNode> = {
       <path d="M12.5 8h-6m6 0-2.2-2.2M12.5 8l-2.2 2.2" />
     </>
   ),
+  // Head and shoulders. The one mark that means "you" rather than "your standing".
+  user: (
+    <>
+      <circle cx="8" cy="5.5" r="2.75" />
+      <path d="M2.75 14c0-2.9 2.35-5 5.25-5s5.25 2.1 5.25 5" />
+    </>
+  ),
+  // Direction of travel for a disclosure. Rotated by the caller when it points up.
+  chevron: <path d="M4 6.5 8 10.5l4-4" />,
 };
 
 export function Glyph({

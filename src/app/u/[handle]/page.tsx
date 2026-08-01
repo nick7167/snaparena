@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { api } from "../../../../convex/_generated/api";
 import { BADGES } from "@/engine/badges";
-import { Avatar, BotBadge } from "@/game/ui";
+import { Avatar, BotBadge, nameFor } from "@/game/ui";
 import { Card, Chip, Empty, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Glyph } from "@/ui/Glyph";
@@ -59,21 +59,25 @@ export default function ProfilePage() {
       {/* Identity */}
       <Card className="flex flex-col gap-4 p-5">
         <div className="flex items-start gap-4">
+          {/* The avatar fallback is a single initial, so it takes the bare handle —
+              "@" is not an initial. */}
           <Avatar
             url={profile.avatarUrl}
-            name={profile.displayName}
+            name={profile.isBot ? profile.displayName : profile.handle}
             className="size-16 text-2xl"
           />
 
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-display text-display-2 truncate font-extrabold">
-                {profile.displayName}
+                {nameFor(profile)}
               </h1>
               {profile.isBot && <BotBadge size="md" />}
               {isMe && <Chip size="sm">you</Chip>}
             </div>
-            <p className="text-body text-muted">@{profile.handle}</p>
+            {/* Only bots carry a second line: their proper name heads the card, so the
+                handle is extra information rather than the same string twice. */}
+            {profile.isBot && <p className="text-body text-muted">@{profile.handle}</p>}
 
             {card?.bio && (
               <p className="text-body text-secondary mt-1">{card.bio}</p>
@@ -119,7 +123,7 @@ export default function ProfilePage() {
 
       {/* Reporting a bio you can't see is meaningless, and you can't report yourself. */}
       {!isMe && !profile.isBot && card?.bio && me && (
-        <ReportDialog userId={profile.userId} displayName={profile.displayName} />
+        <ReportDialog userId={profile.userId} displayName={nameFor(profile)} />
       )}
     </div>
   );

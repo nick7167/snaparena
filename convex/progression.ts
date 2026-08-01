@@ -9,6 +9,7 @@ import {
   type CategoryRoundResult,
   type Outcome,
 } from "../src/engine/elo";
+import { wonRound } from "../src/engine/duel";
 import { evaluateBadges } from "../src/engine/badges";
 import { awardMatchXp } from "../src/engine/xp";
 import { levelForXp } from "../src/engine/xp";
@@ -120,6 +121,10 @@ async function applyProgression(
   // Bots earn nothing. Their rating is a fixed persona property and levelling them
   // up would put synthetic accounts on progression leaderboards.
   if (user.isBot) return;
+  // Neither do guests. A guest row is a throwaway identity that can only play the
+  // daily, and `claimGuestRun` transfers the RUN to the real account but never the XP —
+  // so anything paid here was written to a row nobody will ever see again.
+  if (user.isGuest) return;
 
   const mine = guesses.filter(
     (guess) => guess.userId === player.userId && guess.correct,
@@ -139,12 +144,19 @@ async function applyProgression(
     snapGuesses,
   });
 
-  const totalXp = (user.xp ?? 0) + xpAward.total;
+  const xpBefore = user.xp ?? 0;
+  const totalXp = xpBefore + xpAward.total;
   const totalSnaps = (user.snapGuesses ?? 0) + snapGuesses;
+
+  // Captured either side of the patch below: once `users.xp` moves, the level the
+  // player held going in is unrecoverable, and that is exactly what the results screen
+  // needs to animate from and to detect a level-up against.
+  const levelBefore = levelForXp(xpBefore).level;
+  const levelAfter = levelForXp(totalXp).level;
 
   await ctx.db.patch(user._id, {
     xp: totalXp,
-    level: levelForXp(totalXp).level,
+    level: levelAfter,
     snapGuesses: totalSnaps,
   });
 
@@ -158,7 +170,14 @@ async function applyProgression(
     wonSuddenDeath: won && match.suddenDeath === true,
   });
 
-  await ctx.db.patch(player._id, { xpEarned: xpAward.total, badgesEarned: badges });
+  await ctx.db.patch(player._id, {
+    xpEarned: xpAward.total,
+    xpBreakdown: xpAward.breakdown.map((entry) => ({ ...entry })),
+    levelBefore,
+    levelAfter,
+    xpAfter: totalXp,
+    badgesEarned: badges,
+  });
 }
 
 /** Starting health for the mode, so badge thresholds compare against the right baseline. */
@@ -170,7 +189,8 @@ function startingHpFor(mode: Doc<"matches">["mode"]): number {
  * Rounds in which this player out-scored every opponent.
  *
  * Replaces the old set count: with no sets, a round win is the natural unit of
- * progress to pay XP on.
+ * progress to pay XP on. The "did I take this round" rule itself lives in
+ * `wonRound` — see there for why the no-opponent case is explicit.
  */
 function countRoundsWon(
   match: Doc<"matches">,
@@ -185,11 +205,8 @@ function countRoundsWon(
         .filter((g) => g.roundIndex === round && g.userId === id && g.correct)
         .reduce((sum, g) => sum + g.points, 0);
 
-    const mine = pointsFor(userId);
-    if (mine === 0) continue;
-
     const others = match.playerIds.filter((id) => id !== userId).map(pointsFor);
-    if (others.every((points) => mine > points)) won++;
+    if (wonRound(pointsFor(userId), others)) won++;
   }
 
   return won;

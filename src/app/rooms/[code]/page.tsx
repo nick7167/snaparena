@@ -92,16 +92,9 @@ export default function RoomPage() {
               emphasis={member.userId === me?._id}
               className="flex items-center gap-3 px-3 py-2.5"
             >
-              <Avatar
-                url={member.avatarUrl}
-                name={member.displayName}
-                className="size-9"
-              />
+              <Avatar url={member.avatarUrl} name={member.handle} className="size-9" />
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-body truncate font-medium">
-                  {member.displayName}
-                </span>
-                <span className="text-body-sm text-muted truncate">@{member.handle}</span>
+                <span className="text-body truncate font-medium">@{member.handle}</span>
               </span>
               {member.isHost && <Chip size="sm">host</Chip>}
             </Card>

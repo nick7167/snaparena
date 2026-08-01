@@ -6,7 +6,13 @@
  * keeps a bad session from feeling wasted.
  */
 
-import { XP_AWARDS, XP_BASE, XP_CURVE_EXPONENT, type GameMode } from "./config";
+import {
+  PRACTICE_XP_MULTIPLIER,
+  XP_AWARDS,
+  XP_BASE,
+  XP_CURVE_EXPONENT,
+  type GameMode,
+} from "./config";
 
 /** Total XP required to have reached a given level. Level 1 starts at 0. */
 export function xpForLevel(level: number): number {
@@ -90,8 +96,19 @@ export function awardMatchXp(params: {
   add(`Correct x${params.correctGuesses}`, params.correctGuesses * XP_AWARDS.perCorrectGuess);
   add(`Snap calls x${params.snapGuesses}`, params.snapGuesses * XP_AWARDS.snapBonus);
 
+  // Scale every LINE rather than the total, so the itemised breakdown the results
+  // screen shows still adds up to the number next to it. Scaling only the total would
+  // print a list that visibly disagrees with its own sum.
+  const scale = params.mode === "practice" ? PRACTICE_XP_MULTIPLIER : 1;
+  const scaled =
+    scale === 1
+      ? breakdown
+      : breakdown
+          .map((entry) => ({ reason: entry.reason, amount: Math.round(entry.amount * scale) }))
+          .filter((entry) => entry.amount > 0);
+
   return {
-    total: breakdown.reduce((sum, entry) => sum + entry.amount, 0),
-    breakdown,
+    total: scaled.reduce((sum, entry) => sum + entry.amount, 0),
+    breakdown: scaled,
   };
 }

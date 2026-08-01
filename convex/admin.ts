@@ -128,3 +128,55 @@ export const upsertTracks = mutation({
     return { created, updated, unknownSlugs: [...unknownSlugs] };
   },
 });
+
+/**
+ * Removes a test account and everything that would otherwise outlive it.
+ *
+ * The end-to-end suite creates a throwaway Clerk account per run to exercise
+ * onboarding and a first daily, and deletes the Clerk user afterwards. That leaves the
+ * Convex side behind — and while an unplaced user is invisible on the global
+ * leaderboard, `dailyRuns` has no such filter, so every run added a synthetic top score
+ * to the daily board. Six of them appeared before it was noticed.
+ *
+ * Scoped to a handle prefix so it can only ever reach accounts the suite itself made.
+ * Matches are left alone: `guesses` and `matchPlayers` reference them, and a daily match
+ * with no board entry is inert.
+ */
+export const purgeTestUser = mutation({
+  args: { secret: v.string(), handle: v.string() },
+  handler: async (ctx, args) => {
+    assertAdmin(args.secret);
+
+    if (!args.handle.startsWith(TEST_HANDLE_PREFIX)) {
+      throw new Error(`Refusing to purge a handle outside "${TEST_HANDLE_PREFIX}"`);
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_handle", (q) => q.eq("handle", args.handle))
+      .unique();
+
+    if (!user) return { purged: false as const };
+
+    const runs = await ctx.db
+      .query("dailyRuns")
+      .withIndex("by_user_date", (q) => q.eq("userId", user._id))
+      .take(50);
+
+    for (const run of runs) await ctx.db.delete(run._id);
+
+    const badges = await ctx.db
+      .query("userBadges")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .take(50);
+
+    for (const badge of badges) await ctx.db.delete(badge._id);
+
+    await ctx.db.delete(user._id);
+
+    return { purged: true as const, runsRemoved: runs.length };
+  },
+});
+
+/** Handles the e2e suite is allowed to create, and therefore allowed to purge. */
+export const TEST_HANDLE_PREFIX = "e2e";

@@ -223,6 +223,45 @@ export function Avatar({
   );
 }
 
+/**
+ * The public name for a player.
+ *
+ * `@handle` is the username chosen during onboarding, which is exactly what onboarding
+ * promises it is: "how you'll appear on leaderboards and to your opponents". Until now
+ * every one of those surfaces actually rendered `displayName` — the name Clerk pulled
+ * from the Google account — so the promise was false and players were published under a
+ * real name they never chose to show.
+ *
+ * Bots are the deliberate exception. "Seoul Search" is a persona's proper name and
+ * reads better on a VS card than @seoulsearch.
+ */
+export function nameFor(player: {
+  handle?: string | null;
+  displayName?: string | null;
+  isBot?: boolean;
+}): string {
+  if (player.isBot) return player.displayName ?? "Bot";
+  return player.handle ? `@${player.handle}` : (player.displayName ?? "Player");
+}
+
+/**
+ * Health as heat.
+ *
+ * Full health burns bright, low health cools to an ember, zero goes out entirely. This
+ * is the one place colour is derived rather than passed, because it means the same
+ * thing on every bar in the app.
+ *
+ * Lives here rather than in RoundRunner because stages.tsx and MatchEnd.tsx both need
+ * it, and importing it from RoundRunner made those three files a cycle.
+ */
+export function hpTone(hp: number, maxHp: number): "paper" | "gold" | "signal" | "muted" {
+  if (hp <= 0) return "muted";
+  const pct = maxHp > 0 ? hp / maxHp : 0;
+  if (pct < 0.25) return "signal";
+  if (pct < 0.6) return "gold";
+  return "paper";
+}
+
 export function BadgeRow({
   badges,
   max = 6,

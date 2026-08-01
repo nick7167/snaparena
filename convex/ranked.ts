@@ -44,7 +44,16 @@ export const queueStatus = query({
 
     return {
       inQueue: entry !== null,
-      waitingMs: entry ? Date.now() - entry.enqueuedAt : 0,
+      /**
+       * The wall-clock the player joined, NOT an elapsed duration.
+       *
+       * A `Date.now() - enqueuedAt` computed here is frozen at whatever instant the
+       * query last re-ran, and a Convex query only re-runs when the data it read
+       * changes — so the elapsed figure this used to return never advanced while
+       * waiting. The on-screen "0s — widening the rating range" counter was stuck for
+       * that reason. Handing back the timestamp lets the client tick it honestly.
+       */
+      enqueuedAt: entry?.enqueuedAt ?? null,
       /** Shown honestly in the UI — an empty pool must not spin forever. */
       playersWaiting: queueSize,
     };

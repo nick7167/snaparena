@@ -127,7 +127,17 @@ export function Meter({
       aria-valuemin={0}
       aria-valuemax={max}
       aria-label={label}
-      className={`bg-ink-inset relative overflow-hidden rounded-full ${heights[height]} ${className}`}
+      /**
+       * The hairline is what makes an EMPTY meter legible.
+       *
+       * `--color-ink-inset` is #0a0c12 against an #0f1219 page, so a bar at 0% used to
+       * render as nothing at all — a new player at 0/300 XP saw no progress track, only
+       * a gap between two labels. Drawn as an inset shadow rather than a border so it
+       * costs no layout at any of the four heights; `h-1` has no room to give.
+       */
+      className={`bg-ink-inset relative overflow-hidden rounded-full
+                  shadow-[inset_0_0_0_1px_var(--color-line)]
+                  ${heights[height]} ${className}`}
     >
       {children}
       <div

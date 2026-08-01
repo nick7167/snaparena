@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import {
   GUEST_CLERK_PREFIX,
@@ -99,27 +99,9 @@ export const start = mutation({
      * run is only recorded by `complete`. So abandoning a daily part-way and calling
      * start again used to mint a second match over the same five tracks — which is a
      * second attempt at the same songs, having already heard them.
-     *
-     * Returning the live match closes that, and doubles as the reload story: refreshing
-     * mid-run drops you back into the match you were in rather than a fresh one.
      */
-    const myMatches = await ctx.db
-      .query("matchPlayers")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .order("desc")
-      .take(10);
-
-    for (const entry of myMatches) {
-      const existing = await ctx.db.get(entry.matchId);
-      if (
-        existing &&
-        existing.mode === "daily" &&
-        existing.status === "active" &&
-        todayKey(existing.createdAt) === date
-      ) {
-        return { status: "started" as const, matchId: existing._id, date };
-      }
-    }
+    const live = await findLiveDailyMatch(ctx, user._id, date);
+    if (live) return { status: "started" as const, matchId: live, date };
 
     const trackIds = await ensureChallenge(ctx, date);
     if (trackIds.length < DAILY_SONGS) {
@@ -150,6 +132,61 @@ export const start = mutation({
     await startCountdown(ctx, matchId, 0);
 
     return { status: "started" as const, matchId, date };
+  },
+});
+
+/**
+ * This player's unfinished daily match for `date`, if there is one.
+ *
+ * Bounded scan over recent match memberships — a player's daily is always among their
+ * last handful of matches, and there is no index on (userId, mode).
+ */
+async function findLiveDailyMatch(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  date: string,
+): Promise<Id<"matches"> | null> {
+  const recent = await ctx.db
+    .query("matchPlayers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .take(10);
+
+  for (const entry of recent) {
+    const match = await ctx.db.get(entry.matchId);
+    if (
+      match &&
+      match.mode === "daily" &&
+      match.status === "active" &&
+      todayKey(match.createdAt) === date
+    ) {
+      return match._id;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The run currently in progress, so a reload drops straight back into it.
+ *
+ * `start` has always resumed rather than restarted, but only when called — and the
+ * client holds its match id in component state, so refreshing mid-run dropped the
+ * player onto the landing screen looking at a "Start" button with a live match sitting
+ * behind it. The resume was there; nothing asked for it.
+ *
+ * Returns null once the run is recorded, so a finished player falls through to their
+ * result rather than being pulled back into a completed match.
+ */
+export const activeRun = query({
+  args: { guestToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const user = await actingUser(ctx, args.guestToken);
+    if (!user) return null;
+
+    const date = todayKey();
+    const matchId = await findLiveDailyMatch(ctx, user._id, date);
+    return matchId ? { matchId, date } : null;
   },
 });
 
@@ -283,10 +320,12 @@ export const leaderboard = query({
 
     const users = await Promise.all(runs.map((run) => ctx.db.get(run.userId)));
 
+    // `handle` is the name players chose; `displayName` is whatever Clerk got from
+    // their Google account and is deliberately not returned — the board should not be
+    // the place someone discovers their real name is public.
     return runs.map((run, index) => ({
       rank: index + 1,
       handle: users[index]?.handle ?? "unknown",
-      displayName: users[index]?.displayName ?? "Unknown",
       avatarUrl: users[index]?.avatarUrl,
       totalPoints: run.totalPoints,
       perRoundMs: run.perRoundMs,
@@ -342,6 +381,41 @@ export const myRun = query({
       rank: better.length + 1,
       totalPlayers: isGuest ? total + 1 : total,
       isGuest,
+      xpEarned: isGuest ? null : await xpEarnedForRun(ctx, user._id, date),
     };
   },
 });
+
+/**
+ * XP the daily match on `date` actually paid this player.
+ *
+ * A read-side join rather than a field on `dailyRuns`, because the two writes race:
+ * `complete` is client-triggered and `progression.finalizeMatch` is scheduled from
+ * `finishMatch`, so neither can be relied on to land first. Reading it means whichever
+ * order they happen in, the number is right once it exists — and null until it does,
+ * which the results screen renders as "no line yet" rather than as zero.
+ *
+ * Bounded scan over the same recent-matches window `start` already uses. Returns the
+ * awarded total, not the base rate: correct guesses and snap calls are both in there.
+ */
+async function xpEarnedForRun(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  date: string,
+): Promise<number | null> {
+  const recent = await ctx.db
+    .query("matchPlayers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .take(10);
+
+  for (const entry of recent) {
+    if (entry.xpEarned === undefined) continue;
+    const match = await ctx.db.get(entry.matchId);
+    if (match?.mode === "daily" && todayKey(match.createdAt) === date) {
+      return entry.xpEarned;
+    }
+  }
+
+  return null;
+}

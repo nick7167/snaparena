@@ -19,6 +19,7 @@ import {
   roomDamage,
   roomPlacings,
   tieDamage,
+  wonRound,
   type DuelPlayerState,
   type RoundScore,
 } from "./duel";
@@ -369,5 +370,29 @@ describe("isMilestoneRound", () => {
 
   it("never fires when disabled", () => {
     expect(isMilestoneRound(5, 0)).toBe(false);
+  });
+});
+
+describe("wonRound", () => {
+  it("is won by out-scoring every opponent", () => {
+    expect(wonRound(100, [55])).toBe(true);
+    expect(wonRound(100, [55, 25])).toBe(true);
+  });
+
+  it("is not won by tying or losing", () => {
+    expect(wonRound(55, [55])).toBe(false);
+    expect(wonRound(25, [55])).toBe(false);
+    expect(wonRound(100, [55, 100])).toBe(false);
+  });
+
+  it("is not won by scoring nothing", () => {
+    expect(wonRound(0, [0])).toBe(false);
+  });
+
+  it("is never won when there are no opponents", () => {
+    // The daily XP leak. `[].every(...)` is vacuously true, so a solo run used to count
+    // every solved song as a round won against nobody and paid the bonus for it.
+    expect(wonRound(100, [])).toBe(false);
+    expect(wonRound(0, [])).toBe(false);
   });
 });

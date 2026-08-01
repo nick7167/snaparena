@@ -5,11 +5,13 @@ import {
   BOT_BAN_MIN_MS,
   BOT_MIN_REACTION_MS,
   BOT_PERSONAS,
+  PRACTICE_POOL_SIZE,
   botBanDelayMs,
   chooseBotBan,
   knowsTrackProbability,
   personaById,
   personaNearestElo,
+  pickPracticePersona,
   planBotRound,
   sampleReactionMs,
   type Rng,
@@ -343,5 +345,48 @@ describe("botBanDelayMs", () => {
 
   it("never bans instantly — that reads as a script, not an opponent", () => {
     expect(botBanDelayMs(seeded([0]))).toBeGreaterThanOrEqual(BOT_BAN_MIN_MS);
+  });
+});
+
+describe("pickPracticePersona", () => {
+  it("draws from the personas nearest the rating", () => {
+    // Repeated draws must never wander outside the pool, or practice stops being a
+    // fair contest — a Bronze player should not meet The Oracle.
+    const nearest = [...BOT_PERSONAS]
+      .sort((a, b) => Math.abs(a.elo - 1000) - Math.abs(b.elo - 1000))
+      .slice(0, PRACTICE_POOL_SIZE)
+      .map((persona) => persona.id);
+
+    for (let draw = 0; draw < 40; draw++) {
+      const picked = pickPracticePersona(1000, undefined, seeded([draw / 40]));
+      expect(nearest).toContain(picked.id);
+    }
+  });
+
+  it("never returns the opponent just played", () => {
+    // The whole point of the rotation: the deterministic nearest-Elo pick meant every
+    // practice match drew the same bot forever.
+    const first = pickPracticePersona(1000, undefined, seeded([0]));
+
+    for (let draw = 0; draw < 20; draw++) {
+      const next = pickPracticePersona(1000, first.id, seeded([draw / 20]));
+      expect(next.id).not.toBe(first.id);
+    }
+  });
+
+  it("reaches every persona in the pool across draws", () => {
+    const seen = new Set<string>();
+    for (let draw = 0; draw < 30; draw++) {
+      seen.add(pickPracticePersona(1000, undefined, seeded([draw / 30])).id);
+    }
+    expect(seen.size).toBe(PRACTICE_POOL_SIZE);
+  });
+
+  it("still returns someone when the last opponent is the only candidate", () => {
+    // Degenerate but reachable if the roster ever shrinks: excluding the last opponent
+    // must not leave the caller with nothing to play against.
+    const only = BOT_PERSONAS[0];
+    const picked = pickPracticePersona(only.elo, only.id, seeded([0]));
+    expect(picked).toBeDefined();
   });
 });

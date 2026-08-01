@@ -1,6 +1,6 @@
 "use client";
 
-import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignInButton, useClerk, useUser } from "@clerk/nextjs";
 import { SignedIn, SignedOut } from "./auth-gate";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
@@ -12,6 +12,8 @@ import { levelForXp } from "@/engine/xp";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Button } from "@/ui/Button";
 import { Glyph, type GlyphName } from "@/ui/Glyph";
+import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
+import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
 import { clearGuestToken, getGuestToken } from "./guest";
 import {
@@ -99,21 +101,8 @@ function Sidebar() {
 
       <div className="border-line flex flex-col gap-3 border-t p-4">
         <SignedIn>
-          <RankBlock />
-          <div className="flex items-center justify-between">
-            <UserButton />
-            <div className="flex items-center gap-1">
-              <Link
-                href="/settings"
-                aria-label="Settings"
-                title="Settings"
-                className="text-muted hover:text-paper rounded-xs p-1 text-xl transition-colors"
-              >
-                <Glyph name="settings" />
-              </Link>
-              <MuteToggle />
-            </div>
-          </div>
+          <LevelBlock />
+          <UserMenu side="top" align="start" />
         </SignedIn>
 
         <SignedOut>
@@ -128,50 +117,160 @@ function Sidebar() {
 }
 
 /**
- * Persistent standing.
+ * Progression, and only progression.
  *
- * Your rank is visible on every page, which is what makes a ladder feel like a ladder
- * rather than a screen you visit.
+ * Level is XP — it comes from every mode, never decreases, and measures time invested.
+ * Rank is Elo, lives on the user menu below this, and measures standing against other
+ * players. They are separate systems, so they get separate blocks; the old footer
+ * printed `1000 · L4` on one line and invited exactly the confusion that implies.
  *
- * Shows rating, level and placement progress — every value straight off the existing
- * `users.me` query. Deliberately no win/loss record: the user row carries `rankedWins`
- * and `gamesPlayed`, but `gamesPlayed` counts daily and room matches too, so a losses
- * figure derived by subtraction would be wrong. Better to omit a stat than invent one.
+ * Renders during placements too. The old block hid level entirely until a player had
+ * placed, which meant the one number a new player IS accumulating was invisible for
+ * their first five matches.
  */
-function RankBlock() {
+function LevelBlock() {
   const me = useQuery(api.users.me, {});
   if (!me) return null;
 
-  const rank = rankForElo(me.elo);
   const level = levelForXp(me.xp ?? 0);
+  const remaining = Math.max(0, level.xpForNextLevel - level.xpIntoLevel);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-display text-body-sm text-paper font-bold tracking-wider">
+          LVL {level.level}
+        </span>
+        <span className="text-label text-muted tabular-nums">
+          {level.xpIntoLevel} / {level.xpForNextLevel}
+        </span>
+      </div>
+      <Meter
+        value={level.xpIntoLevel}
+        max={level.xpForNextLevel}
+        tone="gold"
+        height="sm"
+        label={`Level ${level.level}: ${level.xpIntoLevel} of ${level.xpForNextLevel} XP`}
+      />
+      <span className="text-label text-muted tabular-nums">
+        {remaining} XP to Level {level.level + 1}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Identity and standing, in one control.
+ *
+ * Replaces four separate things that used to share this corner — the rank link, Clerk's
+ * `<UserButton>`, a settings gear and a mute toggle. Anchored at the bottom-left on
+ * desktop and top-right on mobile, which is where every app of this shape puts it.
+ *
+ * `Profile` and `Manage account` are deliberately different entries: the first is the
+ * in-game `/u/{handle}` page, the second is Clerk's own modal for email, password,
+ * connected accounts and MFA. Dropping `<UserButton>` removed the only route to the
+ * latter, so it has to be re-exposed rather than assumed.
+ */
+function UserMenu({
+  side,
+  align,
+  includeLevel = false,
+}: {
+  side: "top" | "bottom";
+  align: "start" | "end";
+  /** Mobile has no sidebar, so the level bar rides inside the menu instead. */
+  includeLevel?: boolean;
+}) {
+  const me = useQuery(api.users.me, {});
+  const { openUserProfile, signOut } = useClerk();
+  const muted = useSyncExternalStore(subscribeMute, getMuteSnapshot, getMuteServerSnapshot);
+
+  if (!me) return null;
+
+  const rank = rankForElo(me.elo);
   const placing = me.placementsRemaining > 0;
 
   return (
-    // The rank block is the natural way into your own profile — it is already the thing
-    // on screen representing you.
-    <Link
-      href={`/u/${me.handle}`}
-      className="hover:bg-ink-700 -mx-2 flex items-center gap-3 rounded-sm px-2 py-1.5 transition-colors"
+    <Menu
+      label="Account menu"
+      side={side}
+      align={align}
+      triggerClassName="hover:bg-ink-700 flex w-full items-center gap-2 rounded-sm px-2 py-1.5 transition-colors"
+      trigger={
+        <>
+          {/**
+           * `sm`, not `md`. The sidebar is 240px wide and this row also carries a
+           * chevron, so a 30px emblem left roughly 130px for the name — enough to
+           * truncate a 16-character handle, which is the longest one onboarding
+           * allows. The emblem is decorative here; the rank is named in text beside it.
+           */}
+          <RankEmblem
+            accent={rank.tier.accent}
+            divisions={rank.tier.divisions > 1 ? rank.division : 1}
+            size="sm"
+          />
+          <span className="flex min-w-0 flex-1 flex-col text-left">
+            <span className="text-body text-paper truncate font-semibold">
+              @{me.handle}
+            </span>
+            {/**
+             * "Unranked · 5 placements left" did not fit and rendered as
+             * "Unranked · 5 placeme…" on every page. The count is the useful half, and
+             * the profile and home cards both still spell the full sentence out.
+             */}
+            <span
+              className="text-label truncate tabular-nums"
+              style={{ color: placing ? undefined : rank.tier.accent }}
+            >
+              {placing
+                ? `Unranked · ${me.placementsRemaining} to place`
+                : `${rank.label} · ${me.elo}`}
+            </span>
+          </span>
+          <span
+            className={`text-muted shrink-0 text-base leading-none ${
+              side === "top" ? "rotate-180" : ""
+            }`}
+          >
+            <Glyph name="chevron" />
+          </span>
+        </>
+      }
     >
-      <RankEmblem
-        accent={rank.tier.accent}
-        divisions={rank.tier.divisions > 1 ? rank.division : 1}
-        size="md"
-      />
-      <div className="flex min-w-0 flex-col">
-        <span
-          className="font-display text-body truncate font-bold"
-          style={{ color: rank.tier.accent }}
-        >
-          {placing ? "Unranked" : rank.label}
-        </span>
-        <span className="text-label text-muted tabular-nums">
-          {placing
-            ? `${me.placementsRemaining} placement${me.placementsRemaining === 1 ? "" : "s"} left`
-            : `${me.elo} · L${level.level}`}
-        </span>
-      </div>
-    </Link>
+      {includeLevel && (
+        <>
+          <div className="px-3 py-2">
+            <LevelBlock />
+          </div>
+          <MenuSeparator />
+        </>
+      )}
+
+      <MenuItem glyph="user" href={`/u/${me.handle}`}>
+        Profile
+      </MenuItem>
+      <MenuItem glyph="settings" href="/settings">
+        Settings
+      </MenuItem>
+      <MenuItem glyph="rank" onSelect={() => openUserProfile()}>
+        Manage account
+      </MenuItem>
+
+      <MenuSeparator />
+
+      <MenuItem
+        glyph={muted ? "mute" : "sound"}
+        onSelect={() => setMuted(!muted)}
+      >
+        Sound {muted ? "off" : "on"}
+      </MenuItem>
+
+      <MenuSeparator />
+
+      <MenuItem glyph="leave" tone="danger" onSelect={() => void signOut()}>
+        Sign out
+      </MenuItem>
+    </Menu>
   );
 }
 
@@ -210,33 +309,34 @@ function TabBar() {
   );
 }
 
-/** Top bar on mobile only — the sidebar carries this on desktop. */
+/**
+ * Top bar on mobile only — the sidebar carries this on desktop.
+ *
+ * Carries the same user menu, anchored top-right and opening downward, so identity
+ * lives in one recognisable place on both form factors. The level bar rides inside the
+ * menu here rather than on the bar itself, which has no room for it.
+ */
 export function MobileTopBar() {
   const immersive = useImmersiveState();
   if (immersive) return null;
 
   return (
-    <header className="border-line flex items-center justify-between border-b px-4 py-3 lg:hidden">
+    <header className="border-line flex items-center justify-between gap-3 border-b px-4 py-3 lg:hidden">
       <Wordmark />
-      <div className="flex items-center gap-3">
-        <MuteToggle />
-        <SignedIn>
-          {/* Mobile has no sidebar, so this is the only route to settings on a phone. */}
-          <Link
-            href="/settings"
-            aria-label="Settings"
-            className="text-muted hover:text-paper rounded-xs p-1 text-xl transition-colors"
-          >
-            <Glyph name="settings" />
-          </Link>
-          <UserButton />
-        </SignedIn>
-        <SignedOut>
+      <SignedIn>
+        {/* Bounded so a long handle cannot squeeze the wordmark off the bar. */}
+        <div className="min-w-0 max-w-[60%]">
+          <UserMenu side="bottom" align="end" includeLevel />
+        </div>
+      </SignedIn>
+      <SignedOut>
+        <div className="flex items-center gap-3">
+          <MuteToggle />
           <SignInButton mode="modal">
             <Button size="sm">Sign in</Button>
           </SignInButton>
-        </SignedOut>
-      </div>
+        </div>
+      </SignedOut>
     </header>
   );
 }

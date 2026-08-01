@@ -312,6 +312,19 @@ export const XP_AWARDS = {
 } as const;
 
 /**
+ * Fraction of the normal award a practice match pays.
+ *
+ * Practice used to pay ~296 XP against a ranked loss's 275, while being instant,
+ * unlimited, zero-risk and against software — which made farming bots strictly the
+ * fastest way to level and gave nobody a reason to queue for a human. Halving it keeps
+ * practice worth playing without making it the optimal grind.
+ *
+ * A single lever on purpose: retune this rather than the individual awards, so the
+ * shape of the breakdown stays the same across modes.
+ */
+export const PRACTICE_XP_MULTIPLIER = 0.5;
+
+/**
  * Level curve: level N requires XP_BASE * N^XP_CURVE_EXPONENT total XP.
  * Superlinear so early levels arrive fast and later ones stay meaningful.
  */

@@ -129,13 +129,16 @@ function Row({
         size="sm"
       />
       {/* Every name on the ladder is a route into a profile — the page that had no
-          entry points at all until now. */}
+          entry points at all until now.
+
+          The chosen username, not the Google display name that used to head this row:
+          onboarding tells players the handle is "how you'll appear on leaderboards", and
+          this is the leaderboard. */}
       <Link
         href={`/u/${entry.handle}`}
-        className="flex min-w-0 flex-1 flex-col rounded-xs hover:underline"
+        className="flex min-w-0 flex-1 items-baseline gap-2 rounded-xs hover:underline"
       >
-        <span className="text-body truncate font-semibold">{entry.displayName}</span>
-        <span className="text-body-sm text-muted truncate">@{entry.handle}</span>
+        <span className="text-body truncate font-semibold">@{entry.handle}</span>
       </Link>
       <span className="flex shrink-0 flex-col items-end">
         <span className="font-display text-body text-paper font-bold tabular-nums">

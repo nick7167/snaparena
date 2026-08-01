@@ -10,7 +10,7 @@ import { revealBeatAt, scoreForGuess, validateClientClock } from "../src/engine/
 import { rankForElo, isNotable, matchupLabel } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
 import { sortBadges } from "../src/engine/badges";
-import { damageMultiplier } from "../src/engine/duel";
+import { damageMultiplier, wonRound } from "../src/engine/duel";
 
 /**
  * A player's public card: everything the VS screen and in-match header need.
@@ -181,9 +181,8 @@ export const state = query({
         }
 
         const others = match.playerIds.filter((id) => id !== userId).map(pointsFor);
-        const wonRound = mine > 0 && others.every((points) => mine > points);
 
-        if (wonRound) {
+        if (wonRound(mine, others)) {
           roundsWon++;
           streak++;
         } else if (others.some((points) => points > mine)) {
@@ -274,6 +273,12 @@ export const state = query({
           ratingAfter: player.ratingAfter ?? null,
           ratingDelta: player.ratingDelta ?? null,
           xpEarned: player.xpEarned ?? null,
+          xpBreakdown: player.xpBreakdown ?? [],
+          // Null until `progression.finalizeMatch` has run. The results screen treats
+          // that as "still settling" rather than as a level of zero.
+          levelBefore: player.levelBefore ?? null,
+          levelAfter: player.levelAfter ?? null,
+          xpAfter: player.xpAfter ?? null,
           badgesEarned: player.badgesEarned ?? [],
           forfeited: player.forfeited,
           isMe: me?._id === player.userId,

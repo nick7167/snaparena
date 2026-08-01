@@ -15,7 +15,9 @@
     "ingest": "node scripts/ingest.ts",
     "ingest:smoke": "node scripts/ingest.ts --artists 2",
     "import-tracks": "node --env-file=.env.local scripts/import-tracks.ts",
-    "seed-bots": "node --env-file=.env.local scripts/seed-bots.ts"
+    "seed-bots": "node --env-file=.env.local scripts/seed-bots.ts",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",
@@ -26,6 +28,8 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.2.16",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

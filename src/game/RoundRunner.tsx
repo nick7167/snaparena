@@ -1,23 +1,22 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   DUEL_STARTING_HP,
-  REVEAL_BEATS,
   ROOM_STARTING_HP,
-  ROUND_DURATION_MS,
   SURRENDER_FROM_ROUND,
 } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { useRoundAudio } from "./useRoundAudio";
-import { GuessInput } from "./GuessInput";
-import { BotBadge, RankBadge, Stage, TierChip } from "./ui";
+import { useRoundLifecycle, rejectionMessage } from "./useRoundLifecycle";
+import { BotBadge, RankBadge, hpTone, nameFor } from "./ui";
 import {
   Countdown,
+  GuessingStage,
   MilestoneStage,
   RevealStage,
   StandingsStage,
@@ -25,18 +24,21 @@ import {
   type PlayerCardData,
 } from "./stages";
 import { MatchEnd, type MatchEndPlayer } from "./MatchEnd";
-import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { useImmersive } from "@/app/immersive";
-import { getGuestToken } from "@/app/guest";
 import { Button } from "@/ui/Button";
-import { Card, Chip, Meter } from "@/ui/Surface";
+import { Chip, Meter } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
-import { Waveform } from "./Waveform";
 
 type MatchState = NonNullable<ReturnType<typeof useQuery<typeof api.matches.state>>>;
 
 /**
- * Renders whatever phase the server says the match is in.
+ * The duel arena: ranked, practice and rooms.
+ *
+ * Deliberately NOT the daily. This component and everything it renders assume two or
+ * more players and a health bar — an opponent to lose HP to, a round winner, a
+ * standings beat, a VICTORY/DEFEAT verdict. Pointing it at a solo run produced exactly
+ * the nonsense you would expect: "neither of you got it" and a DRAW at 0 HP against
+ * nobody. The daily has its own runner; see DailyRunner.tsx.
  *
  * The client never decides when a phase ends — that would drift between opponents
  * and ruin the head-to-head reveal. It only renders, reports readiness, and nudges
@@ -53,68 +55,27 @@ export function RoundRunner({
   // finishing, forfeiting or navigating all restore the navigation.
   useImmersive();
 
-  // Undefined for signed-in players, so every existing call is byte-identical. The
-  // server ignores it on any match that is not the daily.
-  const guestToken = getGuestToken();
-
-  const match = useQuery(api.matches.state, { matchId, guestToken });
-  const myStatus = useQuery(api.matches.myRoundStatus, { matchId, guestToken });
+  const match = useQuery(api.matches.state, { matchId });
+  const myStatus = useQuery(api.matches.myRoundStatus, { matchId });
   const submitGuess = useMutation(api.matches.submitGuess);
-  const reportReady = useMutation(api.matches.reportReady);
   const passRound = useMutation(api.matches.pass);
-  const nudge = useMutation(api.phases.nudge);
 
   const phase = match?.phase ?? "guessing";
   const isGuessing = phase === "guessing";
 
   const audio = useRoundAudio(match?.currentAudioUrl ?? null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const startedRoundRef = useRef<string | null>(null);
-  const reportedRoundRef = useRef<string | null>(null);
 
-  const { ready: audioReady, start: startAudio, stop: stopAudio } = audio;
-  const currentRound = match?.currentRound;
-
-  // Buffer the NEXT clip during the between-round beats. Without this the client
-  // only learns the URL when the 3s countdown starts, which is rarely enough time.
-  usePrefetch(match?.nextAudioUrl ?? null);
-
-  /**
-   * Tell the server this client is buffered. The guessing clock does not start
-   * until every player has reported, which is what stops a slow connection
-   * producing a song that cuts off mid-play.
-   */
-  useEffect(() => {
-    if (currentRound === undefined || !audioReady) return;
-    const key = `${matchId}:${currentRound}`;
-    if (reportedRoundRef.current === key) return;
-
-    reportedRoundRef.current = key;
-    void reportReady({ matchId, roundIndex: currentRound, guestToken });
-  }, [audioReady, currentRound, matchId, reportReady, guestToken]);
-
-  useEffect(() => {
-    if (!isGuessing || !audioReady) return;
-    const key = `${matchId}:${currentRound}`;
-    if (startedRoundRef.current === key) return;
-
-    startedRoundRef.current = key;
-    setFeedback(null);
-    void startAudio();
-  }, [isGuessing, audioReady, startAudio, matchId, currentRound]);
-
-  useEffect(() => {
-    if (!isGuessing) stopAudio();
-  }, [isGuessing, stopAudio]);
-
-  // Recovery only: acts once a server deadline has genuinely passed.
-  useEffect(() => {
-    if (!match?.phaseEndsAt) return;
-    const id = setInterval(() => {
-      if (Date.now() > match.phaseEndsAt! + 1_500) void nudge({ matchId });
-    }, 2_000);
-    return () => clearInterval(id);
-  }, [match?.phaseEndsAt, nudge, matchId]);
+  useRoundLifecycle({
+    matchId,
+    currentRound: match?.currentRound,
+    phaseEndsAt: match?.phaseEndsAt,
+    isGuessing,
+    nextAudioUrl: match?.nextAudioUrl ?? null,
+    audio,
+    guestToken: undefined,
+    onRoundStart: () => setFeedback(null),
+  });
 
   const onGuess = useCallback(
     async (text: string) => {
@@ -123,7 +84,6 @@ export function RoundRunner({
         roundIndex: match?.currentRound ?? 0,
         text,
         clientElapsedMs: audio.elapsedMs(),
-        guestToken,
       });
 
       if (result.status === "correct") {
@@ -138,7 +98,7 @@ export function RoundRunner({
       }
       return result;
     },
-    [submitGuess, matchId, match?.currentRound, audio, guestToken],
+    [submitGuess, matchId, match?.currentRound, audio],
   );
 
   if (match === undefined) return <Centered>Loading…</Centered>;
@@ -211,7 +171,7 @@ export function RoundRunner({
             onGuess={onGuess}
             onPass={() => {
               audio.stop();
-              void passRound({ matchId, roundIndex: match.currentRound, guestToken });
+              void passRound({ matchId, roundIndex: match.currentRound });
             }}
           />
         )}
@@ -258,7 +218,6 @@ export function RoundRunner({
         {phase === "match_end" && (
           <MatchEnd
             key="end"
-            mode={match.mode}
             maxHp={maxHp}
             matchId={matchId}
             winnerId={match.winnerId ? String(match.winnerId) : null}
@@ -274,6 +233,10 @@ export function RoundRunner({
                 ratingAfter: entry.ratingAfter,
                 ratingDelta: entry.ratingDelta,
                 xpEarned: entry.xpEarned,
+                xpBreakdown: entry.xpBreakdown,
+                levelBefore: entry.levelBefore,
+                levelAfter: entry.levelAfter,
+                xpAfter: entry.xpAfter,
                 badgesEarned: entry.badgesEarned,
                 forfeited: entry.forfeited,
               }),
@@ -288,26 +251,6 @@ export function RoundRunner({
 function hasPassed(match: MatchState, userId: string): boolean {
   const entry = match.scoreboard.find((row) => String(row.userId) === userId);
   return entry?.passedRound === match.currentRound;
-}
-
-/**
- * Buffers a clip ahead of time.
- *
- * The bytes land in the HTTP cache, so when the real audio element requests the
- * same URL a moment later it is already there.
- */
-function usePrefetch(url: string | null) {
-  useEffect(() => {
-    if (!url) return;
-    const audio = new Audio();
-    audio.preload = "auto";
-    audio.crossOrigin = "anonymous";
-    audio.src = url;
-    audio.load();
-    return () => {
-      audio.src = "";
-    };
-  }, [url]);
 }
 
 /** Live HP, the opponent, and the surrender control. */
@@ -353,7 +296,7 @@ function MatchHeader({
         <span className="flex min-w-0 items-center gap-2">
           {opponent && (
             <>
-              <span className="text-muted truncate">vs {opponent.displayName}</span>
+              <span className="text-muted truncate">vs {nameFor(opponent)}</span>
               {opponent.isBot && <BotBadge />}
               <RankBadge
                 label={opponent.rankLabel}
@@ -368,13 +311,14 @@ function MatchHeader({
 
       {/* Both bars use the same ramp — brightness is how much health is left, not who
           you are. Whose row is whose is carried by the label, not by hue. */}
-      {match.mode !== "daily" && (
-        <div className="flex gap-3">
-          {match.scoreboard.map((entry) => (
+      <div className="flex gap-3">
+        {match.scoreboard.map((entry) => {
+          const name = entry.isMe ? "You" : nameFor(entry);
+          return (
             <div key={String(entry.userId)} className="flex flex-1 flex-col gap-1">
               <div className="text-label flex justify-between">
                 <span className={entry.isMe ? "text-paper font-semibold" : "text-muted"}>
-                  {entry.isMe ? "You" : entry.displayName}
+                  {name}
                 </span>
                 <span className="font-display text-secondary font-bold tabular-nums">
                   {entry.hp}
@@ -385,12 +329,12 @@ function MatchHeader({
                 max={maxHp}
                 height="sm"
                 tone={hpTone(entry.hp, maxHp)}
-                label={`${entry.isMe ? "Your" : `${entry.displayName}'s`} health: ${entry.hp} of ${maxHp}`}
+                label={`${entry.isMe ? "Your" : `${name}'s`} health: ${entry.hp} of ${maxHp}`}
               />
             </div>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       {canSurrender && (
         <div className="flex justify-end">
@@ -422,207 +366,10 @@ function MatchHeader({
   );
 }
 
-/**
- * Health as heat.
- *
- * Full health burns bright, low health cools to an ember, zero goes out entirely. This
- * is the one place colour is derived rather than passed, because it means the same
- * thing on every bar in the app.
- */
-export function hpTone(hp: number, maxHp: number): "paper" | "gold" | "signal" | "muted" {
-  if (hp <= 0) return "muted";
-  const pct = maxHp > 0 ? hp / maxHp : 0;
-  if (pct < 0.25) return "signal";
-  if (pct < 0.6) return "gold";
-  return "paper";
-}
-
-// `match` is no longer a prop: the only thing it supplied was `phaseEndsAt` for the
-// separate PhaseTimer, and the round clock now lives inside the waveform spine.
-function GuessingStage({
-  audio,
-  solved,
-  passed,
-  tierThisRound,
-  pointsThisRound,
-  lockedUntil,
-  feedback,
-  onGuess,
-  onPass,
-}: {
-  audio: ReturnType<typeof useRoundAudio>;
-  solved: boolean;
-  passed: boolean;
-  tierThisRound: string | null;
-  pointsThisRound: number;
-  lockedUntil: number;
-  feedback: string | null;
-  onGuess: (text: string) => Promise<{ status: string }>;
-  onPass: () => void;
-}) {
-  const reduced = usePrefersReducedMotion();
-  const beat = REVEAL_BEATS[audio.revealStage];
-  const nextBeat = REVEAL_BEATS[audio.revealStage + 1];
-
-  if (audio.error !== null) {
-    return (
-      <Stage keyName="audio-error" className="items-center py-16 text-center">
-        <Card className="flex flex-col gap-2 p-6">
-          <p className="text-body-lg text-paper">
-            {audio.error === "audio-timeout"
-              ? "This track took too long to load."
-              : audio.error === "playback-blocked"
-                ? "Your browser blocked audio playback."
-                : "This track's audio failed to load."}
-          </p>
-          <p className="text-body-sm text-muted">The round moves on shortly.</p>
-        </Card>
-      </Stage>
-    );
-  }
-
-  const secondsToNextBeat = nextBeat
-    ? Math.max(0, Math.ceil((nextBeat.atRoundMs - audio.displayMs) / 1000))
-    : null;
-  const secondsLeft = Math.max(0, (ROUND_DURATION_MS - audio.displayMs) / 1000);
-
-  /**
-   * Bottom-anchored instrument.
-   *
-   * The spine owns the middle; the guess field is locked to the bottom so a thumb never
-   * travels and the field does not move when the keyboard opens. Every millisecond
-   * spent reaching for the input is points lost.
-   */
-  return (
-    <Stage keyName="guessing" className="min-h-[calc(100dvh-var(--match-header,7rem))] justify-between gap-4 py-4">
-      <div className="flex flex-1 flex-col justify-center gap-4">
-        <Waveform
-          analyser={audio.analyser}
-          active={audio.phase === "playing"}
-          displayMs={audio.displayMs}
-          revealStage={audio.revealStage}
-          beats={REVEAL_BEATS}
-          roundDurationMs={ROUND_DURATION_MS}
-        />
-
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-body-sm text-secondary">
-            <span className="font-display text-paper font-bold tabular-nums">
-              {beat.playToMs / 1000}s
-            </span>{" "}
-            unlocked
-            {secondsToNextBeat !== null && (
-              <span className="text-muted"> · more in {secondsToNextBeat}s</span>
-            )}
-          </span>
-          <span
-            className={`font-display text-display-2 font-extrabold tabular-nums ${
-              secondsLeft <= 5 ? "text-signal-text" : "text-paper"
-            }`}
-          >
-            {secondsLeft.toFixed(1)}
-          </span>
-        </div>
-
-        {/* The clip is silent between unlocks. Saying so — and letting players
-            re-hear it — stops the silence reading as a fault. */}
-        {audio.phase === "playing" && !solved && !passed && (
-          <div className="flex justify-center">
-            <Button variant="secondary" size="sm" onClick={audio.replay}>
-              <Glyph name="sound" />
-              Replay {beat.playToMs / 1000}s
-            </Button>
-          </div>
-        )}
-
-        {!audio.ready && (
-          <p className="text-body-sm text-muted text-center" role="status">
-            Buffering audio…
-          </p>
-        )}
-      </div>
-
-      {/* Thumb zone. */}
-      <div className="flex flex-col gap-3">
-        {feedback && (
-          <motion.p
-            key={feedback}
-            initial={reduced ? false : { opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            // Assertive: this is the answer to something the player just did, and it is
-            // only useful before the round moves on.
-            role="alert"
-            className="text-body text-paper text-center font-medium"
-          >
-            {feedback}
-          </motion.p>
-        )}
-
-        {solved ? (
-          <motion.div
-            initial={reduced ? false : { scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="flex flex-col items-center gap-2 py-4"
-            role="status"
-          >
-            {tierThisRound && <TierChip tierId={tierThisRound} />}
-            <p className="font-display text-display-1 text-paper font-extrabold tabular-nums">
-              +{pointsThisRound}
-            </p>
-            <p className="text-body-sm text-muted">Waiting for the round to end…</p>
-          </motion.div>
-        ) : passed ? (
-          <p className="text-body text-muted py-6 text-center" role="status">
-            Passed. Waiting for the round to end…
-          </p>
-        ) : (
-          <>
-            <GuessInput
-              onGuess={onGuess}
-              disabled={!audio.ready || audio.phase === "ended"}
-              lockedUntil={lockedUntil}
-              suppressSuggestions={audio.revealStage === 0}
-            />
-            <button
-              onClick={onPass}
-              disabled={!audio.ready}
-              className="text-body-sm text-muted hover:text-paper mx-auto rounded-xs px-3 py-2
-                         transition-colors disabled:opacity-40"
-            >
-              I don&rsquo;t know this one
-            </button>
-          </>
-        )}
-      </div>
-    </Stage>
-  );
-}
-
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-body text-secondary flex min-h-[50vh] items-center justify-center px-4 text-center">
       {children}
     </div>
   );
-}
-
-function rejectionMessage(reason: string): string {
-  switch (reason) {
-    case "locked-out":
-      return "Too fast — wait for the lockout";
-    case "already-solved":
-      return "You already got this one";
-    case "too-many-attempts":
-      return "No attempts left this round";
-    case "not-guessing-phase":
-      return "The round has closed";
-    case "below-human-floor":
-    case "exceeds-server-window":
-    case "not-monotonic":
-      return "Rejected by the timing check";
-    case "stale-round":
-      return "The round moved on";
-    default:
-      return "Guess rejected";
-  }
 }

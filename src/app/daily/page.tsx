@@ -1,16 +1,15 @@
 "use client";
 
-import { SignInButton } from "@clerk/nextjs";
 import { SignedOut } from "../auth-gate";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { RoundRunner } from "@/game/RoundRunner";
+import { DailyRunner } from "@/game/DailyRunner";
+import { DailyResult } from "@/game/DailyResult";
 import { Button } from "@/ui/Button";
 import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
-import { Glyph } from "@/ui/Glyph";
 import { ensureGuestToken, getGuestToken } from "../guest";
 import { useNow } from "@/game/usePrefersReducedMotion";
 
@@ -31,6 +30,8 @@ export default function DailyPage() {
   const guestToken = getGuestToken();
 
   const myRun = useQuery(api.daily.myRun, { guestToken });
+  // A run left in progress — from a refresh, a closed tab, or a second visit today.
+  const activeRun = useQuery(api.daily.activeRun, { guestToken });
   const start = useMutation(api.daily.start);
   const complete = useMutation(api.daily.complete);
 
@@ -57,14 +58,27 @@ export default function DailyPage() {
     else setStatus("catalogue-too-small");
   }
 
-  if (matchId) return <RoundRunner matchId={matchId} />;
+  /**
+   * Which run is on screen, if any.
+   *
+   * Two sources, both derived — no effect writes this. `matchId` is the run started in
+   * this session; `activeRun` is one already in progress on the server, which is what
+   * makes a mid-run refresh land back in the game instead of on the landing screen
+   * showing a "Start" button.
+   *
+   * `myRun` wins over both: it only becomes non-null once `complete` has written the
+   * row, so the runner stays mounted across that gap and then falls away on its own.
+   * Unmounting is what releases immersive mode and brings the navigation back.
+   */
+  const runningId = matchId ?? activeRun?.matchId ?? null;
+  if (runningId && !myRun) return <DailyRunner matchId={runningId} />;
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col items-start gap-6 px-4 py-12">
       <h1 className="font-display text-display-1 font-extrabold">Today&rsquo;s challenge</h1>
 
       {myRun ? (
-        <ResultCard run={myRun} />
+        <DailyResult run={myRun} />
       ) : status === "catalogue-too-small" ? (
         <Empty
           title="The catalogue is too small"
@@ -88,80 +102,6 @@ export default function DailyPage() {
 
       <DailyLeaderboard />
     </div>
-  );
-}
-
-function ResultCard({
-  run,
-}: {
-  run: {
-    totalPoints: number;
-    perRoundMs: number[];
-    rank: number;
-    totalPlayers: number;
-    isGuest?: boolean;
-  };
-}) {
-  const [copied, setCopied] = useState(false);
-
-  // Times, not tiers: with continuous scoring there is no "I got it in the 1s tier"
-  // to brag about, so the shareable unit is how fast you were. The URL is on the
-  // share because a result someone can't act on is just a boast.
-  const shareText = [
-    `SNAP — ${run.totalPoints} pts`,
-    run.perRoundMs.map((ms) => (ms < 0 ? "⬜" : ms < 2000 ? "🟩" : ms < 8000 ? "🟨" : "🟧")).join(""),
-    `#${run.rank} of ${run.totalPlayers}`,
-    typeof window === "undefined" ? "" : `${window.location.origin}/daily`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return (
-    <Card className="flex flex-col items-start gap-4 p-6">
-      <p className="font-display text-display-1 font-extrabold tabular-nums">
-        {run.totalPoints}
-        <span className="text-body text-muted ml-2 font-normal">points</span>
-      </p>
-      <p className="text-body text-secondary tabular-nums">
-        Rank {run.rank} of {run.totalPlayers} today
-      </p>
-      <ul className="text-body-sm text-secondary flex w-full flex-col gap-1">
-        {run.perRoundMs.map((ms, index) => (
-          <li key={index} className="tabular-nums">
-            Round {index + 1}: {ms < 0 ? "missed" : `${(ms / 1000).toFixed(2)}s`}
-          </li>
-        ))}
-      </ul>
-
-      <Button
-        variant="secondary"
-        onClick={async () => {
-          await navigator.clipboard.writeText(shareText);
-          setCopied(true);
-        }}
-      >
-        {copied ? "Copied" : "Copy result"}
-      </Button>
-
-      {/* The conversion moment. The score already exists — signing in is how you keep
-          it, not the price of earning it. */}
-      {run.isGuest && (
-        <div className="border-line flex w-full flex-col items-start gap-3 border-t pt-4">
-          <p className="text-body text-paper font-semibold">
-            <Glyph name="win" filled /> You&rsquo;re not on the board yet
-          </p>
-          <p className="text-body-sm text-muted">
-            Sign in and this run comes with you — your name, this score, today&rsquo;s
-            board.
-          </p>
-          <SignInButton mode="modal">
-            <Button>Put this on the board</Button>
-          </SignInButton>
-        </div>
-      )}
-
-      <p className="text-body-sm text-muted">Come back tomorrow for a new set.</p>
-    </Card>
   );
 }
 
@@ -234,7 +174,7 @@ function DailyLeaderboard() {
                   {entry.rank}
                 </span>
                 <Link href={`/u/${entry.handle}`} className="truncate rounded-xs hover:underline">
-                  {entry.displayName}
+                  @{entry.handle}
                 </Link>
               </span>
               <span className="font-display text-paper font-bold tabular-nums">

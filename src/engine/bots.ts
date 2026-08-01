@@ -162,6 +162,34 @@ export function personaNearestElo(elo: number, exclude: readonly string[] = []):
   );
 }
 
+/** How many of the nearest-rated personas a practice match draws from. */
+export const PRACTICE_POOL_SIZE = 3;
+
+/**
+ * Picks a practice opponent.
+ *
+ * `personaNearestElo` on its own is deterministic, and practice deliberately never
+ * moves your rating — so "the persona nearest your Elo" never changed and every
+ * practice match was against the same bot forever. Drawing from the three nearest,
+ * minus whoever you just played, keeps the contest fair while making the roster read
+ * as a cast of regulars rather than a single opponent.
+ *
+ * Falls back to the full nearest set when excluding the last opponent would leave
+ * nothing — which is what happens if the roster ever shrinks below the pool size.
+ */
+export function pickPracticePersona(
+  elo: number,
+  lastPersonaId?: string,
+  rng: Rng = Math.random,
+): BotPersona {
+  const nearest = [...BOT_PERSONAS]
+    .sort((a, b) => Math.abs(a.elo - elo) - Math.abs(b.elo - elo))
+    .slice(0, PRACTICE_POOL_SIZE);
+
+  const candidates = nearest.filter((persona) => persona.id !== lastPersonaId);
+  return pick(candidates.length > 0 ? candidates : nearest, rng);
+}
+
 /** Uniform random source. Injectable so tests are deterministic. */
 export type Rng = () => number;
 

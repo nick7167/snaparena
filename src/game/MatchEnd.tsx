@@ -8,15 +8,13 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { play } from "@/audio/sfx";
 import { badgeById } from "@/engine/badges";
 import { rankChange } from "@/engine/ranks";
-import type { GameMode } from "@/engine/config";
 import { levelForXp } from "@/engine/xp";
-import { BadgeRow, BotBadge, RankBadge, Stage } from "./ui";
+import { BadgeRow, BotBadge, RankBadge, Stage, hpTone, nameFor } from "./ui";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { Button } from "@/ui/Button";
 import { Card, Chip, Meter, SectionLabel } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
-import { hpTone } from "./RoundRunner";
 import type { PlayerCardData } from "./stages";
 
 /**
@@ -33,21 +31,31 @@ export interface MatchEndPlayer extends PlayerCardData {
   ratingAfter: number | null;
   ratingDelta: number | null;
   xpEarned: number | null;
+  xpBreakdown: { reason: string; amount: number }[];
+  levelBefore: number | null;
+  levelAfter: number | null;
+  xpAfter: number | null;
   badgesEarned: string[];
   forfeited: boolean;
 }
 
+/**
+ * The duel results screen: ranked, practice and rooms.
+ *
+ * Not the daily. Every line here assumes an opponent — a VICTORY/DEFEAT verdict, final
+ * health bars, a round-by-round damage timeline, a "costliest round". Rendering it for
+ * a solo run produced a DRAW at 0 HP against nobody, which is what prompted splitting
+ * the modes apart. The daily's results live in DailyResult.tsx.
+ */
 export function MatchEnd({
   players,
   winnerId,
-  mode,
   maxHp,
   matchId,
   onPlayAgain,
 }: {
   players: MatchEndPlayer[];
   winnerId: string | null;
-  mode: GameMode;
   maxHp: number;
   matchId: Id<"matches">;
   onPlayAgain?: () => void;
@@ -63,10 +71,15 @@ export function MatchEnd({
     return change.promotion === "tier" ? change : null;
   }, [me]);
 
+  const levelUp =
+    me && me.levelAfter !== null && me.levelBefore !== null && me.levelAfter > me.levelBefore
+      ? me.levelAfter
+      : null;
+
   useEffect(() => {
-    if (promotion) play("promote");
+    if (promotion || levelUp !== null) play("promote");
     else if (me && winnerId === me.userId) play("podium");
-  }, [promotion, me, winnerId]);
+  }, [promotion, levelUp, me, winnerId]);
 
   return (
     <Stage keyName="match-end" className="py-12">
@@ -78,21 +91,14 @@ export function MatchEnd({
             ? "text-muted"
             : me && winnerId === me.userId
               ? "text-paper"
-              : mode === "daily"
-                ? "text-paper"
-                : "text-signal-text"
+              : "text-signal-text"
         }`}
       >
-        {winnerId === null
-          ? "DRAW"
-          : me && winnerId === me.userId
-            ? "VICTORY"
-            : mode === "daily"
-              ? "RUN COMPLETE"
-              : "DEFEAT"}
+        {winnerId === null ? "DRAW" : me && winnerId === me.userId ? "VICTORY" : "DEFEAT"}
       </h1>
 
       {promotion && <PromotionBanner label={promotion.after.label} accent={promotion.after.tier.accent} />}
+      {levelUp !== null && <LevelUpBanner level={levelUp} />}
 
       {/* Final health. A knockout must LOOK like a knockout — an empty bar says
           "you were finished off" in a way a bare number never does. */}
@@ -111,7 +117,7 @@ export function MatchEnd({
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <span className="text-body font-semibold">
-                    {player.isMe ? "You" : player.displayName}
+                    {player.isMe ? "You" : nameFor(player)}
                   </span>
                   {player.isBot && <BotBadge />}
                   {player.forfeited && (
@@ -138,7 +144,7 @@ export function MatchEnd({
                 value={hp}
                 max={maxHp}
                 tone={hpTone(hp, maxHp)}
-                label={`${player.isMe ? "Your" : `${player.displayName}'s`} final health`}
+                label={`${player.isMe ? "Your" : `${nameFor(player)}'s`} final health`}
               />
             </Card>
           );
@@ -147,7 +153,7 @@ export function MatchEnd({
 
       <RoundTimeline matchId={matchId} players={players} />
 
-      {me && me.xpEarned !== null && <XpBar xpEarned={me.xpEarned} />}
+      {me && me.xpEarned !== null && <XpPanel player={me} />}
 
       {me && me.badgesEarned.length > 0 && <NewBadges ids={me.badgesEarned} />}
 
@@ -264,7 +270,7 @@ function RoundTimeline({
                     className="text-label flex justify-between gap-3"
                   >
                     <span className={player?.isMe ? "text-paper font-semibold" : "text-secondary"}>
-                      {player?.isMe ? "You" : (player?.displayName ?? "Player")}
+                      {player?.isMe ? "You" : player ? nameFor(player) : "Player"}
                     </span>
                     <span className="text-secondary tabular-nums">
                       {result.solved && result.elapsedMs !== undefined
@@ -356,27 +362,110 @@ function DeltaText({ delta, shown }: { delta: number; shown: number }) {
   );
 }
 
-function XpBar({ xpEarned }: { xpEarned: number }) {
+/**
+ * XP earned, why it was earned, and where it left the level bar.
+ *
+ * The bar this replaces filled to `levelForXp(xpEarned).progress` — progress derived
+ * from the amount just earned as though that were the player's lifetime total. It was
+ * a number-shaped decoration: 40 XP from a loss and 40 XP from a win drew the same bar
+ * regardless of whether the player was at level 2 or level 20.
+ *
+ * This animates the real thing: from where the bar stood before the match to where it
+ * stands now, against the real level band, using `xpAfter` off the match record. A
+ * level-up mid-animation is announced by the banner above rather than by the bar
+ * silently wrapping around.
+ */
+function XpPanel({ player }: { player: MatchEndPlayer }) {
   const reduced = usePrefersReducedMotion();
-  // Progress within the level is illustrative here; the authoritative total lives
-  // on the user record and shows in the header.
-  const progress = levelForXp(xpEarned).progress;
+  const earned = player.xpEarned ?? 0;
+
+  // Null while `progression.finalizeMatch` is still settling. Falling back to the
+  // earned amount alone would print the old lie, so the bar simply waits.
+  const xpAfter = player.xpAfter;
+  const after = xpAfter === null ? null : levelForXp(xpAfter);
+  const before = xpAfter === null ? null : levelForXp(Math.max(0, xpAfter - earned));
+
+  // Within a single level the bar travels from the old position; across a level-up it
+  // starts at the floor of the new one, because the old position is on a bar that no
+  // longer exists.
+  const fromPct =
+    after && before && before.level === after.level ? before.progress * 100 : 0;
 
   return (
-    <Card className="flex flex-col gap-2 p-4">
-      <div className="text-body flex justify-between">
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="text-body flex items-baseline justify-between gap-3">
         <span className="text-secondary">XP earned</span>
-        <span className="font-display text-gold font-bold tabular-nums">+{xpEarned}</span>
+        <span className="font-display text-gold text-display-2 font-extrabold tabular-nums">
+          +{earned}
+        </span>
       </div>
-      <div className="bg-ink-inset h-2 overflow-hidden rounded-full">
-        <motion.div
-          className="bg-gold h-full rounded-full"
-          initial={reduced ? false : { width: 0 }}
-          animate={{ width: `${Math.max(8, progress * 100)}%` }}
-          transition={{ delay: 0.3, duration: 0.9, ease: "easeOut" }}
-        />
-      </div>
+
+      {player.xpBreakdown.length > 0 && (
+        <ul className="flex flex-col gap-0.5">
+          {player.xpBreakdown.map((entry) => (
+            <li
+              key={entry.reason}
+              className="text-body-sm text-muted flex justify-between gap-3"
+            >
+              <span className="truncate">{entry.reason}</span>
+              <span className="tabular-nums">+{entry.amount}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {after && (
+        <div className="border-line flex flex-col gap-1.5 border-t pt-3">
+          <div className="text-label flex items-baseline justify-between gap-3">
+            <span className="font-display text-paper font-bold tracking-wider">
+              LVL {after.level}
+            </span>
+            <span className="text-muted tabular-nums">
+              {after.xpIntoLevel} / {after.xpForNextLevel}
+            </span>
+          </div>
+          <div className="bg-ink-inset h-2.5 overflow-hidden rounded-full">
+            <motion.div
+              className="bg-gold h-full rounded-full"
+              initial={reduced ? false : { width: `${fromPct}%` }}
+              animate={{ width: `${after.progress * 100}%` }}
+              transition={{ delay: 0.3, duration: 0.9, ease: "easeOut" }}
+            />
+          </div>
+          <span className="text-label text-muted tabular-nums">
+            {Math.max(0, after.xpForNextLevel - after.xpIntoLevel)} XP to Level{" "}
+            {after.level + 1}
+          </span>
+        </div>
+      )}
     </Card>
+  );
+}
+
+/**
+ * Crossing a level boundary.
+ *
+ * Levelling used to be entirely silent — the bar moved and nothing said why. Given the
+ * same treatment as a rank promotion because it is the same kind of event, and because
+ * the two are the only moments in the app that are pure reward.
+ */
+function LevelUpBanner({ level }: { level: number }) {
+  const reduced = usePrefersReducedMotion();
+
+  return (
+    <motion.div
+      initial={reduced ? false : { scale: 0.6, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={snap}
+      className="border-gold bg-ink-700 flex flex-col items-center gap-2 rounded-md border p-6"
+    >
+      <p className="text-label text-secondary font-semibold tracking-[0.3em] uppercase">
+        Level up
+      </p>
+      <p className="font-display text-display-1 text-gold font-extrabold tabular-nums">
+        {level}
+      </p>
+    </motion.div>
   );
 }
 

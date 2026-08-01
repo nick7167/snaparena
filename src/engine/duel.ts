@@ -304,6 +304,23 @@ export function roomPlacings(players: readonly DuelPlayerState[]): string[] {
 }
 
 /** True once a player has played enough rounds to be allowed to surrender. */
+/**
+ * Did this player take the round?
+ *
+ * A round is won by out-scoring every opponent — which means a player with no opponents
+ * cannot win one. That sounds pedantic and is not: `[].every(...)` is vacuously TRUE, so
+ * both callers of this rule (XP in convex/progression.ts, running stats in
+ * convex/matches.ts) counted every solved round of the SOLO daily as a round "won"
+ * against nobody. A perfect daily quietly paid 90 XP of round-win bonuses it had not
+ * earned, on top of the completion award.
+ *
+ * Extracted to one predicate so the two call sites cannot disagree about it again.
+ */
+export function wonRound(myPoints: number, opponentPoints: readonly number[]): boolean {
+  if (opponentPoints.length === 0) return false;
+  return myPoints > 0 && opponentPoints.every((points) => myPoints > points);
+}
+
 export function canSurrender(roundIndex: number, fromRound: number): boolean {
   return roundIndex >= fromRound;
 }

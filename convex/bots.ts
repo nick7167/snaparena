@@ -19,20 +19,26 @@ import {
   botBanDelayMs,
   chooseBotBan,
   personaById,
-  personaNearestElo,
+  pickPracticePersona,
   planBotRound,
+  type BotPersona,
 } from "../src/engine/bots";
 import { DUEL_STARTING_HP } from "../src/engine/config";
 
 /**
- * Bot opponents for the Practice queue.
- *
- * Ranked is human-only: nobody should ever be surprised by a synthetic opponent in
- * a rated match. Practice is instant, always available, and awards XP and badges
- * but never rating.
+ * Bot opponents.
  *
  * Bots are ordinary `users` rows flagged `isBot`, so every existing query, join and
  * match flow works on them unchanged.
+ *
+ * A bot match is ALWAYS `mode: "practice"`, never `"ranked"` — including the ones
+ * entered from the ranked queue. That is the whole safety property: `applyRanked` in
+ * convex/progression.ts gates on `mode === "ranked"`, so there is no code path by which
+ * a bot can move anyone's Elo. Ranked remains a measure of play against humans; what
+ * changed is only that an empty queue can now offer you a game instead of nothing.
+ *
+ * The opponent carries `BotBadge` on every surface it appears on. Nobody is ever
+ * surprised by a synthetic opponent — they are offered one, and they accept.
  */
 
 function assertAdmin(secret: string): void {
@@ -91,69 +97,123 @@ export const seed = mutation({
 });
 
 /**
- * Starts a practice match against the bot nearest the player's rating.
+ * Builds a bot match and starts it.
  *
  * Runs the full ranked flow — opponent reveal, ban draft, health duel — because a
  * practice mode that skips the draft rehearses a different game from the one it is
  * supposed to prepare you for. The bot drafts for itself; see `draftTurn` below.
+ *
+ * Shared by both entry points (`startPractice` and `startBotMatch`) so the two can
+ * never drift apart on rating, HP or draft rules.
+ */
+async function createBotMatch(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  persona: BotPersona,
+): Promise<{ status: string; matchId?: Id<"matches"> }> {
+  const bot = await ctx.db
+    .query("users")
+    .withIndex("by_handle", (q) => q.eq("handle", persona.handle))
+    .unique();
+
+  if (!bot) return { status: "no-bots-seeded" };
+
+  // Sanity check only. The real selection happens after the bans, in
+  // `startDuelIfDraftDone` — this exists so a thin catalogue fails on the button
+  // with a readable message instead of starting a match that instantly abandons.
+  const available = await pickTracksForMatch(ctx, {
+    targetTier: difficultyTierForElo(user.elo),
+    bannedCategoryIds: [],
+    count: DUEL_TRACK_COUNT,
+  });
+
+  if (available.length < DUEL_TRACK_COUNT) return { status: "catalogue-too-small" };
+
+  const matchId = await ctx.db.insert("matches", {
+    mode: "practice",
+    status: "veto",
+    playerIds: [user._id, bot._id],
+    // Filled in once the draft closes, so the bans actually shape the songs.
+    trackIds: [],
+    bannedCategoryIds: [],
+    vetoPoolIds: await pickVetoPool(ctx),
+    currentRound: 0,
+    createdAt: Date.now(),
+    // Lower-rated player bans first, exactly as in ranked — which means the bot
+    // sometimes opens the draft and sometimes responds to yours.
+    banOrder: user.elo <= bot.elo ? [user._id, bot._id] : [bot._id, user._id],
+    banTurn: 0,
+  });
+
+  for (const player of [user, bot]) {
+    await ctx.db.insert("matchPlayers", {
+      matchId,
+      userId: player._id,
+      totalPoints: 0,
+      hp: DUEL_STARTING_HP,
+      ratingBefore: player.elo,
+      forfeited: false,
+      lastSeenAt: Date.now(),
+    });
+  }
+
+  // Remembered so the next practice match can avoid an immediate rematch. Written
+  // here rather than in the caller so it cannot be forgotten on one of the paths.
+  await ctx.db.patch(user._id, { lastPracticePersonaId: persona.id });
+
+  // Meet the bot first — the VS screen is where the BOT badge appears. The phase
+  // machine moves this on to the draft.
+  await enterPhase(ctx, matchId, "vs_reveal");
+
+  return { status: "started", matchId };
+}
+
+/**
+ * Starts a practice match against one of the bots near the player's rating.
+ *
+ * Rotates rather than picking the single nearest persona: practice never moves your
+ * rating, so "nearest" was a constant and every practice match drew the same opponent.
  */
 export const startPractice = mutation({
   args: {},
   handler: async (ctx): Promise<{ status: string; matchId?: Id<"matches"> }> => {
     const user = await requireUser(ctx);
+    return await createBotMatch(
+      ctx,
+      user,
+      pickPracticePersona(user.elo, user.lastPracticePersonaId),
+    );
+  },
+});
 
-    const persona = personaNearestElo(user.elo);
-    const bot = await ctx.db
-      .query("users")
-      .withIndex("by_handle", (q) => q.eq("handle", persona.handle))
+/**
+ * Starts a bot match from the ranked queue.
+ *
+ * Ranked matchmaking needs a population, and at launch there is not one — a queue that
+ * spins forever is a mode that does not exist. This offers a game instead of nothing.
+ *
+ * The match is `mode: "practice"`, so `applyRanked` cannot see it and no rating moves.
+ * The player is told that before they accept, and the opponent is badged throughout —
+ * the ladder stays a measure of play against humans.
+ */
+export const startBotMatch = mutation({
+  args: {},
+  handler: async (ctx): Promise<{ status: string; matchId?: Id<"matches"> }> => {
+    const user = await requireUser(ctx);
+
+    // Leave the queue first. Without this the player stays enqueued through the whole
+    // bot match and `tryMatchmake` could pair them with a human they are not watching.
+    const queued = await ctx.db
+      .query("queue")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
+    if (queued) await ctx.db.delete(queued._id);
 
-    if (!bot) return { status: "no-bots-seeded" };
-
-    // Sanity check only. The real selection happens after the bans, in
-    // `startDuelIfDraftDone` — this exists so a thin catalogue fails on the button
-    // with a readable message instead of starting a match that instantly abandons.
-    const available = await pickTracksForMatch(ctx, {
-      targetTier: difficultyTierForElo(user.elo),
-      bannedCategoryIds: [],
-      count: DUEL_TRACK_COUNT,
-    });
-
-    if (available.length < DUEL_TRACK_COUNT) return { status: "catalogue-too-small" };
-
-    const matchId = await ctx.db.insert("matches", {
-      mode: "practice",
-      status: "veto",
-      playerIds: [user._id, bot._id],
-      // Filled in once the draft closes, so the bans actually shape the songs.
-      trackIds: [],
-      bannedCategoryIds: [],
-      vetoPoolIds: await pickVetoPool(ctx),
-      currentRound: 0,
-      createdAt: Date.now(),
-      // Lower-rated player bans first, exactly as in ranked — which means the bot
-      // sometimes opens the draft and sometimes responds to yours.
-      banOrder: user.elo <= bot.elo ? [user._id, bot._id] : [bot._id, user._id],
-      banTurn: 0,
-    });
-
-    for (const player of [user, bot]) {
-      await ctx.db.insert("matchPlayers", {
-        matchId,
-        userId: player._id,
-        totalPoints: 0,
-        hp: DUEL_STARTING_HP,
-        ratingBefore: player.elo,
-        forfeited: false,
-        lastSeenAt: Date.now(),
-      });
-    }
-
-    // Meet the bot first — the VS screen is where the BOT badge appears. The phase
-    // machine moves this on to the draft.
-    await enterPhase(ctx, matchId, "vs_reveal");
-
-    return { status: "started", matchId };
+    return await createBotMatch(
+      ctx,
+      user,
+      pickPracticePersona(user.elo, user.lastPracticePersonaId),
+    );
   },
 });
 
