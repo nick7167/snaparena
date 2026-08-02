@@ -365,6 +365,14 @@ export const todayStats = query({
 });
 
 /**
+ * How far down a day's board `myRun` counts before it stops.
+ *
+ * Higher than `TODAY_COUNT_CEILING` because that one only has to say "lots"; this one
+ * is a position someone reads as their own result.
+ */
+const DAILY_COUNT_CEILING = 5_000;
+
+/**
  * The current player's own run and standing, for the result card.
  *
  * Works for guests as well as signed-in players — an anonymous run still gets a real
@@ -385,23 +393,41 @@ export const myRun = query({
 
     if (!run) return null;
 
-    // Rank by counting better scores, guests excluded so the position is measured
-    // against exactly the population the board lists.
-    //
-    // Pre-existing scale limit, unchanged by this work: counting with `.collect()`
-    // reads every run for the date. Fine at launch; this becomes a stored rank, or an
-    // @convex-dev/aggregate index, if the daily takes off.
-    const better = await ctx.db
+    // Walks the board in the order `leaderboard` lists it and stops at this run's own
+    // slot, so the rank here is the row index that board would give it. Counting better
+    // scores instead — the previous approach — hands every tied score the same number
+    // while the board numbers them by list position, and two people tying on a
+    // five-round daily is ordinary rather than rare.
+    let ahead = 0;
+    for await (const other of ctx.db
       .query("dailyRuns")
-      .withIndex("by_date_points", (q) => q.eq("date", date).gt("totalPoints", run.totalPoints))
+      .withIndex("by_date_points", (q) =>
+        q.eq("date", date).gte("totalPoints", run.totalPoints),
+      )
+      // Guests are excluded here and on the board, so the position is measured against
+      // exactly the population the board lists.
       .filter((q) => q.neq(q.field("isGuest"), true))
-      .collect();
+      .order("desc")) {
+      // `_creationTime` is the index's implicit last column, so descending order breaks
+      // ties newest-first. Compared by slot rather than `_id` because a guest's own run
+      // is filtered out of this stream and would otherwise never terminate the walk.
+      if (
+        other.totalPoints === run.totalPoints &&
+        other._creationTime <= run._creationTime
+      ) {
+        break;
+      }
+      if (++ahead > DAILY_COUNT_CEILING) break;
+    }
 
-    const total = (await ctx.db
+    // Bounded for the same reason as `todayStats`: this used to `.collect()` every run
+    // for the date, which is fine at launch and stops being fine without warning.
+    const counted = await ctx.db
       .query("dailyRuns")
       .withIndex("by_date_points", (q) => q.eq("date", date))
       .filter((q) => q.neq(q.field("isGuest"), true))
-      .collect()).length;
+      .take(DAILY_COUNT_CEILING);
+    const total = counted.length;
 
     // A guest is not in the counted population, so their own run has to be added to
     // the total — otherwise "#4 of 3" is possible.
@@ -409,7 +435,7 @@ export const myRun = query({
 
     return {
       ...run,
-      rank: better.length + 1,
+      rank: ahead + 1,
       totalPlayers: isGuest ? total + 1 : total,
       isGuest,
       xpEarned: isGuest ? null : await xpEarnedForRun(ctx, user._id, date),

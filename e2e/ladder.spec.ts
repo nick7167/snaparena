@@ -5,8 +5,8 @@ import { SCREENSHOTS, assertOnboarded, hideDevOverlay } from "./helpers";
 /**
  * The leaderboard, profiles, and the rank emblem that appears on both.
  *
- * This file exists because of two reported defects, and each has a test named after what
- * actually went wrong rather than after the component:
+ * This file exists because of three reported defects, and each has a test named after
+ * what actually went wrong rather than after the component:
  *
  *   1. The leaderboard and the sidebar showed a CSS chamfer plate while the profile
  *      showed the generated artwork. `RankEmblem` only rendered the artwork at lg/xl and
@@ -17,6 +17,12 @@ import { SCREENSHOTS, assertOnboarded, hideDevOverlay } from "./helpers";
  *      exclusion rules and they had drifted: it excluded bots from the count of players
  *      above you while the leaderboard included the sixteen seeded rank bots, so every
  *      bot counted zero above it and every bot profile claimed the top of the ladder.
+ *
+ *   3. The #3 row's profile read "#5 global". The fix for (2) unified the population
+ *      rule the two shared as an index filter, but the board also hid the twelve
+ *      practice bots with a second filter in JS that the count never got, so it counted
+ *      players the board never listed. The count now walks the same index the board
+ *      lists and stops at the player's slot, which also settles ties the same way.
  *
  * Runs signed in, because the pinned "your standing" row needs a session.
  */
@@ -212,6 +218,47 @@ test.describe("profile", () => {
       positions[0],
       `the player listed first claims #${positions[0]} while the second claims #${positions[1]}`,
     ).toBeLessThan(positions[1]);
+  });
+
+  test("a row's number and that player's profile are the same number", async ({ page }) => {
+    /**
+     * The reported defect, stated as the symptom: the #3 row's profile read "#5 global".
+     *
+     * The two tests above assert ordering, and ordering held right through this bug —
+     * the positions came back 1, 3, 5, which is monotonic and has exactly one #1, so
+     * both passed. The property that actually broke is identity. A row's number and that
+     * player's own profile have to be the same number, not merely sorted the same way,
+     * and only asserting equality catches a count that is measured against a population
+     * the board does not list.
+     */
+    await page.goto("/leaderboard");
+    const rows = page.locator("ol > li");
+    await expect(rows.first()).toBeVisible({ timeout: 30_000 });
+
+    // The rank is the row's first span; the link carries the handle.
+    const listed: { href: string; rank: number }[] = [];
+    const total = Math.min(await rows.count(), 8);
+    for (let index = 0; index < total; index++) {
+      const row = rows.nth(index);
+      const href = await row.getByRole("link").first().getAttribute("href");
+      const rank = Number((await row.locator("span").first().innerText()).trim());
+      if (href && Number.isInteger(rank)) listed.push({ href, rank });
+    }
+    expect(listed.length, "not enough players to compare").toBeGreaterThan(1);
+
+    const disagreed: string[] = [];
+    for (const { href, rank } of listed) {
+      await page.goto(href);
+      const match = /^#([\d,]+)/.exec(await readGlobalRank(page));
+      // Past the exact-count threshold the chip is a bucket ("1,500+") by design, so
+      // there is no number to compare. Unreachable from the top of the board, but this
+      // runs against seeded data and should not fail on a thin one.
+      if (!match) continue;
+      const claimed = Number(match[1].replace(/,/g, ""));
+      if (claimed !== rank) disagreed.push(`${href}: row #${rank}, profile #${claimed}`);
+    }
+
+    expect(disagreed, "the board and the profile disagree").toEqual([]);
   });
 });
 

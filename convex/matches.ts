@@ -37,10 +37,11 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
   const best = categoryRatings.sort((a, b) => b.rating - a.rating)[0];
   const bestCategory = best ? await ctx.db.get(best.categoryId) : null;
 
-  // Leaderboard position. Measured by the shared helper against exactly the population
-  // `users.leaderboard` lists — this used to keep its own copy of the exclusion rules,
-  // which excluded bots while the board included them, so every bot counted zero players
-  // above it and every bot profile read "#1 global".
+  // Leaderboard position. The shared helper walks the ladder in the order
+  // `users.leaderboard` lists it and stops at this player's slot, so the number here is
+  // the row index the board would give them rather than a second calculation that has to
+  // be kept in agreement with it. Two earlier versions did keep their own count and both
+  // drifted — first every bot profile read "#1 global", then the #3 row read "#5".
   //
   // Shipped ungated: the profile wants a real position for everyone, bucketed past 500.
   // The "#N GLOBAL" flag on the VS screen is a narrower question, so that surface applies

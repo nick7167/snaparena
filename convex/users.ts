@@ -352,14 +352,16 @@ export const setHandle = mutation({
 });
 
 /**
- * Who counts as being on the ladder.
+ * Who counts as being on the ladder — the half of the rule an index filter can express.
  *
- * The single source of truth for the board's population, shared by `leaderboard` and by
- * `globalPosition` below. These two used to carry their own copies of the rule and they
- * disagreed: the position count excluded bots unconditionally while the board included
- * the sixteen dev rank bots, so every bot counted zero players above it and every bot
- * profile read "#1 global". A rank and the list it refers to have to be measured against
- * the same set of people.
+ * Shared by `leaderboard` and by `globalPosition` below. These two used to carry their
+ * own copies of the rule and they disagreed: the position count excluded bots
+ * unconditionally while the board included the sixteen dev rank bots, so every bot
+ * counted zero players above it and every bot profile read "#1 global". A rank and the
+ * list it refers to have to be measured against the same set of people.
+ *
+ * This is only half the rule. `onBoardDoc` is the other half and both are required —
+ * see the note there.
  *
  * `q` is deliberately untyped — Convex's filter builder is structurally identical across
  * the two call sites but not nameable from here.
@@ -380,6 +382,22 @@ function onBoard(q: any, showRankBots: boolean) {
 }
 
 /**
+ * The half of the ladder rule that the index filter cannot express.
+ *
+ * `onBoard` drops its `isBot` clause in dev mode so the sixteen rank bots can be listed;
+ * this is what keeps the twelve shipping practice bots out, and it has to run in JS
+ * because the check is a persona-id prefix. Every ladder read applies BOTH halves — a
+ * reader that applies only `onBoard` measures against a population the board does not
+ * show, which is exactly how the board and the profile drifted apart the second time:
+ * the practice bots sit at 720-1800 Elo with zero placements, so they were counted as
+ * being above a player without ever appearing on the list, and the #3 row's profile
+ * read "#5 global".
+ */
+function onBoardDoc(user: Doc<"users">, showRankBots: boolean): boolean {
+  return !user.isBot || (showRankBots && isDevRankBotPersona(user.botPersonaId));
+}
+
+/**
  * How far down the ladder we are willing to count before giving an approximate answer.
  *
  * Positions past this are reported as a bucket, so the read stays bounded no matter how
@@ -393,6 +411,13 @@ const POSITION_EXACT_TO = 500;
 /**
  * A player's position on the global ladder.
  *
+ * Walks the ladder in the same order `leaderboard` lists it and stops at the player's
+ * own slot, so the number IS their row index rather than a second opinion about it.
+ * This used to count everyone with a strictly greater Elo instead, which disagreed with
+ * the board twice over: it saw a different population (see `onBoardDoc`), and counting
+ * `elo >` gives every tied player the same number while the board numbers them 1, 2, 3
+ * by list position. Deriving the position from the same walk makes both impossible.
+ *
  * `approximate` means the caller should render a bucket ("1,500+") rather than the exact
  * figure — either because the position is past POSITION_EXACT_TO, or because it hit the
  * ceiling and the true number is unknown.
@@ -404,15 +429,28 @@ export async function globalPosition(
   if (user.placementsRemaining > 0) return { position: null, approximate: false };
 
   const showRankBots = devRankBotsEnabled();
-  const above = await ctx.db
+  let ahead = 0;
+
+  // Reads no more than the old count did: the range starts at the player's own Elo, so
+  // someone near the top stops after a handful of documents.
+  for await (const other of ctx.db
     .query("users")
-    .withIndex("by_elo", (q) => q.gt("elo", user.elo))
-    .filter((q) => onBoard(q, showRankBots))
-    .take(POSITION_CEILING + 1);
+    .withIndex("by_elo", (q) => q.gte("elo", user.elo))
+    .order("desc")
+    .filter((q) => onBoard(q, showRankBots))) {
+    // Convex appends `_creationTime` to every index, so `by_elo` descending is a total
+    // order and ties come back newest first. Once an entry sorts at or past the
+    // player's own slot, everything left is below them. Compared by slot rather than by
+    // `_id` so a player the filter excludes still terminates here instead of walking to
+    // the ceiling.
+    if (other.elo === user.elo && other._creationTime <= user._creationTime) break;
+    if (!onBoardDoc(other, showRankBots)) continue;
+    if (++ahead > POSITION_CEILING) break;
+  }
 
   return {
-    position: above.length + 1,
-    approximate: above.length >= POSITION_EXACT_TO,
+    position: ahead + 1,
+    approximate: ahead >= POSITION_EXACT_TO,
   };
 }
 
@@ -436,11 +474,13 @@ export const leaderboard = query({
       // expressed in the index scan and would otherwise cut the page short.
       .take(showRankBots ? limit * 2 : limit);
 
-    const visible = showRankBots
-      ? ranked
-          .filter((user) => !user.isBot || isDevRankBotPersona(user.botPersonaId))
-          .slice(0, limit)
-      : ranked;
+    // Applied unconditionally, and via the same helper `globalPosition` uses. It is a
+    // no-op off the dev path — `onBoard` has already dropped every bot — and keeping it
+    // unconditional means there is no branch in which one reader filters and the other
+    // does not.
+    const visible = ranked
+      .filter((user) => onBoardDoc(user, showRankBots))
+      .slice(0, limit);
 
     return visible.map((user, index) => ({
       rank: index + 1,
