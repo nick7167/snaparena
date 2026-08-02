@@ -335,3 +335,27 @@ export const PRACTICE_XP_MULTIPLIER = 0.5;
  */
 export const XP_BASE = 300;
 export const XP_CURVE_EXPONENT = 1.5;
+
+// ---------------------------------------------------------------------------
+// Avatars
+// ---------------------------------------------------------------------------
+
+/**
+ * The avatar palette.
+ *
+ * Printed-ink colours: fully opaque, confidently saturated, and all legible against a
+ * dark initial. No neons — those belong to the palette this design replaced.
+ *
+ * Stored as `color:<hex>` in `users.avatarUrl` and resolved by `Avatar` in src/game/ui.tsx.
+ * Lives here rather than beside the onboarding picker because the bot seeder draws from
+ * the same list: a bot's avatar has to be the *same artefact* a real account gets, or the
+ * one thing every bot profile has in common is the thing that gives it away.
+ */
+export const AVATAR_COLOURS = [
+  "#F0B429",
+  "#1F9E8C",
+  "#E03A2F",
+  "#8AACF5",
+  "#A9663C",
+  "#F4F1EA",
+] as const;

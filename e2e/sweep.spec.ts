@@ -15,6 +15,7 @@ const ROUTES = [
   { path: "/", name: "home" },
   { path: "/daily", name: "daily" },
   { path: "/ranked", name: "ranked" },
+  { path: "/practice", name: "practice" },
   { path: "/leaderboard", name: "leaderboard" },
   { path: "/rooms", name: "rooms" },
   { path: "/settings", name: "settings" },

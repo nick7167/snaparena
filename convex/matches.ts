@@ -1,13 +1,13 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { actingUser, currentUser } from "./users";
+import { actingUser, currentUser, globalPosition } from "./users";
 import { endGuessingEarly } from "./phases";
 import { MAX_GUESSES_PER_ROUND, WRONG_GUESS_LOCKOUT_MS } from "../src/engine/config";
 import { checkGuess } from "../src/engine/match";
 import { normalizeTitle } from "../src/engine/normalize";
 import { revealBeatAt, scoreForGuess, validateClientClock } from "../src/engine/scoring";
-import { rankForElo, isNotable, matchupLabel } from "../src/engine/ranks";
+import { rankForElo, matchupLabel } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
 import { sortBadges } from "../src/engine/badges";
 import { damageMultiplier, wonRound } from "../src/engine/duel";
@@ -37,28 +37,15 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
   const best = categoryRatings.sort((a, b) => b.rating - a.rating)[0];
   const bestCategory = best ? await ctx.db.get(best.categoryId) : null;
 
-  // Leaderboard position, for the "#N GLOBAL" flag. Bounded read: we only care
-  // whether they are inside the notable cutoff, so we never scan the whole table.
+  // Leaderboard position. Measured by the shared helper against exactly the population
+  // `users.leaderboard` lists — this used to keep its own copy of the exclusion rules,
+  // which excluded bots while the board included them, so every bot counted zero players
+  // above it and every bot profile read "#1 global".
   //
-  // The exclusions have to match `users.leaderboard` or the two disagree: this counted
-  // every row above you, including bots and players still in placements, so a profile
-  // could read "#7 global" while the board itself showed you fourth. Seeding a bot
-  // roster makes that gap wide enough to notice.
-  //
-  // Bots stay excluded here even while the dev roster is on display, so "#N global"
-  // always means your standing among real players.
-  const above = await ctx.db
-    .query("users")
-    .withIndex("by_elo", (q) => q.gt("elo", user.elo))
-    .filter((q) =>
-      q.and(
-        q.eq(q.field("placementsRemaining"), 0),
-        q.neq(q.field("isBot"), true),
-        q.neq(q.field("isGuest"), true),
-      ),
-    )
-    .take(101);
-  const position = user.placementsRemaining > 0 ? null : above.length + 1;
+  // Shipped ungated: the profile wants a real position for everyone, bucketed past 500.
+  // The "#N GLOBAL" flag on the VS screen is a narrower question, so that surface applies
+  // `isNotable` itself rather than relying on this being null.
+  const { position, approximate } = await globalPosition(ctx, user);
 
   return {
     userId: user._id,
@@ -86,7 +73,9 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
       name: badge.name,
       emoji: badge.emoji,
     })),
-    globalRank: isNotable(position) ? position : null,
+    globalRank: position,
+    /** True when `globalRank` is a bucket floor rather than the exact position. */
+    globalRankApproximate: approximate,
   };
 }
 
@@ -674,6 +663,154 @@ export const summary = query({
 export const card = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => playerCard(ctx, args.userId),
+});
+
+/** Recent matches shown on a profile before the list asks for more. */
+const HISTORY_DEFAULT_LIMIT = 8;
+const HISTORY_MAX_LIMIT = 40;
+
+/**
+ * How many of a player's `matchPlayers` rows are considered before sorting.
+ *
+ * The index orders by creation, not by when the match finished, and those disagree: a
+ * seeded bot history is written today but backdated across the last few weeks. So the
+ * window is read wide and ordered properly in memory. Bounded rather than unbounded
+ * because this runs on every profile view.
+ */
+const HISTORY_SCAN_WINDOW = 120;
+
+/**
+ * A player's recent completed duels.
+ *
+ * Reads what was already being written — `matchPlayers` has carried the rating delta, the
+ * points and the final health since the duel shipped; nothing queried it. The daily is
+ * excluded: it is a solo run with its own results screen, and rendering it as a duel with
+ * no opponent is the exact bug that split the two modes apart in the first place.
+ */
+export const history = query({
+  args: { userId: v.id("users"), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT);
+
+    const rows = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .order("desc")
+      .take(HISTORY_SCAN_WINDOW);
+
+    const entries = [];
+
+    for (const row of rows) {
+      const match = await ctx.db.get(row.matchId);
+      if (!match || match.status !== "complete" || match.mode === "daily") continue;
+
+      const opponentId = match.playerIds.find((id) => id !== args.userId);
+      const opponent = opponentId ? await ctx.db.get(opponentId) : null;
+
+      entries.push({
+        matchId: match._id,
+        mode: match.mode,
+        // Falls back to creation time for the handful of older rows finalised before
+        // `completedAt` was being written.
+        completedAt: match.completedAt ?? match._creationTime,
+        won: match.winnerId === args.userId,
+        drawn: match.winnerId === undefined,
+        totalPoints: row.totalPoints,
+        hp: row.hp ?? null,
+        ratingDelta: row.ratingDelta ?? null,
+        forfeited: row.forfeited,
+        opponent: opponent
+          ? {
+              userId: opponent._id,
+              handle: opponent.handle,
+              displayName: opponent.displayName,
+              avatarUrl: opponent.avatarUrl,
+              elo: opponent.elo,
+              isBot: opponent.isBot === true,
+            }
+          : null,
+      });
+    }
+
+    return entries.sort((a, b) => b.completedAt - a.completedAt).slice(0, limit);
+  },
+});
+
+/**
+ * Everything the results screen needs for a match that is already over.
+ *
+ * `MatchEnd` was only ever mounted from inside a live duel, fed by the `state`
+ * subscription. Every field it reads is persisted, though, so a finished match can be
+ * rebuilt from `matchPlayers` alone — which is what makes a history row clickable.
+ *
+ * `perspectiveUserId` decides whose verdict is shown when the viewer was not in the match.
+ * Without it, a bot-vs-bot recap has nobody flagged `isMe` and the screen falls through to
+ * "DEFEAT" for a match the viewer never played.
+ */
+export const recap = query({
+  args: { matchId: v.id("matches"), perspectiveUserId: v.optional(v.id("users")) },
+  handler: async (ctx, args) => {
+    const match = await ctx.db.get(args.matchId);
+    if (!match || match.status !== "complete") return null;
+    // The daily has its own results screen; this one assumes an opponent throughout.
+    if (match.mode === "daily") return null;
+
+    const me = await currentUser(ctx);
+
+    const rows = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .collect();
+
+    const players = [];
+
+    for (const row of rows) {
+      const card = await playerCard(ctx, row.userId);
+      if (!card) continue;
+
+      players.push({
+        ...card,
+        isMe: me?._id === row.userId,
+        totalPoints: row.totalPoints,
+        hp: row.hp ?? 0,
+        ratingBefore: row.ratingBefore,
+        ratingAfter: row.ratingAfter ?? null,
+        ratingDelta: row.ratingDelta ?? null,
+        xpEarned: row.xpEarned ?? null,
+        xpBreakdown: (row.xpBreakdown ?? []).map((entry) => ({ ...entry })),
+        levelBefore: row.levelBefore ?? null,
+        levelAfter: row.levelAfter ?? null,
+        xpAfter: row.xpAfter ?? null,
+        badgesEarned: row.badgesEarned ?? [],
+        forfeited: row.forfeited,
+      });
+    }
+
+    // Match order, so the two cards do not swap places between renders.
+    players.sort(
+      (a, b) =>
+        match.playerIds.indexOf(a.userId as Id<"users">) -
+        match.playerIds.indexOf(b.userId as Id<"users">),
+    );
+
+    const perspective =
+      players.find((player) => player.isMe)?.userId ??
+      players.find((player) => player.userId === args.perspectiveUserId)?.userId ??
+      players[0]?.userId ??
+      null;
+
+    return {
+      mode: match.mode,
+      winnerId: match.winnerId ?? null,
+      completedAt: match.completedAt ?? match._creationTime,
+      suddenDeath: match.suddenDeath === true,
+      /** Whose side the verdict is read from. Null only for an empty match. */
+      perspectiveUserId: perspective,
+      /** True when the viewer played in this match, so the screen can address them. */
+      viewerPlayed: players.some((player) => player.isMe),
+      players,
+    };
+  },
 });
 
 export type PlayerCard = NonNullable<Awaited<ReturnType<typeof playerCard>>>;

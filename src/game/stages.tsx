@@ -3,6 +3,7 @@
 import { motion } from "motion/react";
 import { useEffect } from "react";
 import { PHASE_DURATIONS_MS, REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
+import { isNotable } from "@/engine/ranks";
 import { play } from "@/audio/sfx";
 import { Avatar, BadgeRow, BotBadge, RankBadge, Stage, TierChip, hpTone, nameFor } from "./ui";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -97,7 +98,10 @@ export function VsReveal({
         </motion.div>
       </div>
 
-      {opponent.globalRank !== null && (
+      {/* `globalRank` now carries a real position for every placed player, so the
+          notable cutoff has to be applied here. Without it every duel would open with a
+          rank flag, which is precisely what makes the flag mean nothing. */}
+      {isNotable(opponent.globalRank) && (
         <motion.p
           initial={reduced ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}

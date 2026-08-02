@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { PLACEMENT_MATCHES } from "@/engine/config";
-import { rankForElo } from "@/engine/ranks";
+import { formatGlobalRank, rankForElo } from "@/engine/ranks";
 import { Button } from "@/ui/Button";
 import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
@@ -68,37 +68,75 @@ export default function LeaderboardPage() {
           )}
 
           {/* Pinned standing, only when you are not already in the list above — the
-              same row must never appear twice.
-
-              Deliberately does not invent a position for someone outside the loaded
-              set: `playerCard` only reports a global rank inside the top 100, so a
-              number here would be a guess. It states the truth instead. */}
+              same row must never appear twice. */}
           {me && !inView && (
             <div className="flex flex-col gap-2">
               <SectionLabel>Your standing</SectionLabel>
-              {myRow ? (
-                <Row entry={myRow} isMe />
-              ) : (
-                <Card className="flex flex-col gap-1 p-4">
-                  <p className="text-body text-paper font-semibold">
-                    {me.placementsRemaining > 0
-                      ? "Not placed yet"
-                      : `Outside the top ${board.length}`}
-                  </p>
-                  <p className="text-body-sm text-muted tabular-nums">
-                    {me.placementsRemaining > 0
-                      ? `${me.placementsRemaining} placement match${
-                          me.placementsRemaining === 1 ? "" : "es"
-                        } to go`
-                      : `Rating ${me.elo}`}
-                  </p>
-                </Card>
-              )}
+              {myRow ? <Row entry={myRow} isMe /> : <MyStanding />}
             </div>
           )}
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Your position when you are nowhere near the loaded board.
+ *
+ * This used to say "Outside the top 200" and stop, because the only position anyone
+ * computed was capped at the notable cutoff. `users.myStanding` now counts properly and
+ * reports whether the figure is exact, so a player 1,847th reads "1,500+" — a real
+ * answer to "where am I?" rather than a statement of where they are not.
+ *
+ * Its own query rather than a slice of `users.me`: this one can read thousands of rows,
+ * and `me` is subscribed by the sidebar on every page in the app.
+ */
+function MyStanding() {
+  const standing = useQuery(api.users.myStanding, {});
+
+  if (standing === undefined) return <Skeleton className="h-16 w-full" />;
+  if (standing === null) return null;
+
+  if (standing.placementsRemaining > 0) {
+    return (
+      <Card className="flex flex-col gap-1 p-4">
+        <p className="text-body text-paper font-semibold">Not placed yet</p>
+        <p className="text-body-sm text-muted tabular-nums">
+          {standing.placementsRemaining} placement match
+          {standing.placementsRemaining === 1 ? "" : "es"} to go
+        </p>
+      </Card>
+    );
+  }
+
+  const rank = rankForElo(standing.elo);
+  const position = formatGlobalRank(standing.position, standing.approximate);
+
+  return (
+    <Card emphasis className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
+      <span className="font-display text-secondary shrink-0 text-right font-bold tabular-nums">
+        {position}
+      </span>
+      <RankEmblem
+        tierId={rank.tier.id}
+        division={rank.tier.divisions > 1 ? rank.division : 1}
+        size="sm"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="text-body font-semibold" style={{ color: rank.tier.accent }}>
+          {rank.label}
+        </span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end">
+        <span className="font-display text-body text-paper font-bold tabular-nums">
+          {standing.elo}
+        </span>
+        <span className="text-label text-muted tabular-nums">
+          {standing.gamesPlayed} games
+        </span>
+      </span>
+    </Card>
   );
 }
 
@@ -126,7 +164,6 @@ function Row({
       <RankEmblem
         tierId={rank.tier.id}
         division={rank.tier.divisions > 1 ? rank.division : 1}
-        accent={rank.tier.accent}
         size="sm"
       />
       {/* Every name on the ladder is a route into a profile — the page that had no

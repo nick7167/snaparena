@@ -2,8 +2,11 @@
 
 import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
 import { BADGES } from "@/engine/badges";
+import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { Avatar, BotBadge, nameFor } from "@/game/ui";
 import { Card, Chip, Empty, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
@@ -53,6 +56,8 @@ export default function ProfilePage() {
 
   const isMe = me?._id === profile.userId;
   const placing = profile.placementsRemaining > 0;
+  const globalRank = formatGlobalRank(card?.globalRank, card?.globalRankApproximate);
+  const notable = isNotable(card?.globalRank);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12">
@@ -85,12 +90,7 @@ export default function ProfilePage() {
           </div>
 
           {card && !placing && (
-            <RankEmblem
-              tierId={card.rankTierId}
-              division={card.rankDivision}
-              accent={card.rankAccent}
-              size="lg"
-            />
+            <RankEmblem tierId={card.rankTierId} division={card.rankDivision} size="lg" />
           )}
         </div>
 
@@ -115,9 +115,16 @@ export default function ProfilePage() {
           </p>
         )}
 
-        {card?.globalRank !== null && card?.globalRank !== undefined && (
-          <Chip tone="gold" size="sm" className="w-fit">
-            <Glyph name="win" filled />#{card.globalRank} global
+        {/* Every placed player gets a position, not just the top 100 — "where am I?" is
+            the question a ladder exists to answer. Past 500 the server reports a bucket
+            rather than an exact figure, so this reads "1,500+ global".
+
+            Only the notable cutoff earns gold and the trophy glyph. A neutral chip below
+            it keeps the flag meaning something. */}
+        {globalRank && (
+          <Chip tone={notable ? "gold" : "neutral"} size="sm" className="w-fit">
+            {notable && <Glyph name="win" filled />}
+            {globalRank} global
           </Chip>
         )}
       </Card>
@@ -125,6 +132,8 @@ export default function ProfilePage() {
       <BadgeCase earned={card?.badges.map((badge) => badge.id) ?? []} />
 
       <Categories categories={profile.categories} />
+
+      <RecentMatches userId={profile.userId} />
 
       {/* Reporting a bio you can't see is meaningless, and you can't report yourself. */}
       {!isMe && !profile.isBot && card?.bio && me && (
@@ -204,6 +213,139 @@ function BadgeCase({ earned }: { earned: string[] }) {
       </div>
     </section>
   );
+}
+
+/**
+ * Recent duels.
+ *
+ * `matchPlayers` has carried the rating delta, the points and the final health of every
+ * match since the duel shipped, and nothing read them — a result existed for as long as
+ * the results screen was on screen and then vanished. A record is most of what makes an
+ * account look like an account.
+ *
+ * Every row opens the real results screen at /m/[matchId], carrying `?p=` so the verdict
+ * is read from this player's side rather than the viewer's.
+ */
+function RecentMatches({ userId }: { userId: Id<"users"> }) {
+  const matches = useQuery(api.matches.history, { userId });
+
+  if (matches === undefined) {
+    return (
+      <section className="flex flex-col gap-3">
+        <SectionLabel>Recent matches</SectionLabel>
+        <Skeleton className="h-40 w-full" />
+      </section>
+    );
+  }
+
+  if (matches.length === 0) {
+    return (
+      <section className="flex flex-col gap-3">
+        <SectionLabel>Recent matches</SectionLabel>
+        <Empty
+          title="No matches yet"
+          body="Finished duels show up here with the result and the rating swing."
+        />
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-3">
+      <SectionLabel>Recent matches</SectionLabel>
+
+      <ul className="flex flex-col gap-2">
+        {matches.map((match) => {
+          const result = match.drawn ? "draw" : match.won ? "won" : "lost";
+
+          return (
+            <li key={match.matchId}>
+              <Link
+                href={`/m/${match.matchId}?p=${userId}`}
+                className="border-line bg-ink-800 hover:bg-ink-700 flex items-center gap-3
+                           rounded-md border p-3 transition-colors"
+              >
+                <span
+                  aria-hidden
+                  className={`h-9 w-1 shrink-0 rounded-full ${
+                    result === "won"
+                      ? "bg-gold"
+                      : result === "lost"
+                        ? "bg-signal"
+                        : "bg-ink-500"
+                  }`}
+                />
+
+                {match.opponent ? (
+                  <Avatar
+                    url={match.opponent.avatarUrl}
+                    name={
+                      match.opponent.isBot
+                        ? match.opponent.displayName
+                        : match.opponent.handle
+                    }
+                    className="size-9 shrink-0 text-sm"
+                  />
+                ) : (
+                  <span className="bg-ink-600 size-9 shrink-0 rounded-full" />
+                )}
+
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-body flex items-center gap-1.5 truncate font-medium">
+                    {match.opponent ? nameFor(match.opponent) : "Unknown opponent"}
+                    {match.opponent?.isBot && <BotBadge size="sm" />}
+                  </span>
+                  <span className="text-body-sm text-muted">
+                    {result === "draw" ? "Draw" : result === "won" ? "Win" : "Loss"}
+                    {match.forfeited && " · resigned"}
+                    {match.mode === "practice" && " · practice"}
+                    {" · "}
+                    {relativeDay(match.completedAt)}
+                  </span>
+                </span>
+
+                <span className="flex shrink-0 flex-col items-end">
+                  <span className="text-body font-display font-bold tabular-nums">
+                    {match.totalPoints}
+                    <span className="text-body-sm text-muted ml-1 font-normal">pts</span>
+                  </span>
+                  {match.ratingDelta !== null && (
+                    <span
+                      // Zero is its own case, not a small win. A loss at the rating floor
+                      // reports a delta of 0 — `applyMatchResult` deliberately shows the
+                      // drop actually taken — and coloring that gold would read as a gain.
+                      className={`text-body-sm font-semibold tabular-nums ${
+                        match.ratingDelta > 0
+                          ? "text-gold"
+                          : match.ratingDelta < 0
+                            ? "text-signal-text"
+                            : "text-muted"
+                      }`}
+                    >
+                      {match.ratingDelta > 0 ? "+" : ""}
+                      {match.ratingDelta}
+                    </span>
+                  )}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** Coarse on purpose: the exact minute of a match three weeks ago is not information. */
+function relativeDay(completedAt: number): string {
+  const days = Math.floor((Date.now() - completedAt) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return new Date(completedAt).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 /**

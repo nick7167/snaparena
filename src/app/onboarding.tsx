@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { play } from "@/audio/sfx";
+import { AVATAR_COLOURS } from "@/engine/config";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { settle } from "@/ui/motion";
@@ -28,12 +29,6 @@ export function OnboardingGate() {
 
   return <OnboardingModal suggestedHandle={me.handle} currentAvatar={me.avatarUrl} />;
 }
-
-// Printed-ink colours: fully opaque, confidently saturated, and all legible against a
-// dark initial. No neons — those belong to the palette this design replaced.
-const AVATAR_COLOURS = [
-  "#F0B429", "#1F9E8C", "#E03A2F", "#8AACF5", "#A9663C", "#F4F1EA",
-];
 
 function OnboardingModal({
   suggestedHandle,

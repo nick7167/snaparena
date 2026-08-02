@@ -1,7 +1,7 @@
 "use client";
 
-import { SignInButton } from "@clerk/nextjs";
 import { SignedIn, SignedOut } from "../auth-gate";
+import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -32,9 +32,9 @@ export default function RoomsPage() {
       </p>
 
       <SignedOut>
-        <SignInButton mode="modal">
-          <Button size="lg" className="w-fit">Sign in to play</Button>
-        </SignInButton>
+        <AuthDialogButton mode="sign-up" size="lg" className="w-fit">
+          Sign in to play
+        </AuthDialogButton>
       </SignedOut>
 
       <SignedIn>

@@ -52,12 +52,22 @@ export function MatchEnd({
   winnerId,
   maxHp,
   matchId,
+  perspectiveUserId,
   onPlayAgain,
 }: {
   players: MatchEndPlayer[];
   winnerId: string | null;
   maxHp: number;
   matchId: Id<"matches">;
+  /**
+   * Whose side to read the result from when the viewer was not in the match.
+   *
+   * A live duel leaves this unset and everything keys off `isMe`, exactly as before. It
+   * only matters for a recap opened from someone else's profile: with nobody flagged
+   * `isMe`, the verdict below has no perspective to take and used to fall through to
+   * DEFEAT for a match the viewer never played.
+   */
+  perspectiveUserId?: string;
   onPlayAgain?: () => void;
 }) {
   const me = players.find((player) => player.isMe);
@@ -65,36 +75,57 @@ export function MatchEnd({
   // by the shared `.press` utility, which the global reduced-motion rule already covers.
   // The nested components that still animate read the hook themselves.
 
+  // Whose rewards the screen reports. The viewer when they played, otherwise whoever the
+  // caller nominated — the player whose profile the recap was opened from.
+  const subject =
+    me ?? players.find((player) => player.userId === perspectiveUserId) ?? null;
+  const spectating = me === undefined;
+
   const promotion = useMemo(() => {
-    if (!me || me.ratingAfter === null) return null;
-    const change = rankChange(me.ratingBefore, me.ratingAfter);
+    if (!subject || subject.ratingAfter === null) return null;
+    const change = rankChange(subject.ratingBefore, subject.ratingAfter);
     return change.promotion === "tier" ? change : null;
-  }, [me]);
+  }, [subject]);
 
   const levelUp =
-    me && me.levelAfter !== null && me.levelBefore !== null && me.levelAfter > me.levelBefore
-      ? me.levelAfter
+    subject &&
+    subject.levelAfter !== null &&
+    subject.levelBefore !== null &&
+    subject.levelAfter > subject.levelBefore
+      ? subject.levelAfter
       : null;
 
+  const subjectWon = subject !== null && winnerId === subject.userId;
+
   useEffect(() => {
+    // Silent when spectating: these are the sounds of *your* result landing, and playing
+    // them for a stranger's match three weeks ago is a lie the audio tells.
+    if (spectating) return;
     if (promotion || levelUp !== null) play("promote");
-    else if (me && winnerId === me.userId) play("podium");
-  }, [promotion, levelUp, me, winnerId]);
+    else if (subjectWon) play("podium");
+  }, [promotion, levelUp, subjectWon, spectating]);
+
+  const winner = players.find((player) => player.userId === winnerId);
 
   return (
     <Stage keyName="match-end" className="py-12">
       {/* Stated without softening. A loss says so — that is what makes a win worth
-          anything. Everything below this line is generous; this line is not. */}
+          anything. Everything below this line is generous; this line is not.
+
+          Spectating names the winner instead: "VICTORY" is a second-person word, and a
+          match the viewer had no part in has no second person in it. */}
       <h1
         className={`font-display text-display-1 text-center font-extrabold tracking-tight ${
-          winnerId === null
-            ? "text-muted"
-            : me && winnerId === me.userId
-              ? "text-paper"
-              : "text-signal-text"
+          winnerId === null ? "text-muted" : subjectWon ? "text-paper" : "text-signal-text"
         }`}
       >
-        {winnerId === null ? "DRAW" : me && winnerId === me.userId ? "VICTORY" : "DEFEAT"}
+        {winnerId === null
+          ? "DRAW"
+          : spectating
+            ? `${winner ? nameFor(winner) : "Winner"} wins`.toUpperCase()
+            : subjectWon
+              ? "VICTORY"
+              : "DEFEAT"}
       </h1>
 
       {promotion && (
@@ -118,7 +149,10 @@ export function MatchEnd({
             <Card
               as="li"
               key={player.userId}
-              emphasis={player.isMe}
+              // Emphasis follows the subject, not the viewer — on a recap that is the
+              // player whose profile you arrived from. The "You" label below still keys
+              // off `isMe`, because only the viewer is ever "you".
+              emphasis={player.userId === subject?.userId}
               className="flex flex-col gap-2 px-4 py-3"
             >
               <div className="flex items-center justify-between">
@@ -158,11 +192,11 @@ export function MatchEnd({
         })}
       </ul>
 
-      <RoundTimeline matchId={matchId} players={players} />
+      <RoundTimeline matchId={matchId} players={players} subjectId={subject?.userId} />
 
-      {me && me.xpEarned !== null && <XpPanel player={me} />}
+      {subject && subject.xpEarned !== null && <XpPanel player={subject} />}
 
-      {me && me.badgesEarned.length > 0 && <NewBadges ids={me.badgesEarned} />}
+      {subject && subject.badgesEarned.length > 0 && <NewBadges ids={subject.badgesEarned} />}
 
       {onPlayAgain && (
         <Button size="lg" onClick={onPlayAgain} className="mx-auto">
@@ -183,16 +217,20 @@ export function MatchEnd({
 function RoundTimeline({
   matchId,
   players,
+  subjectId,
 }: {
   matchId: Id<"matches">;
   players: MatchEndPlayer[];
+  /** Whose side the win/loss markers are drawn from. See `MatchEnd`'s `perspectiveUserId`. */
+  subjectId?: string;
 }) {
   const summary = useQuery(api.matches.summary, { matchId });
   const [expanded, setExpanded] = useState<number | null>(null);
 
   if (!summary || summary.rounds.length === 0) return null;
 
-  const me = players.find((player) => player.isMe);
+  const me = players.find((player) => player.userId === subjectId) ??
+    players.find((player) => player.isMe);
   const detail = summary.rounds.find((round) => round.roundIndex === expanded);
 
   const markerFor = (round: (typeof summary.rounds)[number]) => {

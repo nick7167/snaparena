@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { extractGroup, findComponents, groupByPosition, keyMagenta } from "./cutout.ts";
+import { writeSmallVariants } from "./emblem-small.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SHEET_DIR = resolve(ROOT, "assets/sheets");
@@ -248,9 +249,14 @@ async function main() {
       `\n};\n`,
   );
 
+  // The dense parts of the UI render from public/ranks/sm/, so a slice that did not also
+  // refresh those would leave the leaderboard showing the previous artwork.
+  const small = await writeSmallVariants();
+
   const done = targets.reduce((n, tier) => n + SHEETS[tier].divisions.length, 0);
   const remaining = Object.keys(SHEETS).filter((t) => !present.has(t));
   console.log(`\nWrote ${done} emblem(s) to public/ranks/ and ${merged.length} size(s) to src/ui/`);
+  console.log(`Wrote ${small} small variant(s) to public/ranks/sm/`);
   if (remaining.length > 0) console.log(`Still missing: ${remaining.join(", ")}`);
 }
 

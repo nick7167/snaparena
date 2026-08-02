@@ -55,7 +55,6 @@ export function RankBadge({
       <RankEmblem
         tierId={tierId}
         division={division}
-        accent={accent}
         size={size === "lg" ? "lg" : size === "sm" ? "sm" : "md"}
       />
       <span

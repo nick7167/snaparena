@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NOTABLE_RANK_CUTOFF, RANK_TIERS, STARTING_ELO } from "./config";
-import { isNotable, matchupLabel, rankChange, rankForElo } from "./ranks";
+import { formatGlobalRank, isNotable, matchupLabel, rankChange, rankForElo } from "./ranks";
 
 describe("rankForElo", () => {
   it("puts a new account in a sensible mid tier", () => {
@@ -116,6 +116,41 @@ describe("matchupLabel", () => {
     // reward is not spent before the match starts.
     for (const pair of [[1_000, 1_500], [1_500, 1_000], [1_200, 1_200]] as const) {
       expect(matchupLabel(pair[0], pair[1])).not.toMatch(/\d/);
+    }
+  });
+});
+
+describe("formatGlobalRank", () => {
+  it("shows an exact position when the server counted to the end", () => {
+    expect(formatGlobalRank(1)).toBe("#1");
+    expect(formatGlobalRank(47)).toBe("#47");
+    expect(formatGlobalRank(499)).toBe("#499");
+  });
+
+  it("groups thousands so four-figure positions stay readable", () => {
+    expect(formatGlobalRank(1_234)).toBe("#1,234");
+  });
+
+  it("reports a bucket floor once the count is approximate", () => {
+    // Floors rather than rounds: the label has to be a claim the player clears.
+    expect(formatGlobalRank(612, true)).toBe("500+");
+    expect(formatGlobalRank(999, true)).toBe("500+");
+    expect(formatGlobalRank(1_000, true)).toBe("1,000+");
+    expect(formatGlobalRank(1_847, true)).toBe("1,500+");
+  });
+
+  it("has nothing to say about an unplaced player", () => {
+    expect(formatGlobalRank(null)).toBeNull();
+    expect(formatGlobalRank(undefined)).toBeNull();
+    expect(formatGlobalRank(0)).toBeNull();
+  });
+
+  it("never claims more than the player has cleared", () => {
+    // The bucket is the guarantee: whatever it says, the true position is at least that
+    // far down the ladder. A rounded-up label would be a lie in the player's favour.
+    for (const position of [500, 763, 1_001, 2_499, 5_000]) {
+      const label = formatGlobalRank(position, true)!;
+      expect(Number(label.replace(/[+,]/g, ""))).toBeLessThanOrEqual(position);
     }
   });
 });

@@ -351,6 +351,71 @@ export const setHandle = mutation({
   },
 });
 
+/**
+ * Who counts as being on the ladder.
+ *
+ * The single source of truth for the board's population, shared by `leaderboard` and by
+ * `globalPosition` below. These two used to carry their own copies of the rule and they
+ * disagreed: the position count excluded bots unconditionally while the board included
+ * the sixteen dev rank bots, so every bot counted zero players above it and every bot
+ * profile read "#1 global". A rank and the list it refers to have to be measured against
+ * the same set of people.
+ *
+ * `q` is deliberately untyped — Convex's filter builder is structurally identical across
+ * the two call sites but not nameable from here.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function onBoard(q: any, showRankBots: boolean) {
+  const clauses = [
+    q.eq(q.field("placementsRemaining"), 0),
+    // Guests keep their full placement count so the clause above already excludes them.
+    // Stated explicitly so the exclusion is a decision rather than a side effect of how
+    // placements happen to work.
+    q.neq(q.field("isGuest"), true),
+  ];
+  // Bots are opponents, never ladder entries. Listing them would make the leaderboard
+  // partly a ranking of software.
+  if (!showRankBots) clauses.push(q.neq(q.field("isBot"), true));
+  return q.and(...clauses);
+}
+
+/**
+ * How far down the ladder we are willing to count before giving an approximate answer.
+ *
+ * Positions past this are reported as a bucket, so the read stays bounded no matter how
+ * large the population gets. See `formatGlobalRank` for the display side.
+ */
+const POSITION_CEILING = 5_000;
+
+/** Exact positions up to here; beyond it the number is rounded down to a bucket. */
+const POSITION_EXACT_TO = 500;
+
+/**
+ * A player's position on the global ladder.
+ *
+ * `approximate` means the caller should render a bucket ("1,500+") rather than the exact
+ * figure — either because the position is past POSITION_EXACT_TO, or because it hit the
+ * ceiling and the true number is unknown.
+ */
+export async function globalPosition(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+): Promise<{ position: number | null; approximate: boolean }> {
+  if (user.placementsRemaining > 0) return { position: null, approximate: false };
+
+  const showRankBots = devRankBotsEnabled();
+  const above = await ctx.db
+    .query("users")
+    .withIndex("by_elo", (q) => q.gt("elo", user.elo))
+    .filter((q) => onBoard(q, showRankBots))
+    .take(POSITION_CEILING + 1);
+
+  return {
+    position: above.length + 1,
+    approximate: above.length >= POSITION_EXACT_TO,
+  };
+}
+
 /** Global Elo ladder. Players still in placements are excluded — they have no rank yet. */
 export const leaderboard = query({
   args: { limit: v.optional(v.number()) },
@@ -366,19 +431,7 @@ export const leaderboard = query({
       .query("users")
       .withIndex("by_elo")
       .order("desc")
-      .filter((q) => {
-        const clauses = [
-          q.eq(q.field("placementsRemaining"), 0),
-          // Guests keep their full placement count so the clause above already
-          // excludes them. Stated explicitly so the exclusion is a decision rather
-          // than a side effect of how placements happen to work.
-          q.neq(q.field("isGuest"), true),
-        ];
-        // Bots are opponents, never ladder entries. Listing them would make the
-        // leaderboard partly a ranking of software.
-        if (!showRankBots) clauses.push(q.neq(q.field("isBot"), true));
-        return q.and(...clauses);
-      })
+      .filter((q) => onBoard(q, showRankBots))
       // Over-read only on the dev path, since the prefix filter below cannot be
       // expressed in the index scan and would otherwise cut the page short.
       .take(showRankBots ? limit * 2 : limit);
@@ -398,6 +451,30 @@ export const leaderboard = query({
       elo: user.elo,
       gamesPlayed: user.gamesPlayed,
     }));
+  },
+});
+
+/**
+ * Where the signed-in player stands, for the leaderboard's pinned row.
+ *
+ * Separate from `me` on purpose. The sidebar subscribes to `me` on every page, and
+ * `globalPosition` can read up to 5,000 rows — that cost belongs on the one screen that
+ * asks the question, not on every screen in the app.
+ */
+export const myStanding = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await currentUser(ctx);
+    if (!user) return null;
+
+    const { position, approximate } = await globalPosition(ctx, user);
+    return {
+      elo: user.elo,
+      gamesPlayed: user.gamesPlayed,
+      placementsRemaining: user.placementsRemaining,
+      position,
+      approximate,
+    };
   },
 });
 

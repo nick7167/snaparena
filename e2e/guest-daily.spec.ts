@@ -149,13 +149,47 @@ test("a guest can play the daily start to finish and leave", async ({ page }) =>
   }
   await expect(page.getByRole("button", { name: "Copy result" })).toBeVisible();
 
-  // The signed-out conversion moment — a guest keeps the score by signing in.
+  /**
+   * The conversion moment.
+   *
+   * This used to be four quiet lines at the foot of the score card, below the share
+   * button, where it read as a footnote on a screen that had already ended. It is its own
+   * panel now — the most valuable thing on this screen is a stranger who just had a good
+   * time and has something to lose.
+   */
   await expect(page.getByText(/You.re not on the board yet/)).toBeVisible();
+
+  // The score is restated rather than referred to: "this score" is abstract, "284
+  // points, 12th today" is the thing they are about to throw away.
+  await expect(page.getByText(/\d+ points.*\d+(st|nd|rd|th) of \d+ today/)).toBeVisible();
+  await expect(page.getByText(/disappears when you clear this browser/)).toBeVisible();
+
+  const save = page.getByRole("button", { name: "Save my score" });
+  await expect(save).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /I already have an account/ }),
+  ).toBeVisible();
 
   await page.screenshot({
     path: path.join(SCREENSHOTS, "daily-05-result.png"),
     fullPage: true,
   });
+
+  // It has to actually open the account form, in place, without losing the score behind
+  // a page transition — which is the entire reason this is a dialog and not a link.
+  await save.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Create your account" })).toBeVisible();
+  await page.screenshot({
+    path: path.join(SCREENSHOTS, "daily-06-save-score.png"),
+    fullPage: true,
+  });
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  // The score survived the detour.
+  await expect(page.getByText(/Rank \d+ of \d+ today/)).toBeVisible();
 
   /**
    * The dead end, specifically.

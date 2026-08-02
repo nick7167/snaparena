@@ -3,6 +3,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "./_generate
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireUser } from "./users";
 import { finishMatch } from "./phases";
+import { seedBotProfiles } from "./botprofiles";
 import { PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
 import {
   DEV_RANK_BOT_PERSONAS,
@@ -73,6 +74,14 @@ export const seed = mutation({
     for (const persona of DEV_RANK_BOT_PERSONAS) {
       const existing = await userByHandle(ctx, persona.handle);
 
+      // Never seed over an account a person signed up for. See `bots.seed` for the
+      // failure this prevents; nothing reserves these handles either.
+      if (existing && !existing.clerkId.startsWith("bot:")) {
+        throw new Error(
+          `Handle "${persona.handle}" belongs to a real account; refusing to seed a bot over it.`,
+        );
+      }
+
       const fields = {
         handle: persona.handle,
         displayName: persona.displayName,
@@ -102,7 +111,11 @@ export const seed = mutation({
       }
     }
 
-    return { created, updated, total: DEV_RANK_BOT_PERSONAS.length };
+    // Careers, avatars, badges and history — the same writer the shipping roster uses,
+    // so a rank bot on the leaderboard reads as an account rather than a placeholder.
+    const profiles = await seedBotProfiles(ctx, DEV_RANK_BOT_PERSONAS);
+
+    return { created, updated, total: DEV_RANK_BOT_PERSONAS.length, ...profiles };
   },
 });
 
@@ -112,6 +125,10 @@ export const seed = mutation({
  * These bots drift — `applyRanked` moves them exactly as it moves a player — so farming
  * one repeatedly drags it out of its band and the board stops showing one bot per rank.
  * Run this whenever that happens.
+ *
+ * The career is re-seeded rather than zeroed. Zeroing was right when a bot had no past to
+ * speak of; now it would answer "this bot has drifted 60 points" by wiping its record,
+ * its level and its badges, and leaving a Diamond account reading `0W · 0L`.
  */
 export const resetRoster = mutation({
   args: { secret: v.string() },
@@ -124,12 +141,7 @@ export const resetRoster = mutation({
       const bot = await userByHandle(ctx, persona.handle);
       if (!bot) continue;
 
-      await ctx.db.patch(bot._id, {
-        elo: persona.elo,
-        gamesPlayed: 0,
-        rankedWins: 0,
-        placementsRemaining: 0,
-      });
+      await ctx.db.patch(bot._id, { elo: persona.elo, placementsRemaining: 0 });
 
       // The queue row carries its own Elo snapshot, used for band matching. Left stale
       // it would keep matching the bot at a rating it no longer holds.
@@ -142,7 +154,9 @@ export const resetRoster = mutation({
       reset++;
     }
 
-    return { reset };
+    const profiles = await seedBotProfiles(ctx, DEV_RANK_BOT_PERSONAS);
+
+    return { reset, ...profiles };
   },
 });
 

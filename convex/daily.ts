@@ -333,6 +333,37 @@ export const leaderboard = query({
   },
 });
 
+/** Ceiling on the players-today count. Past it the landing page says "1,000+". */
+const TODAY_COUNT_CEILING = 1_000;
+
+/**
+ * How many people have played today, for the landing page.
+ *
+ * Counts guests as well as signed-in players — the number is social proof that the
+ * challenge is live, not a leaderboard population, and a stranger deciding whether to
+ * press Play cares that people are playing, not who they are.
+ *
+ * Bounded with `.take` rather than `.collect()` so this stays cheap on the one page every
+ * uncached visitor loads.
+ */
+export const todayStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const date = todayKey();
+    const runs = await ctx.db
+      .query("dailyRuns")
+      .withIndex("by_date_points", (q) => q.eq("date", date))
+      .take(TODAY_COUNT_CEILING + 1);
+
+    return {
+      date,
+      players: Math.min(runs.length, TODAY_COUNT_CEILING),
+      /** True when the real figure is higher than `players`. */
+      atLeast: runs.length > TODAY_COUNT_CEILING,
+    };
+  },
+});
+
 /**
  * The current player's own run and standing, for the result card.
  *

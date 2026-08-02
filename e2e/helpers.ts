@@ -88,10 +88,15 @@ export async function purgeConvexUser(handle: string): Promise<void> {
 /**
  * Signs in without touching the UI.
  *
- * The app has no `/sign-in` route — every entry point is `<SignInButton mode="modal">` —
- * so driving sign-in through the interface would mean automating Clerk's own modal.
- * `clerk.signIn` with an email address mints a server-side token instead, which per
- * Clerk's documentation "bypasses all verification steps".
+ * There IS a real `/sign-in` route now, and auth.spec.ts drives it — but not to
+ * completion. Signing in through the form on every spec would mean either storing a real
+ * password in the repo or completing an emailed code, and it would mint accounts against
+ * a live Clerk instance on every run. `clerk.signIn` with an email address mints a
+ * server-side token instead, which per Clerk's documentation "bypasses all verification
+ * steps".
+ *
+ * The division of labour: this gets a session, auth.spec.ts proves the form is ours and
+ * behaves.
  */
 export async function signInAs(page: Page, emailAddress: string): Promise<void> {
   // Clerk must be loaded on the page before the helper can drive it.
@@ -199,10 +204,30 @@ export async function captureDailyAnswers(): Promise<DailyAnswers | null> {
     const todays = challenges.find((row) => row.date === today);
     if (!todays) return null;
 
-    const tracks = await convexData<{ _id: string; title: string }>("tracks", 2000);
+    /**
+     * The limit has to clear the whole catalogue, and it silently did not.
+     *
+     * `convex data` truncates at `--limit`, so any daily track sitting past the cut
+     * resolved to `""` — and an empty answer is falsy, so the specs quietly passed that
+     * round instead of solving it. A run that should have scored five ended up scoring
+     * two, which looked like broken guess submission rather than a short read. It was
+     * 2000 against a catalogue of 2244.
+     *
+     * Kept well ahead of the catalogue rather than exact, and the shortfall is now
+     * reported instead of being absorbed into a blank string.
+     */
+    const tracks = await convexData<{ _id: string; title: string }>("tracks", 20_000);
     const byId = new Map(tracks.map((track) => [track._id, track.title]));
 
     const titles = todays.trackIds.map((id) => byId.get(id) ?? "");
+    const missing = titles.filter((title) => title === "").length;
+    if (missing > 0) {
+      console.warn(
+        `${missing} of ${titles.length} daily answers could not be resolved from ` +
+          `${tracks.length} tracks — those rounds will be passed rather than solved.`,
+      );
+    }
+
     const answers = { date: today, titles };
     writeFileSync(ANSWERS_PATH, JSON.stringify(answers, null, 2));
     return answers;

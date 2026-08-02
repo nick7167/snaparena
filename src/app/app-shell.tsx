@@ -1,6 +1,6 @@
 "use client";
 
-import { SignInButton, useClerk, useUser } from "@clerk/nextjs";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { SignedIn, SignedOut } from "./auth-gate";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
@@ -10,8 +10,9 @@ import { api } from "../../convex/_generated/api";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
 import { RankEmblem } from "@/ui/RankEmblem";
-import { Button } from "@/ui/Button";
+import { ButtonLink } from "@/ui/Button";
 import { Glyph, type GlyphName } from "@/ui/Glyph";
+import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
 import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
@@ -36,9 +37,20 @@ import {
 const NAV: { href: string; label: string; glyph: GlyphName }[] = [
   { href: "/daily", label: "Daily", glyph: "song" },
   { href: "/ranked", label: "Ranked", glyph: "rank" },
+  { href: "/practice", label: "Practice", glyph: "bot" },
   { href: "/rooms", label: "Rooms", glyph: "timer" },
   { href: "/leaderboard", label: "Board", glyph: "win" },
 ];
+
+/**
+ * The mobile tab bar, with a hole in the middle for the Play button.
+ *
+ * Two either side of the raised centre control. Ranked is absent because Play IS ranked —
+ * listing it twice would make the big gold button look like a shortcut to something
+ * ordinary rather than the primary action.
+ */
+const TABS_LEFT = NAV.filter((item) => item.href === "/daily" || item.href === "/leaderboard");
+const TABS_RIGHT = NAV.filter((item) => item.href === "/rooms" || item.href === "/practice");
 
 export function AppShell({ children }: { children: ReactNode }) {
   const immersive = useImmersiveState();
@@ -99,7 +111,25 @@ function Sidebar() {
 
       <div className="flex-1" />
 
-      <div className="border-line flex flex-col gap-3 border-t p-4">
+      {/*
+       * Play sits at the bottom, directly above progression and identity, rather than at
+       * the top under the wordmark. The nav is a list of places; this is the thing you
+       * came to do, and it belongs in the corner your hand already rests in — next to the
+       * account menu, above the level bar it fills.
+       */}
+      <div className="flex flex-col gap-3 p-4 pb-0">
+        <SignedIn>
+          <PlayButton href="/ranked" caption="Ranked duel" />
+        </SignedIn>
+        <SignedOut>
+          {/* The daily is the only mode a guest can actually play, so that is where the
+              button goes. Sending them at ranked would be a wall wearing the costume of
+              a game. */}
+          <PlayButton href="/daily" caption="Today's challenge" />
+        </SignedOut>
+      </div>
+
+      <div className="border-line mt-4 flex flex-col gap-3 border-t p-4">
         <SignedIn>
           <LevelBlock />
           <UserMenu side="top" align="start" />
@@ -107,12 +137,31 @@ function Sidebar() {
 
         <SignedOut>
           <MuteToggle />
-          <SignInButton mode="modal">
-            <Button block>Sign in</Button>
-          </SignInButton>
+          <AuthDialogButton mode="sign-in" variant="secondary" block>
+            Sign in
+          </AuthDialogButton>
         </SignedOut>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The primary action, and the only control in the app allowed to be this loud.
+ *
+ * Deliberately taller than a `lg` Button and carrying a caption, because its job is to be
+ * unmissable from across the room — a sidebar where every control has the same weight is
+ * a sidebar with no answer to "what do I do now?".
+ */
+function PlayButton({ href, caption }: { href: string; caption: string }) {
+  return (
+    <ButtonLink href={href} size="lg" block className="flex-col gap-0.5 py-4">
+      <span className="flex items-center gap-2 text-xl font-extrabold tracking-wide">
+        <Glyph name="tier" filled />
+        PLAY
+      </span>
+      <span className="text-body-sm font-normal opacity-75">{caption}</span>
+    </ButtonLink>
   );
 }
 
@@ -207,7 +256,6 @@ function UserMenu({
           <RankEmblem
             tierId={rank.tier.id}
             division={rank.tier.divisions > 1 ? rank.division : 1}
-            accent={rank.tier.accent}
             unranked={placing}
             size="sm"
           />
@@ -282,32 +330,66 @@ function UserMenu({
 
 function TabBar() {
   const pathname = usePathname();
+  const { isSignedIn } = useUser();
 
   return (
     <nav
       aria-label="Main"
-      className="bg-ink-900 border-line fixed inset-x-0 bottom-0 z-40 flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden"
+      className="bg-ink-900 border-line fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
-      {NAV.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? "page" : undefined}
-            // min-h-14 keeps every tab above the 44px touch target.
-            className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-1 ${
-              active ? "text-paper" : "text-muted"
-            }`}
-          >
-            <span className="text-xl">
-              <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
-            </span>
-            <span className="text-label font-semibold">{item.label}</span>
-          </Link>
-        );
-      })}
+      {TABS_LEFT.map((item) => (
+        <Tab key={item.href} item={item} pathname={pathname} />
+      ))}
+
+      {/*
+       * The same primary action as the sidebar, in the one place a thumb reaches without
+       * moving. Raised out of the bar rather than sitting in it, so it reads as a control
+       * on top of the navigation instead of a fifth tab that happens to be yellow.
+       */}
+      <div className="flex w-20 shrink-0 justify-center">
+        <Link
+          href={isSignedIn ? "/ranked" : "/daily"}
+          aria-label="Play"
+          className="press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full"
+          style={{ ["--press-edge" as string]: "#9E7414" }}
+        >
+          <span className="text-xl leading-none">
+            <Glyph name="tier" filled />
+          </span>
+          <span className="text-label font-extrabold tracking-wide">PLAY</span>
+        </Link>
+      </div>
+
+      {TABS_RIGHT.map((item) => (
+        <Tab key={item.href} item={item} pathname={pathname} />
+      ))}
     </nav>
+  );
+}
+
+function Tab({
+  item,
+  pathname,
+}: {
+  item: { href: string; label: string; glyph: GlyphName };
+  pathname: string;
+}) {
+  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? "page" : undefined}
+      // min-h-14 keeps every tab above the 44px touch target.
+      className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-1 ${
+        active ? "text-paper" : "text-muted"
+      }`}
+    >
+      <span className="text-xl">
+        <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
+      </span>
+      <span className="text-label font-semibold">{item.label}</span>
+    </Link>
   );
 }
 
@@ -334,9 +416,9 @@ export function MobileTopBar() {
       <SignedOut>
         <div className="flex items-center gap-3">
           <MuteToggle />
-          <SignInButton mode="modal">
-            <Button size="sm">Sign in</Button>
-          </SignInButton>
+          <AuthDialogButton mode="sign-in" size="sm" variant="secondary">
+            Sign in
+          </AuthDialogButton>
         </div>
       </SignedOut>
     </header>

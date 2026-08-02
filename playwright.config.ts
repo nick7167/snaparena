@@ -73,7 +73,7 @@ export default defineConfig({
       // rather than signing in per spec.
       name: "authed",
       // DEV ONLY — drop `dev-rank-bots` from this list with convex/devbots.ts.
-      testMatch: /(shell|new-player|sweep|dev-rank-bots)\.spec\.ts/,
+      testMatch: /(shell|new-player|sweep|ladder|dev-rank-bots)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -89,21 +89,43 @@ export default defineConfig({
        * only spec that can drive a complete daily run on every single execution.
        */
       name: "guest",
-      testMatch: /guest-daily\.spec\.ts/,
+      testMatch: /(guest-daily|landing|auth)\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],
 
   /**
-   * Only Next needs starting.
+   * A production build, not `next dev`.
    *
-   * Convex functions are already deployed and the browser talks to the dev deployment
-   * over its own WebSocket; `convex dev` is a code-push watcher, and nothing here changes
-   * backend code. Starting it would just add a process that races on stdin.
+   * This is a memory decision before it is a fidelity one. The dev server compiles routes
+   * on demand, and doing that alongside a Chromium instance on a box with ~2.7GB free
+   * kills it partway through a full run — which surfaces as every remaining test failing
+   * with ERR_CONNECTION_REFUSED and looks, very convincingly, like 50 broken tests rather
+   * than one dead process. Building ahead of time also means no test is ever the one
+   * unlucky enough to pay for a route's first compile inside its own timeout.
+   *
+   * The bonus is fidelity: this is the artefact that ships. The one cost is that /design
+   * is `notFound()` in production, so emblem coverage asserts against the asset URLs
+   * directly instead — see ladder.spec.ts.
+   *
+   * THE BUILD IS NOT RUN FROM HERE, and that is deliberate. `npm run e2e` builds first,
+   * then calls Playwright. Folding the build into this command (`npm run build && npm run
+   * start`) looks tidier and breaks badly: Playwright SIGTERMs the webServer's process
+   * group when a run ends, which can kill `next build` partway and leave `.next` half
+   * written — and on the next run `reuseExistingServer` may adopt a live server whose
+   * build directory a fresh `next build` is busy deleting. The server then answers a few
+   * requests, dies with "Could not find a production build in the '.next' directory", and
+   * comes back when the build lands. What that looks like from here is fifty tests failing
+   * with ERR_CONNECTION_REFUSED in the middle of an otherwise green run, which is a very
+   * convincing impression of broken application code.
+   *
+   * Only Next needs starting. Convex functions are already deployed and the browser talks
+   * to the dev deployment over its own WebSocket; `convex dev` is a code-push watcher, and
+   * nothing here changes backend code.
    */
   webServer: {
-    command: "npm run dev:next",
+    command: "npm run start",
     url: BASE_URL,
     reuseExistingServer: true,
     timeout: 120_000,

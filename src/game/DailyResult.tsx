@@ -1,11 +1,11 @@
 "use client";
 
-import { SignInButton } from "@clerk/nextjs";
 import { useState } from "react";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Card } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 import { TierChip } from "./ui";
+import { AuthDialogButton } from "@/auth/AuthDialogButton";
 
 /**
  * The daily results screen.
@@ -114,28 +114,10 @@ export function DailyResult({
           {copied ? "Copied" : "Copy result"}
         </Button>
 
-        {/* The conversion moment. The score already exists — signing in is how you keep
-            it, not the price of earning it. */}
-        {run.isGuest && (
-          <div className="border-line flex w-full flex-col items-start gap-3 border-t pt-4">
-            {/* Flex with an explicit gap, not a text space: `Glyph` is an inline-block
-                sized in `em`, so it sat hard against the "Y" and read as "▲You're". */}
-            <p className="text-body text-paper flex items-center gap-2 font-semibold">
-              <Glyph name="win" filled />
-              You&rsquo;re not on the board yet
-            </p>
-            <p className="text-body-sm text-muted">
-              Sign in and this run comes with you — your name, this score, today&rsquo;s
-              board.
-            </p>
-            <SignInButton mode="modal">
-              <Button>Put this on the board</Button>
-            </SignInButton>
-          </div>
-        )}
-
         <p className="text-body-sm text-muted">Come back tomorrow for a new set.</p>
       </Card>
+
+      {run.isGuest && <SaveScore run={run} />}
 
       {/* The way out. The run hides the app navigation, so without these the daily was
           a room with no door — which is exactly how it was reported. */}
@@ -153,6 +135,67 @@ export function DailyResult({
       </div>
     </div>
   );
+}
+
+/**
+ * The conversion moment.
+ *
+ * This existed as four quiet lines at the foot of the score card, below the share button,
+ * where it read as a footnote on a screen that had already ended. It is its own panel now,
+ * directly beneath the score and above the way out, because it is the most valuable thing
+ * on this screen: a stranger who just had a good time and has something to lose.
+ *
+ * The score is restated rather than referred to. "This score" is abstract; "284 points,
+ * 12th today" is the thing they are about to throw away, and naming it is the argument.
+ */
+function SaveScore({
+  run,
+}: {
+  run: { totalPoints: number; rank: number; totalPlayers: number };
+}) {
+  return (
+    <Card emphasis className="flex flex-col gap-4 p-5 sm:p-6">
+      <div className="flex flex-col gap-1">
+        {/* Flex with an explicit gap, not a text space: `Glyph` is an inline-block sized
+            in `em`, so it sat hard against the "Y" and read as "▲You're". */}
+        <p className="font-display text-body-lg text-paper flex items-center gap-2 font-bold">
+          <Glyph name="win" filled />
+          You&rsquo;re not on the board yet
+        </p>
+        <p className="text-body text-secondary tabular-nums">
+          <span className="text-paper font-semibold">{run.totalPoints} points</span>, good
+          for {ordinal(run.rank)} of {run.totalPlayers} today — and it disappears when you
+          clear this browser.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <AuthDialogButton mode="sign-up" size="lg" className="flex-1" redirectTo="/daily">
+          Save my score
+        </AuthDialogButton>
+        <AuthDialogButton
+          mode="sign-in"
+          variant="secondary"
+          size="lg"
+          className="flex-1"
+          redirectTo="/daily"
+        >
+          I already have an account
+        </AuthDialogButton>
+      </div>
+
+      <p className="text-body-sm text-muted">
+        This run comes with you either way — your name, this score, today&rsquo;s board.
+      </p>
+    </Card>
+  );
+}
+
+/** 1st, 2nd, 3rd, 4th — including the 11th/12th/13th exceptions. */
+function ordinal(value: number): string {
+  const rest = value % 100;
+  if (rest >= 11 && rest <= 13) return `${value}th`;
+  return `${value}${["th", "st", "nd", "rd"][value % 10] ?? "th"}`;
 }
 
 /** Local mirror of the tier thresholds for display. Scores still come from the server. */

@@ -116,6 +116,31 @@ export function isNotable(position: number | null | undefined): boolean {
   return typeof position === "number" && position > 0 && position <= NOTABLE_RANK_CUTOFF;
 }
 
+/** Positions are reported exactly up to here, and as a bucket floor beyond it. */
+const RANK_BUCKET = 500;
+
+/**
+ * A global position as it should be read.
+ *
+ * A ladder's first job is answering "where am I?", and for everyone outside the visible
+ * board the honest answer is a magnitude rather than a number — "1,500+" is both true and
+ * useful, where a precise 1,847th implies a precision the bounded count does not have.
+ *
+ * `approximate` comes from the server, which knows whether it counted to the end or gave
+ * up at the ceiling. Returns null when there is no rank to show at all.
+ */
+export function formatGlobalRank(
+  position: number | null | undefined,
+  approximate = false,
+): string | null {
+  if (typeof position !== "number" || position <= 0) return null;
+  if (!approximate) return `#${position.toLocaleString()}`;
+
+  // Floors to the bucket below, so the label is a claim the player definitely clears.
+  const bucket = Math.floor(position / RANK_BUCKET) * RANK_BUCKET;
+  return `${bucket.toLocaleString()}+`;
+}
+
 export type MatchupLabel = "UNDERDOG" | "EVEN MATCH" | "FAVOURITE";
 
 /**

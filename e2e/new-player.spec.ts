@@ -41,7 +41,16 @@ test.afterAll(async () => {
 test("a new account is onboarded, then plays its first daily", async ({ page }) => {
   // Onboarding plus five songs of server-driven pacing. The suite-wide 120s is sized
   // for a daily run alone; this spec does one on top of an account setup.
-  test.setTimeout(240_000);
+  /**
+   * The longest budget in the suite, and it needs to be.
+   *
+   * This spec creates an account, onboards it, and plays five songs of server-paced
+   * gameplay end to end. Alone that lands around 90s; sharing a Convex dev deployment with
+   * the rest of a full run, it has been seen at three minutes. 240s was enough for the
+   * former and not the latter, so the whole spec failed on a stopwatch rather than on
+   * anything about the app.
+   */
+  test.setTimeout(420_000);
 
   userId = await ensureClerkUser(email);
   await signInAs(page, email);
@@ -134,7 +143,17 @@ test("a new account is onboarded, then plays its first daily", async ({ page }) 
    * get the "you're not on the board yet" conversion block.
    */
   await expect(page.getByText(/You.re not on the board yet/)).toHaveCount(0);
-  await expect(page.getByText(/^\+\d+ XP$/)).toBeVisible({ timeout: 30_000 });
+  /**
+   * Eventually consistent by design, so this gets a real budget rather than a default.
+   *
+   * `daily.myRun` reads the awarded figure back off `matchPlayers.xpEarned`, which
+   * `progression.finalizeMatch` writes from a scheduled function — see the note on
+   * `xpEarnedForRun`. `complete` and `finalizeMatch` race, and the results screen
+   * deliberately renders "no line yet" rather than a wrong zero in the gap. Under load
+   * that gap has been longer than 30s, which failed here as a missing element and looked
+   * like the XP line had been dropped from the screen.
+   */
+  await expect(page.getByText(/^\+\d+ XP$/)).toBeVisible({ timeout: 90_000 });
 
   await page.screenshot({
     path: path.join(SCREENSHOTS, "new-03-daily-result-signed-in.png"),

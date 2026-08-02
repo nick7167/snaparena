@@ -9,6 +9,7 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as botprofiles from "../botprofiles.js";
 import type * as bots from "../bots.js";
 import type * as crons from "../crons.js";
 import type * as daily from "../daily.js";
@@ -31,6 +32,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  botprofiles: typeof botprofiles;
   bots: typeof bots;
   crons: typeof crons;
   daily: typeof daily;

@@ -1,10 +1,10 @@
 "use client";
 
-import { SignInButton } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
 import { useState, useSyncExternalStore } from "react";
 import { api } from "../../../convex/_generated/api";
 import { SignedIn, SignedOut } from "../auth-gate";
+import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -29,9 +29,7 @@ export default function SettingsPage() {
       <SignedOut>
         <Card className="flex flex-col items-start gap-3 p-5">
           <p className="text-body text-secondary">Sign in to manage your account.</p>
-          <SignInButton mode="modal">
-            <Button>Sign in</Button>
-          </SignInButton>
+          <AuthDialogButton mode="sign-in">Sign in</AuthDialogButton>
         </Card>
       </SignedOut>
 

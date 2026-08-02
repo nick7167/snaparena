@@ -24,6 +24,7 @@ import {
   type BotPersona,
 } from "../src/engine/bots";
 import { DUEL_STARTING_HP } from "../src/engine/config";
+import { seedBotProfiles } from "./botprofiles";
 
 /**
  * Bot opponents.
@@ -62,6 +63,8 @@ export const seed = mutation({
         .withIndex("by_handle", (q) => q.eq("handle", persona.handle))
         .unique();
 
+      assertNotAHumansHandle(existing, persona);
+
       const fields = {
         handle: persona.handle,
         displayName: persona.displayName,
@@ -92,9 +95,32 @@ export const seed = mutation({
       }
     }
 
-    return { created, updated, total: BOT_PERSONAS.length };
+    // Careers, avatars, badges and history. Shared with the dev rank roster so the two
+    // cannot disagree about what a bot profile contains.
+    const profiles = await seedBotProfiles(ctx, BOT_PERSONAS);
+
+    return { created, updated, total: BOT_PERSONAS.length, ...profiles };
   },
 });
+
+/**
+ * Refuses to seed over an account a person actually signed up for.
+ *
+ * Nothing reserves the persona handles — `HANDLE_PATTERN` accepts every one of them — so a
+ * player could be holding `dustbowl` or `needledrop` before the seed ever runs. Matching on
+ * handle alone would then patch *their* row: `isBot: true`, their rating and display name
+ * overwritten, and now a fabricated career and match history on top. Cheap to check, and
+ * the failure mode it prevents is not recoverable.
+ */
+function assertNotAHumansHandle(existing: Doc<"users"> | null, persona: BotPersona): void {
+  if (!existing) return;
+  if (existing.clerkId.startsWith("bot:")) return;
+
+  throw new Error(
+    `Handle "${persona.handle}" belongs to a real account (${existing.clerkId}); ` +
+      `refusing to seed a bot over it. Rename that account or the persona.`,
+  );
+}
 
 /**
  * Builds a bot match and starts it.

@@ -314,12 +314,7 @@ function Emblems() {
           <div key={tier.id} className="flex flex-wrap items-end gap-6">
             {EVERY_RANK.filter((rank) => rank.tier.id === tier.id).map((rank) => (
               <div key={rank.label} className="flex flex-col items-center gap-2">
-                <RankEmblem
-                  tierId={rank.tier.id}
-                  division={rank.division}
-                  accent={rank.tier.accent}
-                  size="lg"
-                />
+                <RankEmblem tierId={rank.tier.id} division={rank.division} size="lg" />
                 <span className="text-label text-muted">{rank.label}</span>
               </div>
             ))}
@@ -330,24 +325,14 @@ function Emblems() {
         <div className="flex flex-wrap items-end gap-4">
           {EVERY_RANK.map((rank) => (
             <div key={rank.label} className="flex flex-col items-center gap-2">
-              <RankEmblem
-                tierId={rank.tier.id}
-                division={rank.division}
-                accent={rank.tier.accent}
-                size="md"
-              />
-              <RankEmblem
-                tierId={rank.tier.id}
-                division={rank.division}
-                accent={rank.tier.accent}
-                size="sm"
-              />
+              <RankEmblem tierId={rank.tier.id} division={rank.division} size="md" />
+              <RankEmblem tierId={rank.tier.id} division={rank.division} size="sm" />
             </div>
           ))}
         </div>
 
         {/* Legend at xl — the promotion-banner size, and the widest asset in the set. */}
-        <RankEmblem tierId={legend.id} division={1} accent={legend.accent} size="xl" />
+        <RankEmblem tierId={legend.id} division={1} size="xl" />
 
         {/* Unranked, at every size. Everyone starts on 1000 rating, which rankForElo
             reads as Silver II — so without this state a brand-new player was shown a
@@ -355,7 +340,7 @@ function Emblems() {
         <div className="flex flex-wrap items-end gap-4">
           {(["sm", "md", "lg", "xl"] as const).map((size) => (
             <div key={size} className="flex flex-col items-center gap-2">
-              <RankEmblem tierId="silver" division={2} accent="#9fb0c4" unranked size={size} />
+              <RankEmblem tierId="silver" division={2} unranked size={size} />
               <span className="text-label text-muted">Unranked {size}</span>
             </div>
           ))}
