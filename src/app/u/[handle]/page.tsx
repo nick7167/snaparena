@@ -85,7 +85,12 @@ export default function ProfilePage() {
           </div>
 
           {card && !placing && (
-            <RankEmblem accent={card.rankAccent} divisions={divisions(card.rankLabel)} size="lg" />
+            <RankEmblem
+              tierId={card.rankTierId}
+              division={card.rankDivision}
+              accent={card.rankAccent}
+              size="lg"
+            />
           )}
         </div>
 
@@ -255,8 +260,3 @@ function Categories({
   );
 }
 
-/** "Gold II" → 2, matching how RankBadge derives chevrons. */
-function divisions(label: string | undefined): number {
-  const suffix = label?.trim().split(/\s+/).pop();
-  return suffix === "III" ? 3 : suffix === "II" ? 2 : 1;
-}

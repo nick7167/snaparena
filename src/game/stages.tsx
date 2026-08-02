@@ -26,6 +26,8 @@ export interface PlayerCardData {
   avatarUrl?: string | null;
   elo: number;
   rankLabel: string;
+  rankTierId: string;
+  rankDivision: number;
   rankAccent: string;
   placementsRemaining: number;
   level: number;
@@ -139,6 +141,8 @@ function VsCard({ player }: { player: PlayerCardData }) {
       {player.isBot && <BotBadge />}
       <RankBadge
         label={player.rankLabel}
+        tierId={player.rankTierId}
+        division={player.rankDivision}
         accent={player.rankAccent}
         placements={player.placementsRemaining}
         size="sm"

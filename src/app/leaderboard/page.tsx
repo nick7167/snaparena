@@ -124,8 +124,9 @@ function Row({
         {entry.rank}
       </span>
       <RankEmblem
+        tierId={rank.tier.id}
+        division={rank.tier.divisions > 1 ? rank.division : 1}
         accent={rank.tier.accent}
-        divisions={rank.tier.divisions > 1 ? rank.division : 1}
         size="sm"
       />
       {/* Every name on the ladder is a route into a profile — the page that had no

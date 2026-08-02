@@ -113,6 +113,8 @@ export function RoundRunner({
     avatarUrl: entry.avatarUrl,
     elo: entry.elo ?? 0,
     rankLabel: entry.rankLabel ?? "",
+    rankTierId: entry.rankTierId ?? "bronze",
+    rankDivision: entry.rankDivision ?? 1,
     rankAccent: entry.rankAccent ?? "#888",
     placementsRemaining: entry.placementsRemaining ?? 0,
     level: entry.level ?? 1,
@@ -300,6 +302,8 @@ function MatchHeader({
               {opponent.isBot && <BotBadge />}
               <RankBadge
                 label={opponent.rankLabel}
+                tierId={opponent.rankTierId}
+                division={opponent.rankDivision}
                 accent={opponent.rankAccent}
                 placements={opponent.placementsRemaining}
                 size="sm"

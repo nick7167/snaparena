@@ -23,11 +23,15 @@ import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
 export function RankBadge({
   label,
+  tierId,
+  division = 1,
   accent,
   placements,
   size = "md",
 }: {
   label: string;
+  tierId: string;
+  division?: number;
   accent: string;
   placements?: number;
   size?: "sm" | "md" | "lg";
@@ -46,15 +50,12 @@ export function RankBadge({
     );
   }
 
-  // The label carries the division as a roman numeral ("Gold II"), which the emblem
-  // also encodes as chevrons — parsing it here keeps rankForElo as the single source.
-  const divisions = divisionFromLabel(label);
-
   return (
     <span className="inline-flex items-center gap-2">
       <RankEmblem
+        tierId={tierId}
+        division={division}
         accent={accent}
-        divisions={divisions}
         size={size === "lg" ? "lg" : size === "sm" ? "sm" : "md"}
       />
       <span
@@ -67,12 +68,6 @@ export function RankBadge({
       </span>
     </span>
   );
-}
-
-/** "Gold II" → 2. Anything without a numeral (Legend) is a single division. */
-function divisionFromLabel(label: string): number {
-  const suffix = label.trim().split(/\s+/).pop();
-  return suffix === "III" ? 3 : suffix === "II" ? 2 : 1;
 }
 
 /** The score tier earned on a round — the thing worth bragging about. */

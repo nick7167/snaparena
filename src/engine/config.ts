@@ -258,7 +258,7 @@ export const RECONNECT_GRACE_MS = 20_000;
  * these bands, so retuning them cannot corrupt anyone's actual rating.
  *
  * `minElo` is inclusive; the list must stay sorted ascending. Every tier except the
- * top has three divisions (III → II → I as you climb), because a visible sub-step
+ * top has three divisions (I → II → III as you climb), because a visible sub-step
  * gives players progress to feel between full promotions.
  */
 /**
@@ -269,6 +269,11 @@ export const RECONNECT_GRACE_MS = 20_000;
  *
  * Legend is paper-white on purpose. The top of every ladder in this app is the absence
  * of hue: the top score tier is white too, and nothing else may be.
+ *
+ * That rule governs this accent — the rank label, borders and the small emblem mark are
+ * all paper. It deliberately does NOT govern the generated Legend emblem art in
+ * public/ranks/, which is allowed colour so it can out-rank Diamond at 112px. Restraint
+ * reads as restraint in type and UI chrome; at trophy size it read as an anticlimax.
  */
 export const RANK_TIERS: readonly RankTier[] = [
   { id: "bronze", name: "Bronze", minElo: 0, divisions: 3, accent: "#a9663c" },

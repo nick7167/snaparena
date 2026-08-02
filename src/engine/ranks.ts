@@ -54,7 +54,10 @@ export function rankForElo(elo: number): Rank {
   const divisionSize = span / tier.divisions;
 
   const stepsClimbed = Math.floor(into / divisionSize);
-  const division = tier.divisions - stepsClimbed;
+  // Divisions ascend: entering a tier is I, the top of it is III. The emblem draws one
+  // chevron per division, so counting downward meant the weakest rank in every tier wore
+  // the most chevrons — the numeral and the pips disagreed about which way was up.
+  const division = stepsClimbed + 1;
 
   const divisionFloor = tier.minElo + stepsClimbed * divisionSize;
   const nextAt = Math.ceil(divisionFloor + divisionSize);
@@ -96,10 +99,10 @@ export function rankChange(eloBefore: number, eloAfter: number): RankChange {
   if (tierAfter < tierBefore) {
     return { before, after, promotion: null, demotion: "tier" };
   }
-  if (after.division < before.division) {
+  if (after.division > before.division) {
     return { before, after, promotion: "division", demotion: null };
   }
-  if (after.division > before.division) {
+  if (after.division < before.division) {
     return { before, after, promotion: null, demotion: "division" };
   }
   return { before, after, promotion: null, demotion: null };

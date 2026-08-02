@@ -288,37 +288,84 @@ function Glyphs() {
   );
 }
 
+/** Every rank in ladder order, derived from RANK_TIERS so this cannot drift from the engine. */
+const EVERY_RANK = RANK_TIERS.flatMap((tier) =>
+  Array.from({ length: tier.divisions }, (_, i) => ({
+    tier,
+    division: i + 1,
+    label: tier.divisions > 1 ? `${tier.name} ${"I".repeat(i + 1)}` : tier.name,
+  })),
+);
+
 function Emblems() {
+  const gold = RANK_TIERS.find((tier) => tier.id === "gold")!;
+  const legend = RANK_TIERS.find((tier) => tier.id === "legend")!;
+
   return (
     <Group
       title="Rank emblem"
-      note="The only sharp-cornered object in the app. Chevron count encodes division, so climbing is visible between promotions."
+      note="Two renditions. At 56px and above it is generated artwork, one bespoke emblem per rank. At 24 and 36px it is the chamfered brand plate in the tier accent, because the artwork turns to mush that small and five of the eight call sites are that small. Divisions ascend: I is the entry rank, III the top of a tier."
     >
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-end gap-6">
-          {RANK_TIERS.map((tier) => (
-            <div key={tier.id} className="flex flex-col items-center gap-2">
-              <RankEmblem accent={tier.accent} divisions={tier.divisions > 1 ? 2 : 1} size="lg" />
-              <span className="text-label text-muted">{tier.name}</span>
+      <div className="flex flex-col gap-8">
+        {/* The whole ladder at hero size. This is the surface for checking that all
+            sixteen assets exist, that the escalation reads, and that no emblem is
+            missing after a re-slice. */}
+        {RANK_TIERS.map((tier) => (
+          <div key={tier.id} className="flex flex-wrap items-end gap-6">
+            {EVERY_RANK.filter((rank) => rank.tier.id === tier.id).map((rank) => (
+              <div key={rank.label} className="flex flex-col items-center gap-2">
+                <RankEmblem
+                  tierId={rank.tier.id}
+                  division={rank.division}
+                  accent={rank.tier.accent}
+                  size="lg"
+                />
+                <span className="text-label text-muted">{rank.label}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {/* The same ranks as the small CSS mark — what the leaderboard and sidebar show. */}
+        <div className="flex flex-wrap items-end gap-4">
+          {EVERY_RANK.map((rank) => (
+            <div key={rank.label} className="flex flex-col items-center gap-2">
+              <RankEmblem
+                tierId={rank.tier.id}
+                division={rank.division}
+                accent={rank.tier.accent}
+                size="md"
+              />
+              <RankEmblem
+                tierId={rank.tier.id}
+                division={rank.division}
+                accent={rank.tier.accent}
+                size="sm"
+              />
             </div>
           ))}
         </div>
 
-        <div className="flex flex-wrap items-end gap-6">
-          {[3, 2, 1].map((divisions) => (
-            <div key={divisions} className="flex flex-col items-center gap-2">
-              <RankEmblem accent="#F0B429" divisions={divisions} size="lg" />
-              <span className="text-label text-muted">Gold {"I".repeat(divisions)}</span>
+        {/* Legend at xl — the promotion-banner size, and the widest asset in the set. */}
+        <RankEmblem tierId={legend.id} division={1} accent={legend.accent} size="xl" />
+
+        {/* Unranked, at every size. Everyone starts on 1000 rating, which rankForElo
+            reads as Silver II — so without this state a brand-new player was shown a
+            Silver emblem beside the word "Unranked". */}
+        <div className="flex flex-wrap items-end gap-4">
+          {(["sm", "md", "lg", "xl"] as const).map((size) => (
+            <div key={size} className="flex flex-col items-center gap-2">
+              <RankEmblem tierId="silver" division={2} accent="#9fb0c4" unranked size={size} />
+              <span className="text-label text-muted">Unranked {size}</span>
             </div>
           ))}
-          <RankEmblem accent="#F4F1EA" divisions={1} size="xl" />
         </div>
 
         <div className="flex flex-wrap items-center gap-4">
-          <RankBadge label="Gold II" accent="#F0B429" />
-          <RankBadge label="Legend" accent="#F4F1EA" size="lg" />
-          <RankBadge label="Bronze I" accent="#A9663C" size="sm" />
-          <RankBadge label="Silver III" accent="#9FB0C4" placements={3} />
+          <RankBadge label="Gold II" tierId={gold.id} division={2} accent={gold.accent} />
+          <RankBadge label="Legend" tierId={legend.id} accent={legend.accent} size="lg" />
+          <RankBadge label="Bronze I" tierId="bronze" division={1} accent="#a9663c" size="sm" />
+          <RankBadge label="Silver III" tierId="silver" division={3} accent="#9fb0c4" placements={3} />
         </div>
       </div>
     </Group>

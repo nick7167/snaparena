@@ -205,8 +205,10 @@ function UserMenu({
            * allows. The emblem is decorative here; the rank is named in text beside it.
            */}
           <RankEmblem
+            tierId={rank.tier.id}
+            division={rank.tier.divisions > 1 ? rank.division : 1}
             accent={rank.tier.accent}
-            divisions={rank.tier.divisions > 1 ? rank.division : 1}
+            unranked={placing}
             size="sm"
           />
           <span className="flex min-w-0 flex-1 flex-col text-left">
@@ -348,12 +350,19 @@ export function MobileTopBar() {
 function Wordmark() {
   return (
     <Link href="/" className="inline-flex items-center gap-2">
-      {/* The mark is the same chamfered geometry as the rank emblem — the app's only
-          sharp shapes, so the logo and the trophy read as one family. */}
-      <span
-        className="bg-paper inline-block size-5"
-        style={{ clipPath: "polygon(22% 0, 100% 0, 100% 78%, 78% 100%, 0 100%, 0 22%)" }}
+      {/* The same mark as the favicon and the home-screen icon, cut from one generated
+          image by scripts/build-icon.ts. This used to be a CSS clip-path plate, which
+          stayed crisp but showed a bare chamfer while every other surface showed the
+          waveform — the logo has to be the same object everywhere it appears.
+
+          public/mark.png is the transparent variant; the favicon bakes ink-900 in
+          because it lands on browser chrome we do not control, and this one does not. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/mark.png"
+        alt=""
         aria-hidden="true"
+        className="inline-block size-5 shrink-0 select-none"
       />
       <span className="font-display text-paper text-xl font-extrabold tracking-tight">
         SNAP

@@ -97,7 +97,14 @@ export function MatchEnd({
         {winnerId === null ? "DRAW" : me && winnerId === me.userId ? "VICTORY" : "DEFEAT"}
       </h1>
 
-      {promotion && <PromotionBanner label={promotion.after.label} accent={promotion.after.tier.accent} />}
+      {promotion && (
+        <PromotionBanner
+          label={promotion.after.label}
+          tierId={promotion.after.tier.id}
+          division={promotion.after.division}
+          accent={promotion.after.tier.accent}
+        />
+      )}
       {levelUp !== null && <LevelUpBanner level={levelUp} />}
 
       {/* Final health. A knockout must LOOK like a knockout — an empty bar says
@@ -495,7 +502,17 @@ function NewBadges({ ids }: { ids: string[] }) {
   );
 }
 
-function PromotionBanner({ label, accent }: { label: string; accent: string }) {
+function PromotionBanner({
+  label,
+  tierId,
+  division,
+  accent,
+}: {
+  label: string;
+  tierId: string;
+  division: number;
+  accent: string;
+}) {
   const reduced = usePrefersReducedMotion();
 
   return (
@@ -507,7 +524,7 @@ function PromotionBanner({ label, accent }: { label: string; accent: string }) {
       style={{ borderColor: `${accent}55`, backgroundColor: `${accent}12` }}
     >
       <p className="text-label text-secondary font-semibold tracking-[0.3em] uppercase">Promoted</p>
-      <RankBadge label={label} accent={accent} size="lg" />
+      <RankBadge label={label} tierId={tierId} division={division} accent={accent} size="lg" />
     </motion.div>
   );
 }

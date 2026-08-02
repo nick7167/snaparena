@@ -17,14 +17,16 @@ describe("rankForElo", () => {
     expect(rankForElo(9_999).tier.id).toBe("legend");
   });
 
-  it("counts divisions downward as the player climbs", () => {
-    // Entering a tier starts at its lowest division; III -> II -> I going up.
+  it("counts divisions upward as the player climbs", () => {
+    // Entering a tier starts at its lowest division; I -> II -> III going up. The
+    // emblem draws one chevron per division, so this has to ascend or the weakest
+    // rank in a tier would wear the most chevrons.
     const gold = RANK_TIERS.find((tier) => tier.id === "gold")!;
-    expect(rankForElo(gold.minElo).division).toBe(3);
-    expect(rankForElo(gold.minElo).label).toBe("Gold III");
+    expect(rankForElo(gold.minElo).division).toBe(1);
+    expect(rankForElo(gold.minElo).label).toBe("Gold I");
 
     const platinum = RANK_TIERS.find((tier) => tier.id === "platinum")!;
-    expect(rankForElo(platinum.minElo - 1).label).toBe("Gold I");
+    expect(rankForElo(platinum.minElo - 1).label).toBe("Gold III");
   });
 
   it("drops the division from the single-division top tier", () => {

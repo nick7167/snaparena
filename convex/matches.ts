@@ -53,6 +53,10 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
     elo: user.elo,
     rankLabel: rank.label,
     rankTierId: rank.tier.id,
+    // Shipped explicitly rather than recovered from the label. The emblem now selects an
+    // artwork file per rank, so a division read wrong picks the wrong picture, not just
+    // the wrong chevron count.
+    rankDivision: rank.division,
     rankAccent: rank.tier.accent,
     rankProgress: rank.progress,
     placementsRemaining: user.placementsRemaining,

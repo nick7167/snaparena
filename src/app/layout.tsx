@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -55,6 +55,15 @@ export const metadata: Metadata = {
     type: "website",
   },
   twitter: { card: "summary_large_image" },
+};
+
+/**
+ * ink-900, matching the icon's background and the manifest's splash colour, so mobile
+ * browser chrome blends into the app instead of framing it. Declared here rather than in
+ * `metadata` because Next moved viewport-affecting fields out of it.
+ */
+export const viewport: Viewport = {
+  themeColor: "#0e1017",
 };
 
 export default function RootLayout({

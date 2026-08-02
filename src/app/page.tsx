@@ -192,8 +192,10 @@ function Standing({
   return (
     <Card className="flex items-center gap-4 p-5">
       <RankEmblem
+        tierId={rank.tier.id}
+        division={rank.tier.divisions > 1 ? rank.division : 1}
         accent={rank.tier.accent}
-        divisions={rank.tier.divisions > 1 ? rank.division : 1}
+        unranked={placing}
         size="lg"
       />
       <div className="flex min-w-0 flex-col gap-0.5">
