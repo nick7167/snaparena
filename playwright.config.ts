@@ -72,7 +72,8 @@ export default defineConfig({
       // Everything that needs an account. Reuses the signed-in state captured by setup
       // rather than signing in per spec.
       name: "authed",
-      testMatch: /(shell|new-player|sweep)\.spec\.ts/,
+      // DEV ONLY — drop `dev-rank-bots` from this list with convex/devbots.ts.
+      testMatch: /(shell|new-player|sweep|dev-rank-bots)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

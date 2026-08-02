@@ -20,4 +20,21 @@ crons.interval(
   {},
 );
 
+/**
+ * DEV ONLY — delete with convex/devbots.ts.
+ *
+ * Keeps the sixteen rank bots sitting in the ranked queue so a lone developer can
+ * actually match. Their queue rows are consumed when matched, so this is a refill on a
+ * timer rather than a one-off seed. Every minute because a minute is the longest you
+ * want to wait between test matches, and the job no-ops in a single read when the
+ * DEV_RANK_BOTS flag is unset — which is where the gating lives, so turning the flag off
+ * is enough and no redeploy is needed.
+ */
+crons.interval(
+  "refill dev rank bot queue",
+  { minutes: 1 },
+  internal.devbots.refillQueue,
+  {},
+);
+
 export default crons;

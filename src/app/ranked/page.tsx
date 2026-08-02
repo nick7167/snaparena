@@ -286,9 +286,54 @@ function RankedMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeave: ()
   }, [matchId, heartbeat, claimForfeit]);
 
   if (!match) return <p className="text-body text-muted px-4">Loading…</p>;
-  if (match.phase === "veto") return <VetoPhase matchId={matchId} />;
 
-  return <RoundRunner matchId={matchId} onPlayAgain={onLeave} />;
+  return (
+    <>
+      <DevResolveBar matchId={matchId} />
+      {match.phase === "veto" ? (
+        <VetoPhase matchId={matchId} />
+      ) : (
+        <RoundRunner matchId={matchId} onPlayAgain={onLeave} />
+      )}
+    </>
+  );
+}
+
+/**
+ * DEV ONLY — delete with convex/devbots.ts.
+ *
+ * A duel runs nine to twelve songs, so clearing five placement matches is the better
+ * part of an hour. This ends the current one instantly through the real `finishMatch`
+ * path, so rating, placements, XP, badges and the results screen all behave exactly as
+ * if it had been played out.
+ *
+ * Renders nothing at all unless DEV_RANK_BOTS is set on the Convex deployment — the flag
+ * is read from the server rather than a NEXT_PUBLIC_ variable, so there is nothing to
+ * keep in sync with Vercel.
+ */
+function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
+  const dev = useQuery(api.devbots.enabled, {});
+  const resolveNow = useMutation(api.devbots.resolveNow);
+
+  if (!dev?.enabled) return null;
+
+  return (
+    // Top right, clear of the guess combobox and the HP bars — this is a scaffold, and a
+    // scaffold that covers the thing you are testing is worse than no scaffold.
+    <div className="fixed top-3 right-3 z-50 flex items-center gap-2 rounded-full border border-dashed border-white/25 bg-black/80 px-3 py-2 backdrop-blur">
+      <span className="text-body-sm text-muted px-1 font-mono uppercase">dev</span>
+      {(["win", "loss", "random"] as const).map((outcome) => (
+        <Button
+          key={outcome}
+          variant="secondary"
+          size="sm"
+          onClick={() => void resolveNow({ matchId, outcome })}
+        >
+          {outcome === "win" ? "Win" : outcome === "loss" ? "Lose" : "Random"}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 /**

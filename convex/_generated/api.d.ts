@@ -12,6 +12,7 @@ import type * as admin from "../admin.js";
 import type * as bots from "../bots.js";
 import type * as crons from "../crons.js";
 import type * as daily from "../daily.js";
+import type * as devbots from "../devbots.js";
 import type * as draft from "../draft.js";
 import type * as guests from "../guests.js";
 import type * as matches from "../matches.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   bots: typeof bots;
   crons: typeof crons;
   daily: typeof daily;
+  devbots: typeof devbots;
   draft: typeof draft;
   guests: typeof guests;
   matches: typeof matches;

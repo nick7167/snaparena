@@ -39,9 +39,24 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
 
   // Leaderboard position, for the "#N GLOBAL" flag. Bounded read: we only care
   // whether they are inside the notable cutoff, so we never scan the whole table.
+  //
+  // The exclusions have to match `users.leaderboard` or the two disagree: this counted
+  // every row above you, including bots and players still in placements, so a profile
+  // could read "#7 global" while the board itself showed you fourth. Seeding a bot
+  // roster makes that gap wide enough to notice.
+  //
+  // Bots stay excluded here even while the dev roster is on display, so "#N global"
+  // always means your standing among real players.
   const above = await ctx.db
     .query("users")
     .withIndex("by_elo", (q) => q.gt("elo", user.elo))
+    .filter((q) =>
+      q.and(
+        q.eq(q.field("placementsRemaining"), 0),
+        q.neq(q.field("isBot"), true),
+        q.neq(q.field("isGuest"), true),
+      ),
+    )
     .take(101);
   const position = user.placementsRemaining > 0 ? null : above.length + 1;
 

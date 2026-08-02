@@ -11,6 +11,8 @@
  */
 
 import { MIN_HUMAN_REACTION_MS, ROUND_DURATION_MS } from "./config";
+// DEV ONLY — see `personaById` below for why this import exists, and delete both together.
+import { DEV_RANK_BOT_PERSONAS } from "./dev-rank-bots";
 
 export interface BotPersona {
   /** Stable key; also the seed for the generated avatar. */
@@ -144,7 +146,15 @@ export const BOT_PERSONAS: readonly BotPersona[] = [
 ] as const;
 
 export function personaById(id: string): BotPersona | undefined {
-  return BOT_PERSONAS.find((persona) => persona.id === id);
+  return (
+    BOT_PERSONAS.find((persona) => persona.id === id) ??
+    // DEV ONLY — delete this fallback with the roster. It is the single point at which
+    // the dev rank bots reach the behaviour engine: `bots.playRound` and
+    // `bots.placeBotBan` both return early on an unresolvable persona, so without it a
+    // dev bot would join a match and then never guess or ban. Kept out of BOT_PERSONAS
+    // itself so `pickPracticePersona` and `bots.seed` never see them.
+    DEV_RANK_BOT_PERSONAS.find((persona) => persona.id === id)
+  );
 }
 
 /**

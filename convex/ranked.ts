@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireUser } from "./users";
 import {
   DUEL_STARTING_HP,
@@ -17,6 +17,9 @@ import {
   placeBan,
   startDuelIfDraftDone,
 } from "./draft";
+// DEV ONLY — delete with convex/devbots.ts. See the single call site in `tryMatchmake`.
+import { pickDevOpponent } from "./devbots";
+import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
 
 /**
  * Elo band for matchmaking, widening with time spent in queue.
@@ -144,10 +147,15 @@ export const tryMatchmake = mutation({
       .withIndex("by_elo", (q) => q.gte("elo", user.elo - band).lte("elo", user.elo + band))
       .take(25);
 
+    const others = candidates.filter((entry) => entry.userId !== user._id);
+
     // Prefer the longest-waiting opponent so nobody starves at the back of the pool.
-    const opponentEntry = candidates
-      .filter((entry) => entry.userId !== user._id)
-      .sort((a, b) => a.enqueuedAt - b.enqueuedAt)[0];
+    // DEV ONLY — the branch: with the rank bots seeded, "longest waiting" would return
+    // the same bot every time. See `pickDevOpponent`; it still prefers a queued human,
+    // so this line is the only thing to revert.
+    const opponentEntry = devRankBotsEnabled()
+      ? await pickDevOpponent(ctx, user, others)
+      : others.sort((a, b) => a.enqueuedAt - b.enqueuedAt)[0];
 
     if (!opponentEntry) return { matched: false };
 
@@ -356,9 +364,24 @@ export const claimForfeit = mutation({
       .collect();
 
     const cutoff = Date.now() - RECONNECT_GRACE_MS;
-    const absent = players.filter((player) => player.lastSeenAt < cutoff);
 
-    if (absent.length === 0 || absent.length === players.length) {
+    // Bots have no client and therefore never heartbeat: `lastSeenAt` is written once
+    // when the match is created and never again. Counting them as absent forfeited the
+    // bot twenty seconds into every rated match against one — the human's own poll
+    // handing them a free win before the first song finished. A bot cannot disconnect,
+    // so it can never be the absent player.
+    const humans: Doc<"matchPlayers">[] = [];
+    for (const player of players) {
+      const user = await ctx.db.get(player.userId);
+      if (user?.isBot) continue;
+      humans.push(player);
+    }
+
+    const absent = humans.filter((player) => player.lastSeenAt < cutoff);
+
+    // Everyone gone is nobody to award it to — that match is reaped elsewhere, not
+    // decided here.
+    if (absent.length === 0 || absent.length === humans.length) {
       return { forfeited: false as const };
     }
 

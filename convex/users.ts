@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { mutation, query, type QueryCtx, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { STARTING_ELO, PLACEMENT_MATCHES } from "../src/engine/config";
+// DEV ONLY — delete with convex/devbots.ts. Single call site, in `leaderboard`.
+import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
 
 /** Resolves the signed-in Clerk identity to a user row, or null when signed out. */
 export async function currentUser(ctx: QueryCtx | MutationCtx): Promise<Doc<"users"> | null> {
@@ -355,25 +357,39 @@ export const leaderboard = query({
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 50, 200);
 
+    // DEV ONLY — delete with convex/devbots.ts. The sixteen rank bots exist to make this
+    // board show every rank at once; the twelve shipping practice bots stay hidden either
+    // way, which is why the relaxed path still filters on the persona prefix below.
+    const showRankBots = devRankBotsEnabled();
+
     const ranked = await ctx.db
       .query("users")
       .withIndex("by_elo")
       .order("desc")
-      .filter((q) =>
-        q.and(
+      .filter((q) => {
+        const clauses = [
           q.eq(q.field("placementsRemaining"), 0),
-          // Bots are opponents, never ladder entries. Listing them would make the
-          // leaderboard partly a ranking of software.
-          q.neq(q.field("isBot"), true),
-          // Guests keep their full placement count so the filter above already
+          // Guests keep their full placement count so the clause above already
           // excludes them. Stated explicitly so the exclusion is a decision rather
           // than a side effect of how placements happen to work.
           q.neq(q.field("isGuest"), true),
-        ),
-      )
-      .take(limit);
+        ];
+        // Bots are opponents, never ladder entries. Listing them would make the
+        // leaderboard partly a ranking of software.
+        if (!showRankBots) clauses.push(q.neq(q.field("isBot"), true));
+        return q.and(...clauses);
+      })
+      // Over-read only on the dev path, since the prefix filter below cannot be
+      // expressed in the index scan and would otherwise cut the page short.
+      .take(showRankBots ? limit * 2 : limit);
 
-    return ranked.map((user, index) => ({
+    const visible = showRankBots
+      ? ranked
+          .filter((user) => !user.isBot || isDevRankBotPersona(user.botPersonaId))
+          .slice(0, limit)
+      : ranked;
+
+    return visible.map((user, index) => ({
       rank: index + 1,
       userId: user._id,
       handle: user.handle,
