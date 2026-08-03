@@ -17,6 +17,19 @@ export interface Rank {
   readonly progress: number;
   /** Elo needed for the next division, or null at the top. */
   readonly nextAt: number | null;
+  /**
+   * The lowest Elo still inside this division — drop below it and the rank does.
+   *
+   * The mirror of `nextAt`, and computed here for the same reason: the value already
+   * existed as a local and was thrown away, so every caller that wanted to know how much
+   * headroom a player had above a demotion had to reverse-engineer the division maths.
+   * `/ranked` states what is at risk before you queue, which needs exactly this.
+   *
+   * Rounded UP so `rankForElo(floorAt)` lands back in this same division. Divisions do
+   * not fall on integers — Silver's three split a 200-point span into 66.67 each — and
+   * flooring would name a rating that belongs to the division below.
+   */
+  readonly floorAt: number;
 }
 
 /** Highest tier whose threshold the rating clears. */
@@ -46,6 +59,9 @@ export function rankForElo(elo: number): Rank {
       label: tier.name,
       progress: 1,
       nextAt: null,
+      // The top tier is one division, so its floor is the tier's own threshold. Falling
+      // below this is a tier demotion rather than a division one.
+      floorAt: tier.minElo,
     };
   }
 
@@ -68,6 +84,7 @@ export function rankForElo(elo: number): Rank {
     label: tier.divisions > 1 ? `${tier.name} ${toRoman(division)}` : tier.name,
     progress: (into - stepsClimbed * divisionSize) / divisionSize,
     nextAt,
+    floorAt: Math.ceil(divisionFloor),
   };
 }
 

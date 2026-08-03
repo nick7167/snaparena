@@ -21,17 +21,24 @@
 
 import { EMBLEM_PLATE_WIDTH, EMBLEM_SIZES } from "./rank-emblems.generated";
 
-export type EmblemSize = "sm" | "md" | "lg" | "xl";
+export type EmblemSize = "sm" | "md" | "lg" | "xl" | "hero";
 
 /**
  * `px` is the box for the small sizes and the PLATE WIDTH for the large ones. The two
  * are deliberately different measurements — see the sizing note on each branch below.
+ *
+ * `hero` exists for /ranked, the one screen where the emblem is the entire subject rather
+ * than one element of a card. It is the same artwork at a larger plate, not a new asset:
+ * the source images normalise to a 480px plate, so 176 is still a downscale on every tier
+ * and nothing is being stretched. Everything below `lg` still draws from the light `sm/`
+ * set — see the two-asset-set note above.
  */
 const SIZES: Record<EmblemSize, { px: number; box: string }> = {
   sm: { px: 28, box: "size-7" },
   md: { px: 40, box: "size-10" },
   lg: { px: 56, box: "size-14" },
   xl: { px: 112, box: "size-28" },
+  hero: { px: 176, box: "size-44" },
 };
 
 /**

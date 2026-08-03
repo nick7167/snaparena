@@ -158,20 +158,33 @@ export function PlayerBanner() {
              * discrete `size` and writes pixel dimensions inline, which no breakpoint can
              * reach. Same `src`, so the browser fetches once.
              */}
-            <RankEmblem
-              tierId={rank.tier.id}
-              division={rank.tier.divisions > 1 ? rank.division : 1}
-              size="lg"
-              unranked={placing}
-              className="shrink-0 sm:hidden"
-            />
-            <RankEmblem
-              tierId={rank.tier.id}
-              division={rank.tier.divisions > 1 ? rank.division : 1}
-              size="xl"
-              unranked={placing}
-              className="hidden shrink-0 sm:block"
-            />
+            {/**
+             * Wrapped, because passing `hidden` through `className` does not reliably
+             * hide this.
+             *
+             * RankEmblem's UNRANKED branch writes its own `inline-flex`, which lands in
+             * the same class attribute as the `hidden` above — and Tailwind emits
+             * `.inline-flex` after `.hidden`, so at equal specificity `inline-flex` wins
+             * and both sizes render, stacked. It only bites during placements, because
+             * the ranked branch renders a bare <img> with no display utility of its own,
+             * which is why a placed account never showed it.
+             */}
+            <span className="shrink-0 sm:hidden">
+              <RankEmblem
+                tierId={rank.tier.id}
+                division={rank.tier.divisions > 1 ? rank.division : 1}
+                size="lg"
+                unranked={placing}
+              />
+            </span>
+            <span className="hidden shrink-0 sm:block">
+              <RankEmblem
+                tierId={rank.tier.id}
+                division={rank.tier.divisions > 1 ? rank.division : 1}
+                size="xl"
+                unranked={placing}
+              />
+            </span>
           </div>
         </div>
 

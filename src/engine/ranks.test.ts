@@ -49,6 +49,52 @@ describe("rankForElo", () => {
     }
   });
 
+  it("reports a division floor that round-trips to the same division", () => {
+    // The whole point of `floorAt`: /ranked states how much headroom you have above a
+    // demotion, so a floor that names a rating belonging to the division BELOW would
+    // warn a player about a drop they had already taken. Divisions do not land on
+    // integers — Silver splits 200 points three ways — which is what makes this subtle.
+    for (let elo = 0; elo <= 2_000; elo += 3) {
+      const rank = rankForElo(elo);
+      expect(rankForElo(rank.floorAt).label).toBe(rank.label);
+    }
+  });
+
+  it("puts the division floor at or below the rating it was derived from", () => {
+    for (let elo = 0; elo <= 2_000; elo += 3) {
+      const rank = rankForElo(elo);
+      expect(rank.floorAt).toBeLessThanOrEqual(elo);
+    }
+  });
+
+  it("puts one rating below the floor in a lower division", () => {
+    // Skipped at the very bottom, where there is nothing below to fall into: Bronze I's
+    // floor is the bottom of the ladder and rankForElo clamps everything under it.
+    const bottom = rankForElo(0);
+    for (let elo = 10; elo <= 2_000; elo += 3) {
+      const rank = rankForElo(elo);
+      if (rank.label === bottom.label) continue;
+      expect(rankForElo(rank.floorAt - 1).label).not.toBe(rank.label);
+    }
+  });
+
+  it("floors the top tier at its own threshold", () => {
+    const legend = RANK_TIERS.find((tier) => tier.id === "legend")!;
+    expect(rankForElo(9_999).floorAt).toBe(legend.minElo);
+    expect(rankForElo(9_999).nextAt).toBeNull();
+  });
+
+  it("makes floorAt the mirror of the division below's nextAt", () => {
+    // The two boundaries are one boundary. If these ever disagree there is a rating that
+    // belongs to two divisions, or to neither.
+    for (let elo = 50; elo <= 2_000; elo += 11) {
+      const rank = rankForElo(elo);
+      const below = rankForElo(rank.floorAt - 1);
+      if (below.label === rank.label) continue;
+      expect(below.nextAt).toBe(rank.floorAt);
+    }
+  });
+
   it("never ranks a higher rating below a lower one", () => {
     let previousTierIndex = -1;
     for (let elo = 0; elo <= 2_000; elo += 5) {
