@@ -146,9 +146,9 @@ export const PHASE_DURATIONS_MS = {
    *
    * The reveal is where you size up an opponent — rank, rating, record, what they are good
    * at — and five seconds was not enough to read any of it, so this is the one phase that
-   * ends on player input rather than on its clock. Both players pressing Ready advances it
-   * immediately (see `ranked.markVsReady`); this timer only protects against someone who
-   * walked away from the keyboard.
+   * ends on player input rather than on its clock. Both players pressing Ready collapses it
+   * to VS_READY_COUNTDOWN_MS (see `ranked.markVsReady`); this timer only protects against
+   * someone who walked away from the keyboard.
    */
   vs_reveal: 30_000,
   countdown: 3_000,
@@ -159,6 +159,17 @@ export const PHASE_DURATIONS_MS = {
   /** Longer momentum beat every few rounds; also announces the multiplier stepping up. */
   milestone: 6_000,
 } as const;
+
+/**
+ * What is left on the clock once both players have pressed Ready.
+ *
+ * Not zero. Pressing Ready used to cut straight to the draft, which meant the second
+ * player to press never saw the screen resolve — the opponent they had spent twenty
+ * seconds reading vanished the instant they confirmed they had read them. Three seconds
+ * is long enough to register "they're ready too, here we go" and short enough that nobody
+ * feels made to wait. The same beat the round countdown uses.
+ */
+export const VS_READY_COUNTDOWN_MS = 3_000;
 
 export type MatchPhase = keyof typeof PHASE_DURATIONS_MS | "veto" | "match_end";
 

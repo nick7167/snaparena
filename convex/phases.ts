@@ -8,6 +8,7 @@ import {
   READY_TIMEOUT_MS,
   ROUND_DURATION_MS,
   VETO_PHASE_MS,
+  VS_READY_COUNTDOWN_MS,
   type MatchPhase,
 } from "../src/engine/config";
 import {
@@ -63,19 +64,26 @@ export async function enterPhase(
     ...(phase === "guessing" ? { roundStartedAt: now } : {}),
   });
 
-  // Bots plan their whole round the moment guessing opens, and take their draft turns
-  // the moment the draft opens. This is the single place either phase is ever entered,
-  // so scheduling here cannot be missed.
-  if (phase === "guessing" || phase === "veto") {
+  // Bots plan their whole round the moment guessing opens, take their draft turns the
+  // moment the draft opens, and cannot press Ready at all. This is the single place any
+  // of those phases is ever entered, so scheduling here cannot be missed.
+  if (phase === "guessing" || phase === "veto" || phase === "vs_reveal") {
     const match = await ctx.db.get(matchId);
     if (match && (await matchHasBot(ctx, match))) {
       if (phase === "veto") {
         await ctx.scheduler.runAfter(0, internal.bots.draftTurn, { matchId });
-      } else {
+      } else if (phase === "guessing") {
         await ctx.scheduler.runAfter(0, internal.bots.playRound, {
           matchId,
           roundIndex: match.currentRound,
         });
+      } else {
+        // Ready is what ends the reveal, and `markVsReady` only runs the "is everyone in"
+        // check when a human calls it. With no human in the match nobody ever calls it, so
+        // a bot-vs-bot duel — which the dev rank bots make possible, since they sit in the
+        // real queue — stalls here for the full thirty seconds with nobody watching.
+        // Gated on there being a bot at all: a duel between two humans cannot hit this.
+        await ctx.scheduler.runAfter(0, internal.phases.skipVsIfNoHumans, { matchId });
       }
     }
   }
@@ -201,6 +209,65 @@ export const advance = internalMutation({
       default:
         return;
     }
+  },
+});
+
+/**
+ * Everyone is ready — bring the reveal's clock in to three seconds.
+ *
+ * Not a transition. The phase still ends the way it always did, through `advance` and
+ * then `leaveVsReveal`, so the early path and the timeout path remain the same path —
+ * only the deadline moves. Jumping straight into the draft here would give a match that
+ * was readied a different route in than one that timed out, which is exactly what
+ * `leaveVsReveal`'s docblock exists to prevent.
+ *
+ * Monotonic on purpose: it only ever pulls the deadline in, never pushes it out. Ready is
+ * idempotent by design — the button is disabled after a press but the mutation is not —
+ * and without this guard a second call would restart the three seconds every time.
+ *
+ * The original 30-second timer stays armed and lands later against a match that has moved
+ * on, where `advance`'s phase guard makes it a no-op. There is nothing to cancel.
+ */
+export async function armVsCountdown(
+  ctx: MutationCtx,
+  match: Doc<"matches">,
+): Promise<void> {
+  const endsAt = Date.now() + VS_READY_COUNTDOWN_MS;
+  if (match.phaseEndsAt !== undefined && match.phaseEndsAt <= endsAt) return;
+
+  await ctx.db.patch(match._id, { phaseEndsAt: endsAt });
+
+  await ctx.scheduler.runAfter(VS_READY_COUNTDOWN_MS, internal.phases.advance, {
+    matchId: match._id,
+    expectedPhase: "vs_reveal",
+    expectedRound: match.currentRound,
+  });
+}
+
+/**
+ * Skips the reveal's wait when there is nobody there to read it.
+ *
+ * Goes through `armVsCountdown` rather than straight to `leaveVsReveal` so a bot-vs-bot
+ * match still plays the three-second beat — anyone spectating sees the same sequence a
+ * real duel shows, just without the wait.
+ */
+export const skipVsIfNoHumans = internalMutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, args) => {
+    const match = await ctx.db.get(args.matchId);
+    if (!match || match.phase !== "vs_reveal") return;
+
+    const players = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .collect();
+
+    for (const player of players) {
+      const user = await ctx.db.get(player.userId);
+      if (!user?.isBot) return; // a human is here; let them read it
+    }
+
+    await armVsCountdown(ctx, match);
   },
 });
 

@@ -6,6 +6,7 @@ import { finishMatch } from "./phases";
 import { seedBotProfiles } from "./botprofiles";
 import { PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
 import {
+  DEV_BOT_MIN_WAIT_MS,
   DEV_RANK_BOT_PERSONAS,
   devRankBotsEnabled,
   isDevRankBotPersona,
@@ -295,6 +296,7 @@ export async function pickDevOpponent(
   ctx: MutationCtx,
   user: Doc<"users">,
   candidates: Doc<"queue">[],
+  waitMs: number,
 ): Promise<Doc<"queue"> | undefined> {
   const humans: Doc<"queue">[] = [];
   const bots: { entry: Doc<"queue">; elo: number }[] = [];
@@ -309,6 +311,10 @@ export async function pickDevOpponent(
   if (humans.length > 0) {
     return humans.sort((a, b) => a.enqueuedAt - b.enqueuedAt)[0];
   }
+
+  // The bots are always there, so without a floor the search is over before it is legible.
+  // See DEV_BOT_MIN_WAIT_MS — humans above are matched on the first poll regardless.
+  if (waitMs < DEV_BOT_MIN_WAIT_MS) return undefined;
 
   return bots.sort(
     (a, b) => Math.abs(a.elo - user.elo) - Math.abs(b.elo - user.elo),

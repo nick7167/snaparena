@@ -290,7 +290,11 @@ export const state = query({
           xpAfter: player.xpAfter ?? null,
           badgesEarned: player.badgesEarned ?? [],
           forfeited: player.forfeited,
-          /** Pressed Ready on the opponent reveal. Drives the "1 / 2 ready" counter. */
+          /**
+           * Pressed Ready on the opponent reveal. Drives the readiness strip on each
+           * player's panel, and — once both sides are in — the collapse of the phase
+           * clock to VS_READY_COUNTDOWN_MS.
+           */
           vsReady: player.vsReadyAt !== undefined,
           isMe: me?._id === player.userId,
         }))

@@ -34,7 +34,10 @@ export function HomeSwitch({ signedInOnServer }: { signedInOnServer: boolean }) 
   if (!signedIn) return <Landing />;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12">
+    // No horizontal padding here. Hub shares StandingHero, Form and RecentMatches with
+    // /ranked, and those carry their own `px-4` — adding it again on the wrapper would
+    // inset them past everything else on the page.
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 py-12">
       <Hub />
     </div>
   );

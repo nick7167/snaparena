@@ -20,7 +20,9 @@ export type SfxName =
   | "whoosh"
   | "reveal"
   | "podium"
-  | "promote";
+  | "promote"
+  | "match_found"
+  | "ready";
 
 const MUTE_KEY = "songrace:muted";
 
@@ -205,6 +207,26 @@ export function play(name: SfxName): void {
         });
       });
       noise(ctx, { duration: 0.9, gain: 0.05, from: 1000, to: 8000, startAt: 0.2 });
+      break;
+
+    /**
+     * An opponent has been found.
+     *
+     * Its own cue rather than the `whoosh` this used to share with every stage change,
+     * because the search now survives navigating away — this is the one sound in the app
+     * that has to carry meaning from a tab nobody is looking at. Two rising notes over the
+     * whoosh: the movement says "something arrived", the whoosh keeps it in the same
+     * family as the transition it accompanies.
+     */
+    case "match_found":
+      noise(ctx, { duration: 0.4, gain: 0.06, from: 300, to: 4000 });
+      voice(ctx, { type: "triangle", from: 587, duration: 0.3, gain: 0.1 });
+      voice(ctx, { type: "triangle", from: 880, duration: 0.38, gain: 0.09, startAt: 0.1 });
+      break;
+
+    /** The opponent pressed Ready. Small and dry — an acknowledgement, not an event. */
+    case "ready":
+      voice(ctx, { type: "sine", from: 988, duration: 0.12, gain: 0.06 });
       break;
   }
 }

@@ -1,8 +1,13 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useEffect } from "react";
-import { PHASE_DURATIONS_MS, REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
+import { useEffect, useRef } from "react";
+import {
+  PHASE_DURATIONS_MS,
+  REVEAL_BEATS,
+  ROUND_DURATION_MS,
+  VS_READY_COUNTDOWN_MS,
+} from "@/engine/config";
 import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { play } from "@/audio/sfx";
 import { Avatar, BadgeRow, BotBadge, PhaseTimer, Stage, TierChip, hpTone, nameFor } from "./ui";
@@ -77,6 +82,28 @@ export function VsReveal({
   }, []);
 
   /**
+   * Both sides in. Derived rather than read from the server, using exactly the rule
+   * `markVsReady` applies — a bot has no client to press with and counts as ready from the
+   * moment it exists — so the clock the player watches and the clock the server is running
+   * agree about why it just dropped to three.
+   */
+  const bothReady =
+    (me.isBot || me.vsReady === true) &&
+    (opponent.isBot || opponent.vsReady === true);
+
+  /**
+   * The opponent pressing Ready is the only thing on this screen that happens because of
+   * someone else, and the readiness strip changing colour is easy to miss while you are
+   * reading their record. A cue makes it an event.
+   */
+  const opponentReady = opponent.isBot || opponent.vsReady === true;
+  const wasOpponentReady = useRef(opponentReady);
+  useEffect(() => {
+    if (opponentReady && !wasOpponentReady.current) play("ready");
+    wasOpponentReady.current = opponentReady;
+  }, [opponentReady]);
+
+  /**
    * Full-bleed, and no cards.
    *
    * Two players in two identical `Card`s with a small italic "VS" between them is a
@@ -90,6 +117,10 @@ export function VsReveal({
    * room to be read: identity above, a scannable head-to-head below. Every beat still
    * lands inside ~2.6s — the composition must be complete long before the phase is, and
    * must never depend on how long the server gives it.
+   *
+   * It is bound to the viewport (`fit`), because a reveal you have to scroll is a reveal
+   * whose Ready button you cannot find. The panels take the slack via `min-h-0 flex-1`,
+   * so on a short screen the emblems give up height before anything else does.
    */
   const beat = (delay: number) =>
     reduced
@@ -103,19 +134,19 @@ export function VsReveal({
   return (
     /* Width via the prop, not className: two `max-w-*` utilities on one element resolve
        by stylesheet order, so an override is a coin flip. */
-    <Stage keyName="vs" width="max-w-4xl">
-      <div className="flex w-full flex-col gap-4 py-2">
+    <Stage keyName="vs" width="max-w-4xl" fit>
+      <div className="flex min-h-0 w-full flex-1 flex-col gap-2 sm:gap-3">
         {/* The clock, first and fixed. A HUD element that moves is one players have to
             re-find every time they look at it, so this holds one position for the whole
             phase and never resizes as the digits change. */}
-        <VsClock phaseEndsAt={phaseEndsAt} reduced={reduced} />
+        <VsClock phaseEndsAt={phaseEndsAt} locked={bothReady} reduced={reduced} />
 
         {/* Two panels and a mark. No tinted halves and no diagonal wash: those were a
             gradient, this design does not have gradients, and a soft wash behind a rank
             emblem was fighting the one object on screen that should be loudest. Colour
             identity now comes from the plate's hairline — flat, hard-edged, and the same
             device the ladder marks your own row with. */}
-        <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-1.5 sm:gap-3">
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto_1fr] items-stretch gap-1.5 sm:gap-3">
           <VsPanel player={me} reduced={reduced} delay={0.3} youAre />
           <VsMark reduced={reduced} />
           <VsPanel player={opponent} reduced={reduced} delay={0.45} />
@@ -138,7 +169,7 @@ export function VsReveal({
             rather than comparing two columns of numerals yourself. */}
         <CompareStrip me={me} opponent={opponent} reduced={reduced} />
 
-        <ReadyBar me={me} onReady={onReady} reduced={reduced} />
+        <ReadyBar me={me} onReady={onReady} locked={bothReady} reduced={reduced} />
       </div>
     </Stage>
   );
@@ -156,15 +187,25 @@ export function VsReveal({
  */
 function VsClock({
   phaseEndsAt,
+  locked,
   reduced,
 }: {
   phaseEndsAt: number | null;
+  /** Both players are in and the server has pulled the deadline in to three seconds. */
+  locked: boolean;
   reduced: boolean;
 }) {
   const now = useNow(250);
   const remaining = phaseEndsAt ? Math.max(0, phaseEndsAt - now) : 0;
   const seconds = Math.ceil(remaining / 1000);
-  const urgent = seconds <= 5;
+
+  /**
+   * Red is for a deadline you are running out of, and once both players are ready there is
+   * no deadline left to miss — three seconds of `signal` would read as a warning about
+   * something that is in fact the good outcome. Gold instead, and the label changes with
+   * it, so the state is announced by two things at once.
+   */
+  const urgent = !locked && seconds <= 5;
 
   return (
     <motion.div
@@ -173,16 +214,23 @@ function VsClock({
       transition={reduced ? undefined : { duration: 0.3 }}
       className="flex flex-col items-center gap-1"
     >
-      <p className="text-label text-muted tracking-[0.3em] uppercase">Match starts in</p>
+      <p className="text-label text-muted tracking-[0.3em] uppercase">
+        {locked ? "Starting" : "Match starts in"}
+      </p>
       <p
         className={`font-display text-display-2 font-extrabold tabular-nums ${
-          urgent ? "text-signal-text" : "text-paper"
+          locked ? "text-gold" : urgent ? "text-signal-text" : "text-paper"
         }`}
       >
         {seconds}
       </p>
       <div className="w-full max-w-xs">
-        <PhaseTimer endsAt={phaseEndsAt} durationMs={PHASE_DURATIONS_MS.vs_reveal} />
+        {/* The denominator has to follow the deadline. Left at the full 30s the bar would
+            snap back to a tenth full at the exact moment the match was confirmed. */}
+        <PhaseTimer
+          endsAt={phaseEndsAt}
+          durationMs={locked ? VS_READY_COUNTDOWN_MS : PHASE_DURATIONS_MS.vs_reveal}
+        />
       </div>
     </motion.div>
   );
@@ -260,7 +308,7 @@ function VsPanel({
       transition={
         reduced ? undefined : { delay, type: "spring", stiffness: 220, damping: 22 }
       }
-      className="relative isolate flex min-w-0 flex-col items-center gap-2 px-2 pt-4 pb-3 sm:px-4 sm:pt-6 sm:pb-4"
+      className="relative isolate flex min-h-0 min-w-0 flex-col items-center gap-1.5 px-2 pt-3 pb-2.5 sm:gap-2 sm:px-4 sm:pt-5 sm:pb-3.5"
     >
       {/* The plate, drawn as two stacked fills so the hairline survives the chamfer —
           `clip-path` would cut a border away at the two cut corners. Same construction as
@@ -279,14 +327,23 @@ function VsPanel({
         style={{ ["--plate-cut" as string]: "16px" }}
       />
 
-      {/* 1 — RANK. */}
+      {/* 1 — RANK.
+
+          The emblem is the one element allowed to shrink, so it is the one wrapped in a
+          `min-h-0 flex-1` box: on a short viewport the panel takes its height back from
+          the artwork rather than from the rank name, the ladder position or the Ready
+          strip, all of which stop being readable the moment they lose a pixel. */}
+      {/* No wrapper. `fit` makes the emblem a box that takes the height it is given, so it
+          has to BE the flex item — nesting it inside a centring div leaves that div with
+          no definite height to hand down and the artwork collapses to nothing. */}
       <RankEmblem
         tierId={player.rankTierId}
         division={player.rankDivision}
         size="xl"
         unranked={placing}
         bloom={placing ? undefined : player.rankAccent}
-        className="max-w-full"
+        fit
+        className="min-h-0 w-full flex-1"
       />
       <p
         className="font-display text-body-lg sm:text-display-2 w-full truncate text-center font-extrabold tracking-tight"
@@ -334,7 +391,10 @@ function VsPanel({
         {player.isBot && <BotBadge />}
       </div>
 
-      <div className="min-h-6">
+      {/* The reserved slot keeps both panels the same height when only one player has
+          badges. Reserved above `sm` only — on a phone 24px of deliberate emptiness is
+          24px the emblem could have had. */}
+      <div className="sm:min-h-6">
         <BadgeRow badges={player.badges} max={4} />
       </div>
 
@@ -343,7 +403,13 @@ function VsPanel({
           confirms what the colour already said. */}
       {/* Sits inside the plate rather than bleeding to its edge: the bottom-right corner
           is chamfered, and a full-bleed bar would hang out through the cut. */}
-      <div
+      {/* Keyed on readiness so the flip re-runs the entry beat: a colour transition alone
+          is easy to miss on the half of the screen you are not reading. */}
+      <motion.div
+        key={ready ? "ready" : "waiting"}
+        initial={reduced || !ready ? false : { scale: 0.94 }}
+        animate={{ scale: 1 }}
+        transition={reduced ? undefined : { type: "spring", stiffness: 460, damping: 17 }}
         className={`mt-1 flex w-full items-center justify-center gap-1.5 rounded-xs py-2 transition-colors ${
           ready ? "bg-teal text-ink-900" : "bg-ink-600 text-muted"
         }`}
@@ -354,7 +420,7 @@ function VsPanel({
         <span className="text-label font-bold tracking-[0.14em] uppercase">
           {ready ? "Ready" : "Not ready"}
         </span>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }
@@ -380,13 +446,16 @@ function VsPanel({
 function ReadyBar({
   me,
   onReady,
+  locked,
   reduced,
 }: {
   me: PlayerCardData;
   onReady: () => void;
+  /** Both sides in — the clock above is counting the match in, not waiting on anyone. */
+  locked: boolean;
   reduced: boolean;
 }) {
-  const iAmReady = me.vsReady === true;
+  const iAmReady = me.isBot || me.vsReady === true;
 
   return (
     <motion.div
@@ -401,7 +470,9 @@ function ReadyBar({
         disabled={iAmReady}
         className="min-w-60 tracking-wide"
       >
-        {iAmReady ? "Waiting for opponent…" : "I'm ready"}
+        {/* Three labels, because there are three states and the middle one used to have to
+            cover two of them: waiting on them, and nobody waiting on anyone. */}
+        {locked ? "Starting…" : iAmReady ? "Waiting for opponent…" : "I'm ready"}
       </Button>
     </motion.div>
   );
@@ -462,7 +533,7 @@ function CompareStrip({
   ];
 
   return (
-    <div className="flex flex-col gap-3.5">
+    <div className="flex flex-col gap-2 sm:gap-2.5">
       {rows.map((row, index) => (
         <CompareRow
           key={row.label}

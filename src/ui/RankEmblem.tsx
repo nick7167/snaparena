@@ -68,6 +68,7 @@ export function RankEmblem({
   size = "md",
   unranked = false,
   bloom,
+  fit = false,
   className = "",
 }: {
   /** Tier id from RANK_TIERS, e.g. "gold". Selects the artwork. */
@@ -90,6 +91,17 @@ export function RankEmblem({
    * sm/md, where the mark is an inline marker rather than the thing you are looking at.
    */
   bloom?: string;
+  /**
+   * Let the emblem cap itself to the height it is given, instead of always rendering at
+   * its natural plate-normalised size. Large sizes only.
+   *
+   * The VS reveal is bound to the viewport, and the emblem is the element chosen to give
+   * up height first — but `size` writes a fixed pixel width and height inline, which no
+   * class on a parent can override. This keeps the natural size as the ceiling and adds a
+   * `max-height: 100%` floor beneath it, so a tall screen still shows a Legend physically
+   * larger than a Bronze and a short one simply fits them both.
+   */
+  fit?: boolean;
   className?: string;
 }) {
   const spec = SIZES[size];
@@ -101,7 +113,11 @@ export function RankEmblem({
   if (unranked || !known) {
     return (
       <span
-        className={`relative inline-flex shrink-0 items-center justify-center ${className}`}
+        className={`relative inline-flex items-center justify-center ${
+          // The fitting variant must not force a height on the box it sits in, or a
+          // placements panel would lay out differently from a ranked one beside it.
+          fit ? "max-h-full max-w-full" : "shrink-0"
+        } ${className}`}
         style={{ width: spec.px, height: spec.px }}
         aria-hidden="true"
       >
@@ -143,8 +159,30 @@ export function RankEmblem({
 
   const art = artSize(tierId, count, spec.px)!;
 
+  /*
+   * The fitting variant, drawn as an absolutely-positioned child of a box it fills.
+   *
+   * The obvious version — natural height with `max-height: 100%` — silently does nothing.
+   * A percentage max-height resolves against the parent's height, and a parent sized by
+   * `flex-1` or by its own `max-height` has no DEFINITE height to resolve against, so the
+   * cap is dropped and the artwork renders at full size straight through whatever sits
+   * below it. On the VS reveal that was the rank name, with the plinth printed over it.
+   *
+   * Taking the image out of flow removes the question: `inset-0` gives it the box's real
+   * height to work with, the two pixel maxima stop it ever growing past the size the
+   * plate normalisation asked for, `margin: auto` centres it once those bite, and
+   * `object-contain` keeps the aspect ratio at every size in between.
+   */
   /* eslint-disable @next/next/no-img-element */
-  const image = (
+  const image = fit ? (
+    <img
+      src={`/ranks/${tierId}-${count}.png`}
+      alt=""
+      aria-hidden="true"
+      className="absolute inset-0 m-auto size-full select-none object-contain"
+      style={{ maxWidth: art.width, maxHeight: art.height }}
+    />
+  ) : (
     <img
       src={`/ranks/${tierId}-${count}.png`}
       alt=""
@@ -155,13 +193,27 @@ export function RankEmblem({
   );
   /* eslint-enable @next/next/no-img-element */
 
+  // Out of flow, so it needs a positioned box to fill. The box contributes no intrinsic
+  // height of its own — that is the point: it takes the height it is given and the
+  // artwork follows, rather than the artwork dictating the layout.
+  if (fit) {
+    return (
+      <span
+        className={`relative block min-h-0 w-full ${bloom ? "bloom-tier" : ""} ${className}`}
+        style={bloom ? { ["--tier-accent" as string]: bloom } : undefined}
+      >
+        {image}
+      </span>
+    );
+  }
+
   if (!bloom) return image;
 
   // Wrapped rather than applied to the <img> itself: the bloom draws on a ::before at
   // z-index -1, which needs a positioned parent that is not the transparent artwork.
   return (
     <span
-      className={`bloom-tier inline-flex shrink-0 ${className}`}
+      className={`bloom-tier inline-flex ${fit ? "min-h-0 max-h-full" : "shrink-0"} ${className}`}
       style={{ ["--tier-accent" as string]: bloom }}
     >
       {image}

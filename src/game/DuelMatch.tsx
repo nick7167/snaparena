@@ -123,7 +123,10 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4">
+    // Carries its own column. It used to inherit one from the page wrapper, which was
+    // removed so the VS reveal could have the width it asks for — the draft is a grid of
+    // category cards and still wants the narrow measure.
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-10">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {!draft.isMyTurn && draft.opponent && (

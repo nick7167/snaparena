@@ -17,8 +17,12 @@ import { assertOnboarded } from "./helpers";
 
 test.describe("ranked against a dev rank bot", () => {
   test("pairs, drafts and settles a real rating", async ({ page }) => {
-    // The draft alone is a 15s-per-turn clock, and the bot thinks for up to 2.2s a ban.
-    test.setTimeout(120_000);
+    /**
+     * The draft alone is a 15s-per-turn clock and the bot thinks for up to 2.2s a ban, on
+     * top of DEV_BOT_MIN_WAIT_MS of queueing before a bot will answer at all — that floor
+     * exists so the search screen is legible, and it is spent inside this budget.
+     */
+    test.setTimeout(180_000);
 
     await page.goto("/ranked");
     await assertOnboarded(page);

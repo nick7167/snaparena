@@ -12,6 +12,7 @@ import { DUEL_STARTING_HP, VETO_BANS_PER_PLAYER } from "@/engine/config";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Card } from "@/ui/Surface";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
+import { LobbyColumn } from "../lobby-column";
 
 /**
  * Practice.
@@ -25,31 +26,33 @@ import { AuthDialogButton } from "@/auth/AuthDialogButton";
  */
 export default function PracticePage() {
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-10">
+    <>
       <SignedOut>
-        <div className="flex flex-col items-start gap-4 px-4">
-          <h1 className="font-display text-display-1 font-extrabold">Practice</h1>
-          <p className="text-body-lg text-secondary">
-            Sign in to practice against a bot — it pays XP and badges, so it needs an
-            account to pay them into.
-          </p>
-          <AuthDialogButton mode="sign-up" size="lg">
-            Create an account
-          </AuthDialogButton>
-          <p className="text-body-sm text-muted">
-            Want to play right now without one? Today&rsquo;s challenge is open to
-            everyone.
-          </p>
-          <ButtonLink variant="secondary" href="/daily">
-            Play today&rsquo;s challenge
-          </ButtonLink>
-        </div>
+        <LobbyColumn>
+          <div className="flex flex-col items-start gap-4 px-4">
+            <h1 className="font-display text-display-1 font-extrabold">Practice</h1>
+            <p className="text-body-lg text-secondary">
+              Sign in to practice against a bot — it pays XP and badges, so it needs an
+              account to pay them into.
+            </p>
+            <AuthDialogButton mode="sign-up" size="lg">
+              Create an account
+            </AuthDialogButton>
+            <p className="text-body-sm text-muted">
+              Want to play right now without one? Today&rsquo;s challenge is open to
+              everyone.
+            </p>
+            <ButtonLink variant="secondary" href="/daily">
+              Play today&rsquo;s challenge
+            </ButtonLink>
+          </div>
+        </LobbyColumn>
       </SignedOut>
 
       <SignedIn>
         <PracticeHome />
       </SignedIn>
-    </div>
+    </>
   );
 }
 
@@ -64,10 +67,13 @@ function PracticeHome() {
   const existing = useQuery(api.ranked.activeMatch, {});
   const matchId = joined ?? existing ?? null;
 
+  // The match renders outside the lobby column on purpose — see LobbyColumn.
   return matchId ? (
     <DuelMatch matchId={matchId} onLeave={() => setJoined(null)} />
   ) : (
-    <Start onStarted={setJoined} />
+    <LobbyColumn>
+      <Start onStarted={setJoined} />
+    </LobbyColumn>
   );
 }
 

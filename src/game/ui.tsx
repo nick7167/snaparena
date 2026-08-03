@@ -136,6 +136,7 @@ export function Stage({
   keyName,
   className = "",
   width = "max-w-2xl",
+  fit = false,
 }: {
   children: ReactNode;
   keyName: string;
@@ -147,6 +148,17 @@ export function Stage({
    * The VS reveal is the one stage that wants more room than the default column.
    */
   width?: string;
+  /**
+   * Bind the stage to the viewport instead of letting it run as long as it likes.
+   *
+   * A prop for the same reason `width` is one: `h-dvh` and the default flow both set
+   * height-adjacent utilities, and which wins from a `className` is a coin flip. A stage
+   * that opts in must lay itself out in the space it gets — children need `min-h-0` to
+   * be allowed to shrink, since flex items refuse to go below their content size without
+   * it. `overflow-hidden` is the backstop, not the plan: if content is being clipped the
+   * composition is wrong, not the container.
+   */
+  fit?: boolean;
 }) {
   const reduced = usePrefersReducedMotion();
 
@@ -157,7 +169,9 @@ export function Stage({
       animate={{ opacity: 1, y: 0 }}
       exit={reduced ? undefined : { opacity: 0, y: -12 }}
       transition={settle}
-      className={`mx-auto flex w-full flex-col gap-6 px-4 ${width} ${className}`}
+      className={`mx-auto flex w-full flex-col px-4 ${width} ${
+        fit ? "h-dvh max-h-dvh justify-center gap-3 overflow-hidden py-3" : "gap-6"
+      } ${className}`}
     >
       {children}
     </motion.div>

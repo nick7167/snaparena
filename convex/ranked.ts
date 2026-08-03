@@ -9,7 +9,8 @@ import {
   SURRENDER_FROM_ROUND,
 } from "../src/engine/config";
 import { canSurrender } from "../src/engine/duel";
-import { enterPhase, finishMatch, leaveVsReveal } from "./phases";
+import { eloBandFor } from "../src/engine/matchmaking";
+import { armVsCountdown, enterPhase, finishMatch } from "./phases";
 import {
   TOTAL_BANS,
   draftTurnOwner,
@@ -20,18 +21,6 @@ import {
 // DEV ONLY — delete with convex/devbots.ts. See the single call site in `tryMatchmake`.
 import { pickDevOpponent } from "./devbots";
 import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
-
-/**
- * Elo band for matchmaking, widening with time spent in queue.
- *
- * Starts tight so early matches are fair, then loosens rather than leaving a
- * player queueing forever — which matters a great deal at launch, when the pool
- * is small enough that a strict band would never match anyone.
- */
-function eloBandFor(waitMs: number): number {
-  const seconds = waitMs / 1_000;
-  return Math.min(100 + seconds * 20, 1_000);
-}
 
 export const queueStatus = query({
   args: {},
@@ -140,7 +129,8 @@ export const tryMatchmake = mutation({
 
     if (!myEntry) return { matched: false };
 
-    const band = eloBandFor(Date.now() - myEntry.enqueuedAt);
+    const waitMs = Date.now() - myEntry.enqueuedAt;
+    const band = eloBandFor(waitMs);
 
     const candidates = await ctx.db
       .query("queue")
@@ -154,7 +144,7 @@ export const tryMatchmake = mutation({
     // the same bot every time. See `pickDevOpponent`; it still prefers a queued human,
     // so this line is the only thing to revert.
     const opponentEntry = devRankBotsEnabled()
-      ? await pickDevOpponent(ctx, user, others)
+      ? await pickDevOpponent(ctx, user, others, waitMs)
       : others.sort((a, b) => a.enqueuedAt - b.enqueuedAt)[0];
 
     if (!opponentEntry) return { matched: false };
@@ -378,9 +368,13 @@ export const markVsReady = mutation({
 
     // Re-read rather than reusing `match`: the branch above patched a row, and the
     // transition should act on the state as it stands now.
+    //
+    // Collapses the clock to three seconds rather than leaving the phase outright. The
+    // phase still exits through `advance` → `leaveVsReveal`, so readying and timing out
+    // take the same route into the draft — see armVsCountdown.
     if (everyoneReady) {
       const current = await ctx.db.get(args.matchId);
-      if (current?.phase === "vs_reveal") await leaveVsReveal(ctx, current);
+      if (current?.phase === "vs_reveal") await armVsCountdown(ctx, current);
     }
 
     return { ready: true as const, everyoneReady };

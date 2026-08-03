@@ -210,6 +210,21 @@ export const DEV_RANK_BOT_PERSONAS: readonly BotPersona[] = [
   },
 ] as const;
 
+/**
+ * How long a player searches before a dev bot is allowed to answer.
+ *
+ * Without it these bots are indistinguishable from a rigged demo: they sit in the queue
+ * permanently, so the very first `tryMatchmake` poll pairs and the search screen is gone
+ * about two seconds after it appears — long enough to see that something happened, not
+ * long enough to read a word of it. Every state that only exists while searching (the
+ * widening rating band, the queue count, the Play button reporting from another route)
+ * was unreachable in practice.
+ *
+ * A queued human still matches on the first poll: this holds back the BOTS only, which is
+ * also the honest ordering — a real opponent should always win over a synthetic one.
+ */
+export const DEV_BOT_MIN_WAIT_MS = 20_000;
+
 /** True if a persona id belongs to this roster rather than the shipping practice cast. */
 export function isDevRankBotPersona(personaId: string | undefined): boolean {
   return personaId !== undefined && personaId.startsWith(DEV_RANK_BOT_PREFIX);

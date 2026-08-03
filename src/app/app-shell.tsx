@@ -16,6 +16,7 @@ import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
 import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
+import { QueueProvider, useQueue } from "./queue-driver";
 import { recordVisit } from "./nav-history";
 import { clearGuestToken, getGuestToken } from "./guest";
 import {
@@ -35,13 +36,29 @@ import {
  * within thumb reach of the guess field is a way to lose a round by accident.
  */
 
-const NAV: { href: string; label: string; glyph: GlyphName }[] = [
-  { href: "/daily", label: "Daily", glyph: "song" },
+type NavItem = { href: string; label: string; glyph: GlyphName };
+
+/**
+ * The nav, in two groups.
+ *
+ * Ways to duel above the rule, everything else below it. The split is the point: five
+ * flat rows made Daily — a solo mode against a fixed puzzle — sit in the same list as
+ * the three modes where you play a person, and nothing on screen said they were
+ * different kinds of thing.
+ */
+const NAV_MODES: NavItem[] = [
   { href: "/ranked", label: "Ranked", glyph: "rank" },
-  { href: "/practice", label: "Practice", glyph: "bot" },
   { href: "/rooms", label: "Rooms", glyph: "timer" },
+  { href: "/practice", label: "Practice", glyph: "bot" },
+];
+
+const NAV_MORE: NavItem[] = [
+  { href: "/daily", label: "Daily", glyph: "song" },
   { href: "/leaderboard", label: "Board", glyph: "win" },
 ];
+
+/** Every destination, for anything that wants the flat list. */
+const NAV: NavItem[] = [...NAV_MODES, ...NAV_MORE];
 
 /**
  * The mobile tab bar, with a hole in the middle for the Play button.
@@ -49,29 +66,43 @@ const NAV: { href: string; label: string; glyph: GlyphName }[] = [
  * Two either side of the raised centre control. Ranked is absent because Play IS ranked —
  * listing it twice would make the big gold button look like a shortcut to something
  * ordinary rather than the primary action.
+ *
+ * Written out rather than filtered from NAV: a filter takes its order from whatever order
+ * NAV happens to be in, so regrouping the sidebar would silently reshuffle the tab bar.
  */
-const TABS_LEFT = NAV.filter((item) => item.href === "/daily" || item.href === "/leaderboard");
-const TABS_RIGHT = NAV.filter((item) => item.href === "/rooms" || item.href === "/practice");
+const byHref = (href: string): NavItem => {
+  const item = NAV.find((candidate) => candidate.href === href);
+  if (!item) throw new Error(`No nav item for ${href}`);
+  return item;
+};
+
+const TABS_LEFT: NavItem[] = [byHref("/daily"), byHref("/leaderboard")];
+const TABS_RIGHT: NavItem[] = [byHref("/rooms"), byHref("/practice")];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const immersive = useImmersiveState();
 
   return (
-    <div className="flex min-h-full flex-col lg:flex-row">
-      <NavRecorder />
-      {!immersive && <Sidebar />}
+    // QueueProvider wraps everything, including the chrome: the Play button reports the
+    // search and the pages read it, so both have to be inside. Mounted here for the same
+    // reason NavRecorder is — the shell is the only thing on every route.
+    <QueueProvider>
+      <div className="flex min-h-full flex-col lg:flex-row">
+        <NavRecorder />
+        {!immersive && <Sidebar />}
 
-      <main
-        className={`min-w-0 flex-1 ${
-          // Clears the fixed tab bar. Only needed when the tab bar is actually there.
-          immersive ? "" : "pb-20 lg:pb-0"
-        }`}
-      >
-        {children}
-      </main>
+        <main
+          className={`min-w-0 flex-1 ${
+            // Clears the fixed tab bar. Only needed when the tab bar is actually there.
+            immersive ? "" : "pb-20 lg:pb-0"
+          }`}
+        >
+          {children}
+        </main>
 
-      {!immersive && <TabBar />}
-    </div>
+        {!immersive && <TabBar />}
+      </div>
+    </QueueProvider>
   );
 }
 
@@ -103,31 +134,22 @@ function Sidebar() {
 
   return (
     <aside className="bg-ink-900 border-line sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r lg:flex">
-      <div className="p-5">
-        <Wordmark />
+      <div className="px-5 pt-6 pb-5">
+        <Wordmark size="brand" />
       </div>
 
       <nav aria-label="Main" className="flex flex-col gap-1 px-3">
-        {NAV.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`text-body flex items-center gap-3 rounded-sm px-3 py-2.5 font-medium transition-colors ${
-                active
-                  ? "bg-ink-600 text-paper"
-                  : "text-secondary hover:bg-ink-700 hover:text-paper"
-              }`}
-            >
-              <span className="text-lg">
-                <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
-              </span>
-              {item.label}
-            </Link>
-          );
-        })}
+        {NAV_MODES.map((item) => (
+          <NavLink key={item.href} item={item} pathname={pathname} />
+        ))}
+
+        {/* Same hairline as MenuSeparator. Decorative, so `line` rather than
+            `line-strong` — it groups, it does not divide. */}
+        <div role="separator" className="bg-line my-2 h-px" />
+
+        {NAV_MORE.map((item) => (
+          <NavLink key={item.href} item={item} pathname={pathname} />
+        ))}
       </nav>
 
       <div className="flex-1" />
@@ -164,6 +186,30 @@ function Sidebar() {
         </SignedOut>
       </div>
     </aside>
+  );
+}
+
+/**
+ * One sidebar row. Extracted when the nav split into two groups so both `.map()`s
+ * render exactly the same thing — the active treatment is the kind of detail that
+ * drifts the moment it is written twice.
+ */
+function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? "page" : undefined}
+      className={`text-body flex items-center gap-3 rounded-sm px-3 py-2.5 font-medium transition-colors ${
+        active ? "bg-ink-600 text-paper" : "text-secondary hover:bg-ink-700 hover:text-paper"
+      }`}
+    >
+      <span className="text-lg">
+        <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
+      </span>
+      {item.label}
+    </Link>
   );
 }
 
@@ -213,9 +259,12 @@ function PlayButton({ href, caption }: { href: string; caption: string }) {
 function RankedPlayButton({ href }: { href: string }) {
   const me = useQuery(api.users.me, {});
   const delta = useQuery(api.users.lastRatingChange, {});
+  const queue = useQueue();
 
   const rank = me ? rankForElo(me.elo) : null;
   const placing = (me?.placementsRemaining ?? 0) > 0;
+
+  if (queue.inQueue) return <SearchingPlayButton href={href} />;
 
   return (
     <Link
@@ -267,6 +316,58 @@ function RankedPlayButton({ href }: { href: string }) {
         </span>
       )}
     </Link>
+  );
+}
+
+/**
+ * The Play control while a search is running.
+ *
+ * The search outlives the page that started it, so this is the only thing on screen
+ * saying it is still happening once you have navigated away — which makes it a status
+ * readout as much as a control, and it has two jobs rather than one.
+ *
+ * Split into a Link and a sibling button rather than one clickable block: a <button>
+ * nested inside an <a> is invalid HTML, and browsers recover from it by inventing a DOM
+ * shape nobody wrote. The body goes back to the search panel, the ✕ leaves the queue.
+ */
+function SearchingPlayButton({ href }: { href: string }) {
+  const queue = useQueue();
+  const seconds = Math.floor(queue.waitingMs / 1000);
+
+  return (
+    <div
+      style={{ ["--press-edge" as string]: "#9E7414" }}
+      className="press bg-gold text-ink-900 flex flex-col gap-1.5 rounded-md px-3.5 py-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <Link
+          href={href}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-lg leading-none font-extrabold tracking-wide"
+        >
+          {/* The only pulsing thing in the sidebar. It is doing the job the sweeping bar
+              on /ranked does — saying the search is alive — in the space available. */}
+          <span className="bg-ink-900 size-2 shrink-0 animate-pulse rounded-full" />
+          <span className="truncate">SEARCHING</span>
+        </Link>
+
+        <button
+          type="button"
+          onClick={queue.dequeue}
+          aria-label="Cancel search"
+          className="text-ink-900/70 hover:bg-ink-900/10 hover:text-ink-900 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-xs transition-colors"
+        >
+          <Glyph name="leave" />
+        </button>
+      </div>
+
+      <div className="border-ink-900/15 flex items-end justify-between gap-2 border-t pt-1.5">
+        <Labelled
+          value={`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`}
+          label="searching"
+        />
+        <Labelled align="end" value={String(queue.playersWaiting)} label="in queue" />
+      </div>
+    </div>
   );
 }
 
@@ -480,23 +581,44 @@ function TabBar() {
        * on top of the navigation instead of a fifth tab that happens to be yellow.
        */}
       <div className="flex w-20 shrink-0 justify-center">
-        <Link
-          href={isSignedIn ? "/ranked" : "/daily"}
-          aria-label="Play"
-          className="press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full"
-          style={{ ["--press-edge" as string]: "#9E7414" }}
-        >
-          <span className="text-xl leading-none">
-            <Glyph name="tier" filled />
-          </span>
-          <span className="text-label font-extrabold tracking-wide">PLAY</span>
-        </Link>
+        <MobilePlayButton signedIn={isSignedIn === true} />
       </div>
 
       {TABS_RIGHT.map((item) => (
         <Tab key={item.href} item={item} pathname={pathname} />
       ))}
     </nav>
+  );
+}
+
+/**
+ * The raised centre control, with the search folded into it.
+ *
+ * No cancel here. The ✕ the sidebar carries needs a 24px target beside a 24px label, and
+ * neither fits on a 64px circle without one of them becoming a thing you hit by accident
+ * — on a bar your thumb rests against, a mis-tap that silently leaves the queue is the
+ * worst outcome available. Tapping it goes to /ranked, where Cancel is a full-size button.
+ */
+function MobilePlayButton({ signedIn }: { signedIn: boolean }) {
+  const queue = useQueue();
+  const seconds = Math.floor(queue.waitingMs / 1000);
+
+  return (
+    <Link
+      href={signedIn ? "/ranked" : "/daily"}
+      aria-label={queue.inQueue ? "Searching for a match" : "Play"}
+      className="press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full"
+      style={{ ["--press-edge" as string]: "#9E7414" }}
+    >
+      <span className={`text-xl leading-none ${queue.inQueue ? "animate-pulse" : ""}`}>
+        <Glyph name={queue.inQueue ? "timer" : "tier"} filled />
+      </span>
+      <span className="text-label font-extrabold tabular-nums tracking-wide">
+        {queue.inQueue
+          ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+          : "PLAY"}
+      </span>
+    </Link>
   );
 }
 
@@ -562,9 +684,31 @@ export function MobileTopBar() {
 /* Shared                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Wordmark() {
+/**
+ * The logo, at two sizes.
+ *
+ * `bar` is the compact lockup the mobile top bar needs — it shares a 48px row with the
+ * account menu, and anything larger squeezes a long handle off the bar. `brand` is the
+ * sidebar masthead: a 240px column can carry the mark at 40px next to SNAP at display
+ * size and still have room, and at the small size it read as a favicon that had wandered
+ * into the layout rather than as the name of the thing you are inside.
+ *
+ * Horizontal at both sizes. Stacking the mark above the name would spend vertical space
+ * the nav wants and read as a splash screen.
+ *
+ * No bloom behind the mark: globals.css licenses exactly three exceptions to the no-glow
+ * rule and that one belongs to rank emblems. Prominence here is size and space.
+ */
+function Wordmark({ size = "bar" }: { size?: "bar" | "brand" }) {
+  const brand = size === "brand";
+
   return (
-    <Link href="/" className="inline-flex items-center gap-2">
+    <Link
+      href="/"
+      className={`inline-flex items-center transition-[filter] hover:brightness-110 ${
+        brand ? "gap-2.5" : "gap-2"
+      }`}
+    >
       {/* The same mark as the favicon and the home-screen icon, cut from one generated
           image by scripts/build-icon.ts. This used to be a CSS clip-path plate, which
           stayed crisp but showed a bare chamfer while every other surface showed the
@@ -577,9 +721,13 @@ function Wordmark() {
         src="/mark.png"
         alt=""
         aria-hidden="true"
-        className="inline-block size-5 shrink-0 select-none"
+        className={`inline-block shrink-0 select-none ${brand ? "size-10" : "size-5"}`}
       />
-      <span className="font-display text-paper text-xl font-extrabold tracking-tight">
+      <span
+        className={`font-display text-paper font-extrabold tracking-tight ${
+          brand ? "text-display-2 leading-none" : "text-xl"
+        }`}
+      >
         SNAP
       </span>
     </Link>
