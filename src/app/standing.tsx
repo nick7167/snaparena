@@ -3,8 +3,9 @@
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { api } from "../../convex/_generated/api";
-import { formatGlobalRank, rankForElo } from "@/engine/ranks";
+import { rankForElo } from "@/engine/ranks";
 import { Chip, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
+import { GlobalRank } from "./dashboard/global-rank";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Glyph } from "@/ui/Glyph";
 
@@ -48,7 +49,6 @@ export function StandingHero({ size = "xl" }: { size?: "lg" | "xl" }) {
 
   const rank = rankForElo(me.elo);
   const placing = me.placementsRemaining > 0;
-  const position = formatGlobalRank(standing?.position, standing?.approximate);
   const Heading = large ? "h1" : "p";
 
   return (
@@ -74,22 +74,25 @@ export function StandingHero({ size = "xl" }: { size?: "lg" | "xl" }) {
         </Heading>
 
         <p className="text-body-lg text-secondary flex flex-wrap items-center justify-center gap-x-2 tabular-nums">
-          {!placing && <span className="text-paper font-bold">{me.elo}</span>}
-          {!placing && position && (
-            <>
-              <span className="text-faint" aria-hidden="true">
-                ·
-              </span>
-              <span>{position} global</span>
-            </>
-          )}
-          {placing && (
+          {placing ? (
             <span>
               {me.placementsRemaining} placement match
               {me.placementsRemaining === 1 ? "" : "es"} to go
             </span>
+          ) : (
+            <span className="text-paper font-bold">{me.elo}</span>
           )}
         </p>
+
+        {/* The struck chip, not a run-on sentence. Position is a different kind of fact
+            from rating — one is how good, the other is how many people are ahead — and
+            the same element states it on the dashboard and on the VS reveal. */}
+        {!placing && (
+          <GlobalRank
+            position={standing?.position}
+            approximate={standing?.approximate}
+          />
+        )}
       </div>
 
       <RankProgress elo={me.elo} placementsRemaining={me.placementsRemaining} />

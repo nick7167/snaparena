@@ -192,12 +192,26 @@ export function pickPracticePersona(
   lastPersonaId?: string,
   rng: Rng = Math.random,
 ): BotPersona {
+  return pick(practiceCandidates(elo, lastPersonaId), rng);
+}
+
+/**
+ * The exact set `pickPracticePersona` will draw from.
+ *
+ * Split out so the practice page can SHOW the shortlist — "you'll face one of these" — from
+ * the same function the server picks with. Re-deriving "the three nearest minus the last
+ * one" in the UI would work today and be wrong the first time this rule changes, and the
+ * screen would go on confidently naming opponents that could not turn up.
+ *
+ * Sorted nearest-first, so a caller can render them in the order they are being considered.
+ */
+export function practiceCandidates(elo: number, lastPersonaId?: string): BotPersona[] {
   const nearest = [...BOT_PERSONAS]
     .sort((a, b) => Math.abs(a.elo - elo) - Math.abs(b.elo - elo))
     .slice(0, PRACTICE_POOL_SIZE);
 
   const candidates = nearest.filter((persona) => persona.id !== lastPersonaId);
-  return pick(candidates.length > 0 ? candidates : nearest, rng);
+  return candidates.length > 0 ? candidates : nearest;
 }
 
 /** Uniform random source. Injectable so tests are deterministic. */

@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { PLACEMENT_MATCHES, RANK_TIERS } from "@/engine/config";
-import { formatGlobalRank, rankForElo } from "@/engine/ranks";
+import { rankForElo } from "@/engine/ranks";
+import { GlobalRank } from "../dashboard/global-rank";
 import { Button } from "@/ui/Button";
 import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
@@ -89,7 +90,22 @@ export default function LeaderboardPage() {
               must never appear twice. On desktop it is a sticky rail; below `xl` it falls
               back underneath the board, which is where it used to live. */}
           {me && !meVisible && (
-            <aside className="flex flex-col gap-2 xl:sticky xl:top-4 xl:w-64 xl:shrink-0">
+            /**
+             * Sticky at BOTH ends of the range, not just the top.
+             *
+             * Below `xl` this fell back to sitting underneath the board — beneath five
+             * hundred rows, which is not a fallback, it is a place nobody will ever
+             * scroll to. A player at #142 on a phone had no way at all to find
+             * themselves. It pins to the bottom of the viewport instead, clear of the
+             * tab bar, and returns to the desktop rail from `xl`.
+             */
+            <aside
+              className="bg-ink-900/95 border-line fixed inset-x-0 bottom-20 z-30 flex flex-col
+                         gap-2 border-t px-4 py-3 backdrop-blur
+                         xl:static xl:inset-auto xl:z-auto xl:w-64 xl:shrink-0 xl:border-t-0
+                         xl:bg-transparent xl:px-0 xl:py-0 xl:backdrop-blur-none
+                         xl:sticky xl:top-4"
+            >
               <SectionLabel>Your standing</SectionLabel>
               {/* `as="div"`: the pinned row is a copy of your standing, not an entry in
                   the ranked list. Emitting it as an `li` would put a second, detached
@@ -251,6 +267,7 @@ interface LadderEntry {
   avatarUrl?: string | null;
   elo: number;
   gamesPlayed: number;
+  level: number;
 }
 
 /**
@@ -282,31 +299,33 @@ function MyStanding({ accent }: { accent?: string }) {
   }
 
   const rank = rankForElo(standing.elo);
-  const position = formatGlobalRank(standing.position, standing.approximate);
 
   return (
-    <Card you accent={accent} className="flex items-center gap-3 px-3 py-2.5">
-      <span className="font-display text-secondary shrink-0 text-right font-bold tabular-nums">
-        {position}
-      </span>
-      <RankEmblem
-        tierId={rank.tier.id}
-        division={rank.tier.divisions > 1 ? rank.division : 1}
-        size="sm"
-      />
-      <span className="min-w-0 flex-1">
-        <span className="text-body font-semibold" style={{ color: rank.tier.accent }}>
-          {rank.label}
+    <Card you accent={accent} className="flex flex-col gap-2 px-3 py-2.5">
+      {/* The same struck chip the dashboard and the VS reveal use, so "notable" means one
+          thing across the app — and it is what carries the percentile. */}
+      <GlobalRank position={standing.position} approximate={standing.approximate} />
+
+      <div className="flex items-center gap-3">
+        <RankEmblem
+          tierId={rank.tier.id}
+          division={rank.tier.divisions > 1 ? rank.division : 1}
+          size="sm"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="text-body font-semibold" style={{ color: rank.tier.accent }}>
+            {rank.label}
+          </span>
         </span>
-      </span>
-      <span className="flex shrink-0 flex-col items-end">
-        <span className="font-display text-body text-paper font-bold tabular-nums">
-          {standing.elo}
+        <span className="flex shrink-0 flex-col items-end">
+          <span className="font-display text-body text-paper font-bold tabular-nums">
+            {standing.elo}
+          </span>
+          <span className="text-label text-muted tabular-nums">
+            {standing.gamesPlayed} games
+          </span>
         </span>
-        <span className="text-label text-muted tabular-nums">
-          {standing.gamesPlayed} games
-        </span>
-      </span>
+      </div>
     </Card>
   );
 }
@@ -372,7 +391,7 @@ function Row({
           {entry.elo}
         </span>
         <span className="text-label text-muted tabular-nums">
-          {entry.gamesPlayed} games
+          L{entry.level} · {entry.gamesPlayed} games
         </span>
       </span>
     </Card>

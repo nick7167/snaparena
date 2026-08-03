@@ -10,19 +10,19 @@ import { BotBadge } from "@/game/ui";
 import { play } from "@/audio/sfx";
 import { DUEL_STARTING_HP, VETO_BANS_PER_PLAYER } from "@/engine/config";
 import { Button, ButtonLink } from "@/ui/Button";
-import { Card } from "@/ui/Surface";
+import { Panel, Skeleton } from "@/ui/Surface";
+import { Glyph } from "@/ui/Glyph";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { LobbyColumn } from "../lobby-column";
+import { Beat } from "../dashboard/motion";
+import { Form, RecentMatches } from "../standing";
+import { Roster, Shortlist } from "./roster";
 
 /**
  * Practice.
  *
- * Previously a card buried on /ranked with no URL of its own, which made it invisible to
- * the navigation and impossible to link to. It is a mode — the one you play when you want
- * the full duel without putting a rating at risk — so it gets a route.
- *
- * Sign-in only, like ranked: practice pays XP and badges, and both need somewhere to
- * land. The daily is the mode open to everyone.
+ * Sign-in only, like ranked: practice pays XP and badges, and both need somewhere to land.
+ * The daily is the mode open to everyone.
  */
 export default function PracticePage() {
   return (
@@ -62,10 +62,26 @@ export default function PracticePage() {
  */
 function PracticeHome() {
   const [joined, setJoined] = useState<Id<"matches"> | null>(null);
-  // A reload mid-match drops you back into it rather than losing it. Derived rather than
-  // copied into state, so it falls back to null on its own once the match completes.
+  // A reload mid-match drops you back into it rather than losing it.
   const existing = useQuery(api.ranked.activeMatch, {});
   const matchId = joined ?? existing ?? null;
+
+  /**
+   * `undefined` is a third state, and it used to be rendered as the second.
+   *
+   * `existing ?? null` collapsed "still asking" into "no match", so reloading mid-match
+   * painted the whole lobby — heading, roster, the lot — before snapping into the arena.
+   */
+  if (existing === undefined && joined === null) {
+    return (
+      <LobbyColumn>
+        <div className="flex flex-col gap-4 px-4">
+          <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-48 w-full" />
+        </div>
+      </LobbyColumn>
+    );
+  }
 
   // The match renders outside the lobby column on purpose — see LobbyColumn.
   return matchId ? (
@@ -77,68 +93,93 @@ function PracticeHome() {
   );
 }
 
-/**
- * Kept strictly separate from ranked so nobody is ever surprised by a synthetic opponent
- * in a rated match — the trade is stated up front, and you choose it.
- */
 function Start({ onStarted }: { onStarted: (id: Id<"matches">) => void }) {
   const startPractice = useMutation(api.bots.startPractice);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
   return (
-    <div className="flex flex-col gap-4 px-4">
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-6">
+      <Beat index={0} className="flex items-center gap-3 px-4">
         <h1 className="font-display text-display-1 font-extrabold">Practice</h1>
         <BotBadge size="md" />
-      </div>
+      </Beat>
 
-      <p className="text-body text-secondary">
-        No queue — a bot near your rating, right now. Both players start on{" "}
-        {DUEL_STARTING_HP} HP and you each ban {VETO_BANS_PER_PLAYER} categories first,
-        exactly as in ranked.
-      </p>
+      <Beat index={1} className="px-4">
+        <Panel title="You'll face one of these">
+          <Shortlist />
 
-      <Card className="flex flex-col items-start gap-3 p-5">
-        <p className="text-body text-secondary">
-          <span className="text-paper font-medium">XP and badges count.</span> Your rating
-          does not move, win or lose.
+          <div className="border-line flex flex-col gap-3 border-t pt-4">
+            <Button
+              size="lg"
+              block
+              loading={starting}
+              onClick={async () => {
+                setStarting(true);
+                setError(null);
+                try {
+                  const result = await startPractice({});
+                  if (result.status === "started" && result.matchId) {
+                    play("whoosh");
+                    onStarted(result.matchId);
+                    return;
+                  }
+                  /**
+                   * Both failures are the catalogue being unready, which is nothing a
+                   * player did and nothing they can fix. The old copy told them to run
+                   * `npm run seed-bots` — a developer instruction shipped to players.
+                   */
+                  setError("Practice isn't available right now. Try again shortly.");
+                } catch {
+                  setError("Something went wrong starting that match.");
+                }
+                setStarting(false);
+              }}
+            >
+              <Glyph name="bot" />
+              Play a bot
+            </Button>
+
+            <p className="text-label text-muted text-center">
+              Both start on {DUEL_STARTING_HP} HP · ban {VETO_BANS_PER_PLAYER} categories
+              each ·{" "}
+              <span className="text-secondary font-semibold">
+                XP and badges count, rating never moves
+              </span>
+            </p>
+
+            {error && (
+              <p className="text-body-sm text-signal-text text-center" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+        </Panel>
+      </Beat>
+
+      {/* Both read `matches.history`, which Convex dedupes to one subscription. `Form`
+          filters practice out — it is a RATED form strip — so it says how the ladder is
+          going, while the roster below says how the cast is going. */}
+      <Beat index={2}>
+        <Form />
+      </Beat>
+
+      <Beat index={3} className="px-4">
+        <Roster />
+      </Beat>
+
+      <Beat index={4}>
+        <RecentMatches />
+      </Beat>
+
+      <Beat index={5} className="px-4">
+        <p className="text-body-sm text-muted text-center">
+          Ready for a rating?{" "}
+          <ButtonLink variant="ghost" size="sm" href="/ranked">
+            Play ranked
+          </ButtonLink>
         </p>
-        <Button
-          size="lg"
-          loading={starting}
-          onClick={async () => {
-            setStarting(true);
-            setError(null);
-            const result = await startPractice({});
-            if (result.status === "started" && result.matchId) {
-              play("whoosh");
-              onStarted(result.matchId);
-            } else {
-              setError(
-                result.status === "no-bots-seeded"
-                  ? "No bots seeded yet — run `npm run seed-bots`."
-                  : "Not enough tracks in the catalogue.",
-              );
-              setStarting(false);
-            }
-          }}
-        >
-          Play a bot
-        </Button>
-        {error && (
-          <p className="text-body-sm text-signal-text" role="alert">
-            {error}
-          </p>
-        )}
-      </Card>
-
-      <p className="text-body-sm text-muted">
-        Ready for a rating?{" "}
-        <ButtonLink variant="ghost" size="sm" href="/ranked">
-          Play ranked
-        </ButtonLink>
-      </p>
+      </Beat>
     </div>
   );
 }

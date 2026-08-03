@@ -16,7 +16,7 @@ import { Glyph } from "@/ui/Glyph";
  * leaves open, and "just now" that is still claiming to be just now twenty minutes later
  * is worse than no timestamp at all.
  */
-function timeAgo(then: number, now: number): string {
+export function timeAgo(then: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - then) / 1000));
   if (seconds < 60) return "just now";
 

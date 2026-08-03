@@ -28,8 +28,10 @@ export function StreakRow({ streak }: { streak: Streak }) {
     /* No count and no flame here: the stat strip above already carries the number, and
        stating it twice inside one card made the card look like two cards. This is the
        week itself — the part a number cannot show. */
+    // Caption underneath, like the two meters beside it. With the label on top the days
+    // sat a line lower than the bars they share a row with, so three cells that are the
+    // same kind of thing read as two things and a stray one.
     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <span className="text-label text-muted tracking-[0.14em] uppercase">This week</span>
       <span className="flex items-center gap-1">
           {streak.days.map((day) => {
             const weekday = WEEKDAY[new Date(`${day.date}T00:00:00.000Z`).getUTCDay()];
@@ -71,6 +73,7 @@ export function StreakRow({ streak }: { streak: Streak }) {
             );
           })}
       </span>
+      <span className="text-label text-muted tracking-[0.14em] uppercase">This week</span>
     </div>
   );
 }

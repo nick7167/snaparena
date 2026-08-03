@@ -97,6 +97,44 @@ export function SectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * A titled block of content.
+ *
+ * The dashboard arrived at this shape independently four times — a bordered ink-800 box
+ * with a `SectionLabel`, an optional figure opposite it, and a column of content — and the
+ * rooms, practice and daily rebuilds want the same thing another six. Naming it means the
+ * next panel inherits the padding, the border tone and the label placement instead of
+ * approximating them.
+ *
+ * `aside` renders opposite the title: a count, a ratio, a control. Kept as a slot rather
+ * than a string so a caller can put a Chip or a button there without a variant for each.
+ */
+export function Panel({
+  title,
+  aside,
+  children,
+  className = "",
+}: {
+  title?: ReactNode;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={`border-line bg-ink-800 flex min-w-0 flex-col gap-3 rounded-md border p-5 ${className}`}
+    >
+      {(title || aside) && (
+        <div className="flex items-baseline justify-between gap-3">
+          {title ? <SectionLabel>{title}</SectionLabel> : <span />}
+          {aside && <span className="text-label text-muted shrink-0">{aside}</span>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
 export type ChipTone = "neutral" | "gold" | "signal" | "teal" | "paper";
 
 const CHIP_TONES: Record<ChipTone, string> = {

@@ -3,13 +3,14 @@
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
 import { api } from "../../../convex/_generated/api";
-import { formatGlobalRank, rankForElo } from "@/engine/ranks";
+import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
 import { PLACEMENT_MATCHES } from "@/engine/config";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Meter, Skeleton } from "@/ui/Surface";
 import { Avatar } from "@/game/ui";
 import { CountUp } from "./motion";
+import { GlobalRank } from "./global-rank";
 import { StreakRow } from "./streak-row";
 
 /**
@@ -40,9 +41,6 @@ export function PlayerBanner() {
   const rank = rankForElo(me.elo);
   const placing = me.placementsRemaining > 0;
   const level = levelForXp(me.xp ?? 0);
-  const position = placing
-    ? null
-    : formatGlobalRank(standing?.position, standing?.approximate);
   const played = Math.max(0, PLACEMENT_MATCHES - me.placementsRemaining);
 
   return (
@@ -98,17 +96,29 @@ export function PlayerBanner() {
               />
             </span>
 
-            {/* The name leads the card. It was `body-lg` under a rank heading, which made
-                the one string that is actually the player's own the smallest thing on
-                their own card.
+            {/* Position above the name, name below it. The ladder slot is the thing that
+                changes and the handle is the thing that does not, so the volatile figure
+                gets the glance and the constant one anchors it. */}
+            <div className="flex min-w-0 flex-col gap-0.5">
+              {!placing && (
+                <GlobalRank
+                  position={standing?.position}
+                  approximate={standing?.approximate}
+                />
+              )}
 
-                One step down the scale from where that landed, because a handle can be
-                twelve characters and a display size that only suits short ones is a
-                display size that truncates most of them. HANDLE_MAX_LENGTH now fits
-                without clipping at both breakpoints. */}
-            <p className="font-display text-numeral sm:text-display-2 text-paper min-w-0 truncate font-extrabold tracking-tight">
-              @{me.handle}
-            </p>
+              {/* The name leads the card. It was `body-lg` under a rank heading, which
+                  made the one string that is actually the player's own the smallest thing
+                  on their own card.
+
+                  One step down the scale from where that landed, because a handle can be
+                  twelve characters and a display size that only suits short ones is a
+                  display size that truncates most of them. HANDLE_MAX_LENGTH now fits
+                  without clipping at both breakpoints. */}
+              <p className="font-display text-numeral sm:text-display-2 text-paper min-w-0 truncate font-extrabold tracking-tight">
+                @{me.handle}
+              </p>
+            </div>
           </div>
 
           {/* Right unit: the rank. The label runs up the emblem's left edge like a spine,
@@ -174,18 +184,17 @@ export function PlayerBanner() {
          * rating or ladder position to state, so the strip is three cells instead of four
          * rather than showing two dashes.
          */}
-        <dl className="border-line grid grid-cols-4 gap-2 border-t pt-4">
+        {/* Three cells, not four. Global moved up beside the avatar, and printing a
+            position twice on one card is the duplication this page already shed once. The
+            survivors get a third of the width each, which a 390px phone notices. */}
+        <dl className="border-line grid grid-cols-3 gap-2 border-t pt-4">
           {placing ? (
             <Stat value={<CountUp value={me.placementsRemaining} />} label="To place" />
           ) : (
-            <>
-              <Stat value={<CountUp value={me.elo} />} label="Rating" />
-              <Stat value={position ?? "—"} label="Global" />
-            </>
+            <Stat value={<CountUp value={me.elo} />} label="Rating" />
           )}
           <Stat value={<CountUp value={level.level} />} label="Level" />
-          {/* "Streak", not "Day streak" — four captions have to share 390px, and the row
-              beneath them is already labelled "This week". */}
+          {/* "Streak", not "Day streak" — the row beneath is already labelled "This week". */}
           <Stat
             value={<CountUp value={streak?.current ?? 0} />}
             label="Streak"

@@ -378,6 +378,18 @@ export default defineSchema({
       v.literal("closed"),
     ),
     activeMatchId: v.optional(v.id("matches")),
+    /**
+     * Members who have marked themselves ready for the next start.
+     *
+     * Advisory, not a gate — the host can always start anyway, because a hard gate hands
+     * one player who wandered off a veto over seven others and there is no kick. It exists
+     * so the host can see whether anyone is still reading.
+     *
+     * Optional because every room that existed before this field has none, and belongs to
+     * ONE lobby round: cleared on join, leave, start and returnToLobby. A ready that
+     * survives its round would open the next lobby with everyone already ready.
+     */
+    readyIds: v.optional(v.array(v.id("users"))),
     createdAt: v.number(),
   }).index("by_code", ["code"]),
 

@@ -8,6 +8,7 @@ import {
   HANDLE_MAX_LENGTH,
 } from "../src/engine/config";
 import { computeStreak, dayKey } from "../src/engine/streak";
+import { levelForXp } from "../src/engine/xp";
 // DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
 import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
 
@@ -653,6 +654,9 @@ export const leaderboard = query({
       avatarUrl: publicAvatarUrl(user),
       elo: user.elo,
       gamesPlayed: user.gamesPlayed,
+      // Free — the row is already loaded, and a ladder showing only rating says
+      // nothing about how much of the game someone has actually played.
+      level: levelForXp(user.xp ?? 0).level,
     }));
   },
 });
@@ -771,6 +775,46 @@ export const tierCounts = query({
         };
       }),
     );
+  },
+});
+
+/**
+ * How many players are on the ladder at all.
+ *
+ * Exists so a position can become a proportion. "#142" is a fact with no scale attached;
+ * "#142 · top 12%" is the same fact and an answer. Three surfaces want it — the dashboard
+ * banner, the ranked hero and the leaderboard's own standing — so it is one query rather
+ * than three counts that would drift.
+ *
+ * Bounded and honest, the same way `tierCounts` and `daily.todayStats` are: Convex has no
+ * count operator and the guidelines are explicit that counting rows by reading them does
+ * not scale, so this reads at most `LADDER_COUNT_CAP + 1` documents and says when it hit
+ * the ceiling. A caller that gets `approximate` should render a floor ("top 20% of 5,000+")
+ * rather than a percentage it cannot support.
+ *
+ * Measured against the SAME population the board shows — `onBoard` plus `onBoardDoc`, both
+ * halves — because a percentile computed over a different set than the position it divides
+ * is a wrong number that looks right.
+ */
+const LADDER_COUNT_CAP = 5_000;
+
+export const rankedPlayerCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const showRankBots = devRankBotsEnabled();
+
+    const rows = await ctx.db
+      .query("users")
+      .withIndex("by_elo")
+      .filter((q) => onBoard(q, showRankBots))
+      .take(LADDER_COUNT_CAP + 1);
+
+    const visible = rows.filter((user) => onBoardDoc(user, showRankBots));
+
+    return {
+      count: Math.min(visible.length, LADDER_COUNT_CAP),
+      approximate: visible.length > LADDER_COUNT_CAP,
+    };
   },
 });
 

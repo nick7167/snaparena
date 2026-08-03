@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireUser } from "./users";
+import { currentUser, requireUser } from "./users";
 import { applyGuess } from "./matches";
 import { difficultyTierForElo, pickTracksForMatch } from "./tracks";
 import { endGuessingEarly, enterPhase } from "./phases";
@@ -474,3 +474,55 @@ function wrongGuessText(title: string): string {
   if (words.length > 1) return words.slice(0, -1).join(" ");
   return `${title}xx`;
 }
+
+/** How many `matchPlayers` rows the roster scan reads. */
+const BEATEN_SCAN = 200;
+
+/**
+ * Which practice bots you have ever beaten.
+ *
+ * A set, not a record. The roster reads as a collection to complete — "4 / 12" — and one
+ * bit per bot is the only claim a bounded scan can make honestly: a win-loss tally would
+ * be a floor presented as a fact, and it would punish a bad night against a bot already
+ * cleared. `approximate` says the scan hit its ceiling, so the count is a floor too.
+ *
+ * Practice only. A ranked or room match against the dev roster is a different thing and
+ * does not belong on this ladder.
+ */
+export const beaten = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await currentUser(ctx);
+    if (!user) return { beaten: [] as string[], played: 0, approximate: false };
+
+    const rows = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .take(BEATEN_SCAN);
+
+    const beaten = new Set<string>();
+    let played = 0;
+
+    for (const row of rows) {
+      const match = await ctx.db.get(row.matchId);
+      if (!match || match.mode !== "practice" || match.status !== "complete") continue;
+      played++;
+      if (match.winnerId !== user._id) continue;
+
+      // The opponent's persona id is the roster key — bots are ordinary user rows carrying
+      // `botPersonaId`, which is what `pickPracticePersona` selects on.
+      for (const playerId of match.playerIds) {
+        if (playerId === user._id) continue;
+        const opponent = await ctx.db.get(playerId);
+        if (opponent?.isBot && opponent.botPersonaId) beaten.add(opponent.botPersonaId);
+      }
+    }
+
+    return {
+      beaten: [...beaten],
+      played,
+      approximate: rows.length >= BEATEN_SCAN,
+    };
+  },
+});

@@ -12,6 +12,7 @@ import {
   personaById,
   personaNearestElo,
   pickPracticePersona,
+  practiceCandidates,
   planBotRound,
   sampleReactionMs,
   type Rng,
@@ -388,5 +389,41 @@ describe("pickPracticePersona", () => {
     const only = BOT_PERSONAS[0];
     const picked = pickPracticePersona(only.elo, only.id, seeded([0]));
     expect(picked).toBeDefined();
+  });
+});
+
+describe("practiceCandidates", () => {
+  it("is exactly the set pickPracticePersona draws from", () => {
+    // The practice page shows this list as "you'll face one of these". If the two ever
+    // disagree the screen names opponents that cannot turn up, so this is the contract.
+    for (const elo of [400, 720, 1000, 1300, 1800, 2400]) {
+      for (const last of [undefined, ...BOT_PERSONAS.map((p) => p.id)]) {
+        const allowed = practiceCandidates(elo, last).map((p) => p.id);
+        for (let draw = 0; draw < 20; draw++) {
+          const picked = pickPracticePersona(elo, last, seeded([draw / 20]));
+          expect(allowed).toContain(picked.id);
+        }
+      }
+    }
+  });
+
+  it("excludes the last opponent so the roster reads as a cast", () => {
+    const nearest = practiceCandidates(1000);
+    expect(practiceCandidates(1000, nearest[0].id).map((p) => p.id)).not.toContain(
+      nearest[0].id,
+    );
+  });
+
+  it("falls back to the full pool rather than returning nothing", () => {
+    // Excluding the last opponent must never empty the list, or the picker has nothing to
+    // draw from and practice stops working entirely.
+    for (const persona of BOT_PERSONAS) {
+      expect(practiceCandidates(persona.elo, persona.id).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("is ordered nearest first", () => {
+    const byDistance = practiceCandidates(1000).map((p) => Math.abs(p.elo - 1000));
+    expect([...byDistance].sort((a, b) => a - b)).toEqual(byDistance);
   });
 });
