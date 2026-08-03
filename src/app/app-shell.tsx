@@ -170,85 +170,133 @@ function Sidebar() {
 /**
  * The primary action, and the only control in the app allowed to be this loud.
  *
- * It used to stack a caption under the word and run `py-4` on top of a `lg` button — about
- * 76px of sidebar for one verb and a fixed string. Loud is not the same as tall: the same
- * emphasis now comes from the gold fill and the press edge, in a single 52px row, and the
- * space that bought buys information instead.
- *
- * The right rail carries the rating and the way it last moved. That pairing is the point —
- * the number you are trying to move, and the control that moves it, are the same object.
+ * Two shapes behind one name, because a guest and a ranked player are not looking at the
+ * same thing. Signed in it is a standing plus a door — rank, rating, last swing, each
+ * named. Signed out there is no rank to state, so it stays the plain control it was.
  */
 function PlayButton({ href, caption }: { href: string; caption: string }) {
   return (
-    // `justify-between` only, no padding override: SIZES.lg already sets px-7, and two
-    // competing padding utilities resolve by stylesheet order rather than by which one is
-    // written last. hub.tsx sets justify-between on a ButtonLink the same way.
-    <ButtonLink href={href} size="lg" block className="justify-between">
-      <span className="flex flex-col items-start">
-        <span className="flex items-center gap-1.5 text-xl leading-none font-extrabold tracking-wide">
-          <Glyph name="tier" filled />
-          PLAY
-        </span>
-        <span className="text-label mt-0.5 font-medium opacity-70">{caption}</span>
-      </span>
+    <>
       <SignedIn>
-        <RatingRail />
+        <RankedPlayButton href={href} />
       </SignedIn>
-    </ButtonLink>
+      <SignedOut>
+        {/* A guest has no rank, so there is nothing to label — the daily control stays
+            the simple one it always was. */}
+        <ButtonLink href={href} size="lg" block className="justify-between">
+          <span className="flex flex-col items-start">
+            <span className="flex items-center gap-1.5 text-xl leading-none font-extrabold tracking-wide">
+              <Glyph name="tier" filled />
+              PLAY
+            </span>
+            <span className="text-label mt-0.5 font-medium opacity-70">{caption}</span>
+          </span>
+        </ButtonLink>
+      </SignedOut>
+    </>
   );
 }
 
 /**
- * Rating, and the last swing.
+ * The signed-in Play control.
  *
- * Sits inside the gold button, so it inherits `text-ink-900` — the delta colours below are
- * therefore drawn from the ink end of the palette rather than the usual gold/signal-text
- * pair, which would vanish on a gold fill.
+ * Every number on it is labelled. It used to read `941  ▲ +12` with nothing to say what
+ * either figure was — you had to already know that one was your rating and the other was
+ * the last match's swing. The rank comes along too, so the control states what it is a
+ * door to rather than relying on the word PLAY alone.
  *
- * Zero is its own case, not a small win. A loss at the rating floor reports a delta of 0
- * (applyMatchResult deliberately reports the drop actually taken), and rendering that as a
- * gain would be a lie told by a colour.
+ * Built as a `Link` with the `.press` utility rather than through `ButtonLink`, which
+ * bakes in `px-7` — 28px of padding a side leaves 152px of a 240px sidebar, and three
+ * rows of labelled information need the width. The mobile tab bar's Play control is built
+ * the same way for the same reason.
  */
-function RatingRail() {
+function RankedPlayButton({ href }: { href: string }) {
   const me = useQuery(api.users.me, {});
   const delta = useQuery(api.users.lastRatingChange, {});
 
-  if (!me) return null;
-
-  // During placements there is no rating worth showing — the same rule the user menu and
-  // the profile already follow. The placement count is the useful number instead.
-  if (me.placementsRemaining > 0) {
-    return (
-      <span className="flex shrink-0 flex-col items-end leading-none">
-        <span className="font-display text-body font-bold tabular-nums">
-          {me.placementsRemaining}
-        </span>
-        <span className="text-label mt-0.5 font-medium opacity-70">to place</span>
-      </span>
-    );
-  }
+  const rank = me ? rankForElo(me.elo) : null;
+  const placing = (me?.placementsRemaining ?? 0) > 0;
 
   return (
-    <span className="flex shrink-0 flex-col items-end leading-none">
-      <span className="font-display text-body font-bold tabular-nums">{me.elo}</span>
-      {delta !== null && delta !== undefined && (
-        <span
-          className={`text-label mt-0.5 flex items-center gap-0.5 font-bold tabular-nums ${
-            delta > 0 ? "opacity-100" : delta < 0 ? "opacity-70" : "opacity-50"
-          }`}
-        >
-          {delta !== 0 && (
-            <span className={delta > 0 ? "" : "rotate-180"}>
-              <Glyph name="win" filled />
-            </span>
+    <Link
+      href={href}
+      style={{ ["--press-edge" as string]: "#9E7414" }}
+      className="press bg-gold text-ink-900 flex flex-col gap-1.5 rounded-md px-3.5 py-3
+                 transition-[filter] hover:brightness-110"
+    >
+      <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-lg leading-none font-extrabold tracking-wide">
+          <Glyph name="tier" filled />
+          PLAY
+        </span>
+        {rank && !placing && (
+          <span className="text-label font-bold tracking-[0.12em] uppercase opacity-80">
+            {rank.label}
+          </span>
+        )}
+      </span>
+
+      {me && (
+        <span className="border-ink-900/15 flex items-end justify-between gap-2 border-t pt-1.5">
+          {placing ? (
+            <Labelled value={String(me.placementsRemaining)} label="to place" />
+          ) : (
+            <Labelled value={String(me.elo)} label="rating" />
           )}
-          {delta > 0 ? "+" : ""}
-          {delta}
+
+          {/* Zero is its own case, not a small win. A loss at the rating floor reports a
+              delta of 0 — `applyMatchResult` deliberately reports the drop actually taken
+              — and colouring that as a gain would be a lie told by a symbol. */}
+          {!placing && delta !== null && delta !== undefined && (
+            <Labelled
+              align="end"
+              label="last match"
+              value={
+                <span className="flex items-center gap-0.5">
+                  {delta !== 0 && (
+                    <span className={delta > 0 ? "" : "rotate-180"}>
+                      <Glyph name="win" filled />
+                    </span>
+                  )}
+                  {delta > 0 ? "+" : ""}
+                  {delta}
+                </span>
+              }
+            />
+          )}
         </span>
       )}
+    </Link>
+  );
+}
+
+/**
+ * A figure with the word for what it is underneath.
+ *
+ * Sits on the gold fill, so both tones come from the ink end of the palette — the usual
+ * `muted` would disappear against it.
+ */
+function Labelled({
+  value,
+  label,
+  align = "start",
+}: {
+  value: React.ReactNode;
+  label: string;
+  align?: "start" | "end";
+}) {
+  return (
+    <span className={`flex flex-col ${align === "end" ? "items-end" : "items-start"}`}>
+      <span className="font-display text-body leading-none font-extrabold tabular-nums">
+        {value}
+      </span>
+      <span className="text-label mt-0.5 leading-none font-semibold tracking-wide uppercase opacity-70">
+        {label}
+      </span>
     </span>
   );
 }
+
 
 /**
  * Progression, and only progression.

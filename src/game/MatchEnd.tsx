@@ -532,7 +532,7 @@ function NewBadges({ ids }: { ids: string[] }) {
             transition={{ delay: 0.4 + index * 0.12, type: "spring", stiffness: 300, damping: 14 }}
             className="bg-ink-600 flex items-center gap-2 rounded-sm px-3 py-1.5"
           >
-            <span className="text-gold text-lg">
+            <span className="text-lg">
               <BadgeMark id={badge!.id} />
             </span>
             <span className="text-body-sm">{badge!.name}</span>

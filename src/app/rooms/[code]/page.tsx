@@ -63,7 +63,6 @@ export default function RoomPage() {
       <PageHeader
         parent={{ href: "/rooms", label: "Rooms" }}
         title={`Room ${room.code}`}
-        width="max-w-md"
       />
 
       <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-12">

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx } from "./_generated/server";
-import { requireUser } from "./users";
+import { publicAvatarUrl, requireUser } from "./users";
 import { difficultyTierForElo, pickTracksForMatch } from "./tracks";
 import {
   MAX_DUEL_ROUNDS,
@@ -128,7 +128,7 @@ export const state = query({
           userId: member!._id,
           handle: member!.handle,
           displayName: member!.displayName,
-          avatarUrl: member!.avatarUrl,
+          avatarUrl: publicAvatarUrl(member!),
           isHost: member!._id === room.hostId,
         })),
     };

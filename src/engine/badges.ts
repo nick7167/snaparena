@@ -9,11 +9,29 @@ import type { GameMode } from "./config";
  * you are up against.
  */
 
+/**
+ * The colour a badge is drawn in.
+ *
+ * Five tones, not eight — drawn from the palette the rest of the app already uses, with
+ * the meanings it already assigns. Colour carries information here: gold is reward,
+ * signal is damage, paper is the top of every ladder. Giving each badge its own invented
+ * hue would look livelier and would quietly break all of that, so badges borrow meaning
+ * rather than adding to it.
+ *
+ *   signal   pressure and blood — the ones won under threat
+ *   gold     reward and momentum
+ *   paper    the brightest achievements, the same tone SNAP and Legend hold
+ *   teal     clean, untouched
+ *   neutral  endurance; earned by volume rather than brilliance
+ */
+export type BadgeTone = "signal" | "gold" | "paper" | "teal" | "neutral";
+
 export interface BadgeDefinition {
   readonly id: string;
   readonly name: string;
   readonly description: string;
   readonly emoji: string;
+  readonly tone: BadgeTone;
   /** Ordering on a player card; lower shows first. */
   readonly sortOrder: number;
 }
@@ -24,6 +42,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "First Blood",
     description: "Win your first ranked match",
     emoji: "🩸",
+    tone: "signal",
     sortOrder: 10,
   },
   {
@@ -31,6 +50,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Snap Caller",
     description: "Land 10 guesses on the 1-second clip",
     emoji: "⚡",
+    tone: "gold",
     sortOrder: 20,
   },
   {
@@ -38,6 +58,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Perfect Pitch",
     description: "Land 100 guesses on the 1-second clip",
     emoji: "🎯",
+    tone: "paper",
     sortOrder: 21,
   },
   {
@@ -45,6 +66,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Flawless",
     description: "Win a duel without losing a single point of health",
     emoji: "🔥",
+    tone: "teal",
     sortOrder: 30,
   },
   {
@@ -52,6 +74,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Comeback King",
     description: "Win a duel after dropping below a quarter health",
     emoji: "👑",
+    tone: "gold",
     sortOrder: 40,
   },
   {
@@ -59,6 +82,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Nerves of Steel",
     description: "Win a sudden-death decider",
     emoji: "🥶",
+    tone: "signal",
     sortOrder: 50,
   },
   {
@@ -66,6 +90,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Giant Slayer",
     description: "Beat an opponent rated 200+ above you",
     emoji: "🗡️",
+    tone: "paper",
     sortOrder: 60,
   },
   {
@@ -73,6 +98,7 @@ export const BADGES: readonly BadgeDefinition[] = [
     name: "Centurion",
     description: "Play 100 ranked matches",
     emoji: "🏅",
+    tone: "neutral",
     sortOrder: 70,
   },
 ] as const;

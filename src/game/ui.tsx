@@ -191,17 +191,28 @@ export function Avatar({
   url,
   name,
   className = "h-10 w-10",
+  plate = false,
 }: {
   url?: string | null;
   name: string;
   className?: string;
+  /**
+   * Cut to the app's chamfer instead of the usual rounded square.
+   *
+   * A prop rather than a `.plate` class passed through `className`, because the shape is
+   * chosen by swapping `rounded-md` out — and two border-radius utilities on one element
+   * resolve by stylesheet order rather than by which the caller wrote last. Used where the
+   * portrait sits beside the rank emblem and the two should read as the same material.
+   */
+  plate?: boolean;
 }) {
   const initial = name.trim().charAt(0).toUpperCase() || "?";
+  const shape = plate ? "plate" : "rounded-md";
 
   if (url?.startsWith("color:")) {
     return (
       <span
-        className={`font-display text-ink-900 flex shrink-0 items-center justify-center rounded-md font-bold ${className}`}
+        className={`font-display text-ink-900 flex shrink-0 items-center justify-center font-bold ${shape} ${className}`}
         style={{ backgroundColor: url.slice(6) }}
         aria-hidden="true"
       >
@@ -212,12 +223,12 @@ export function Avatar({
 
   if (url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt="" className={`shrink-0 rounded-md object-cover ${className}`} />;
+    return <img src={url} alt="" className={`shrink-0 object-cover ${shape} ${className}`} />;
   }
 
   return (
     <span
-      className={`font-display bg-ink-600 text-secondary flex shrink-0 items-center justify-center rounded-md font-bold ${className}`}
+      className={`font-display bg-ink-600 text-secondary flex shrink-0 items-center justify-center font-bold ${shape} ${className}`}
       aria-hidden="true"
     >
       {initial}
@@ -281,8 +292,10 @@ export function BadgeRow({
         <span
           key={badge.id}
           title={badge.name}
-          className="bg-ink-600 text-secondary rounded-xs px-1.5 py-1 text-sm leading-none"
+          className="bg-ink-600 rounded-xs px-1.5 py-1 text-sm leading-none"
         >
+          {/* No colour set here — BadgeMark carries its own tone, so a badge looks the
+              same on a VS panel as it does in the profile case. */}
           <BadgeMark id={badge.id} />
         </span>
       ))}

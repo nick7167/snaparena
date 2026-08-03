@@ -175,17 +175,7 @@ export const advance = internalMutation({
 
     switch (match.phase) {
       case "vs_reveal":
-        // Whether there is a draft is decided by whether a pool was built for this
-        // match, not by an allowlist of modes — ranked and practice both build one,
-        // rooms and the daily never do. Gating on the mode is what used to leave
-        // practice without a draft at all.
-        if ((match.vetoPoolIds?.length ?? 0) > 0) {
-          await enterPhase(ctx, match._id, "veto", {
-            vetoDeadline: Date.now() + VETO_PHASE_MS,
-          });
-        } else {
-          await startCountdown(ctx, match._id, match.currentRound);
-        }
+        await leaveVsReveal(ctx, match);
         return;
 
       case "countdown":
@@ -213,6 +203,29 @@ export const advance = internalMutation({
     }
   },
 });
+
+/**
+ * What follows the opponent reveal.
+ *
+ * Exported and shared by the two paths that can end that phase — the scheduled timeout in
+ * `advance`, and both players pressing Ready via `ranked.markVsReady`. Keeping the decision
+ * in one function is the point: if the early path and the timeout path each decided for
+ * themselves, a match that skipped the reveal could take a different route into the duel
+ * than one that waited it out.
+ *
+ * Whether there is a draft is decided by whether a pool was built for this match, not by an
+ * allowlist of modes — ranked and practice both build one, rooms and the daily never do.
+ * Gating on the mode is what used to leave practice without a draft at all.
+ */
+export async function leaveVsReveal(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
+  if ((match.vetoPoolIds?.length ?? 0) > 0) {
+    await enterPhase(ctx, match._id, "veto", {
+      vetoDeadline: Date.now() + VETO_PHASE_MS,
+    });
+    return;
+  }
+  await startCountdown(ctx, match._id, match.currentRound);
+}
 
 /** Enters the countdown and arms the readiness barrier for the given round. */
 export async function startCountdown(

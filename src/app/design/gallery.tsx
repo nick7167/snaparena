@@ -306,7 +306,7 @@ function Glyphs() {
 
         <div className="flex flex-col gap-2">
           <p className="text-body-sm text-secondary font-semibold">
-            Badge marks — earned (gold) and locked (faint)
+            Badge marks — earned (own tone) and locked (faint)
           </p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {BADGES.map((badge) => (
@@ -315,8 +315,8 @@ function Glyphs() {
                 className="bg-ink-700 flex flex-col items-center gap-2 rounded-md p-3 text-center"
               >
                 <span className="flex items-center gap-2 text-2xl">
-                  <span className="text-gold"><BadgeMark id={badge.id} /></span>
-                  <span className="text-faint"><BadgeMark id={badge.id} /></span>
+                  <BadgeMark id={badge.id} />
+                  <BadgeMark id={badge.id} muted />
                 </span>
                 <span className="text-label text-muted">{badge.name}</span>
               </div>

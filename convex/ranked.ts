@@ -2,14 +2,14 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireUser } from "./users";
+import { publicAvatarUrl, requireUser } from "./users";
 import {
   DUEL_STARTING_HP,
   RECONNECT_GRACE_MS,
   SURRENDER_FROM_ROUND,
 } from "../src/engine/config";
 import { canSurrender } from "../src/engine/duel";
-import { enterPhase, finishMatch } from "./phases";
+import { enterPhase, finishMatch, leaveVsReveal } from "./phases";
 import {
   TOTAL_BANS,
   draftTurnOwner,
@@ -244,7 +244,7 @@ export const draftState = query({
         ? {
             displayName: opponentDoc.displayName,
             handle: opponentDoc.handle,
-            avatarUrl: opponentDoc.avatarUrl ?? null,
+            avatarUrl: publicAvatarUrl(opponentDoc) ?? null,
             elo: opponentDoc.elo,
             isBot: opponentDoc.isBot === true,
           }
@@ -328,6 +328,62 @@ export const expireVeto = mutation({
   args: { matchId: v.id("matches") },
   handler: async (ctx, args) => {
     await startDuelIfDraftDone(ctx, args.matchId);
+  },
+});
+
+/**
+ * "I have read this, start the match."
+ *
+ * The opponent reveal is the one phase that ends on player input rather than on its clock:
+ * its 30 seconds are a ceiling for someone who walked away, and two players who have both
+ * sized each other up should not sit through the remainder.
+ *
+ * Bots are excluded from the count for the same reason `waitForReady` excludes them — a bot
+ * has nothing to read and no client to press with, so requiring its consent would mean
+ * every practice match always waited the full 30 seconds. In practice this makes a bot
+ * match advance the instant the human presses.
+ *
+ * Idempotent: pressing twice re-stamps a timestamp nobody reads for ordering, and the phase
+ * guard means a press that lands after the match has already moved on does nothing.
+ */
+export const markVsReady = mutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const match = await ctx.db.get(args.matchId);
+
+    // Guarded on the phase, so this can never be used to skip a round the player is
+    // simply losing.
+    if (!match || match.phase !== "vs_reveal") return { ready: false as const };
+
+    const players = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .collect();
+
+    const mine = players.find((player) => player.userId === user._id);
+    if (!mine) return { ready: false as const };
+
+    if (mine.vsReadyAt === undefined) {
+      await ctx.db.patch(mine._id, { vsReadyAt: Date.now() });
+    }
+
+    let everyoneReady = true;
+    for (const player of players) {
+      if (player.userId === user._id) continue;
+      const other = await ctx.db.get(player.userId);
+      if (other?.isBot) continue;
+      if (player.vsReadyAt === undefined) everyoneReady = false;
+    }
+
+    // Re-read rather than reusing `match`: the branch above patched a row, and the
+    // transition should act on the state as it stands now.
+    if (everyoneReady) {
+      const current = await ctx.db.get(args.matchId);
+      if (current?.phase === "vs_reveal") await leaveVsReveal(ctx, current);
+    }
+
+    return { ready: true as const, everyoneReady };
   },
 });
 

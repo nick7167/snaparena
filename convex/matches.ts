@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { actingUser, currentUser, globalPosition } from "./users";
+import { actingUser, currentUser, globalPosition, publicAvatarUrl } from "./users";
 import { endGuessingEarly } from "./phases";
 import { MAX_GUESSES_PER_ROUND, WRONG_GUESS_LOCKOUT_MS } from "../src/engine/config";
 import { checkGuess } from "../src/engine/match";
@@ -52,7 +52,7 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
     userId: user._id,
     handle: user.handle,
     displayName: user.displayName,
-    avatarUrl: user.avatarUrl,
+    avatarUrl: publicAvatarUrl(user),
     elo: user.elo,
     rankLabel: rank.label,
     rankTierId: rank.tier.id,
@@ -290,6 +290,8 @@ export const state = query({
           xpAfter: player.xpAfter ?? null,
           badgesEarned: player.badgesEarned ?? [],
           forfeited: player.forfeited,
+          /** Pressed Ready on the opponent reveal. Drives the "1 / 2 ready" counter. */
+          vsReady: player.vsReadyAt !== undefined,
           isMe: me?._id === player.userId,
         }))
         .sort((a, b) => b.hp - a.hp || b.totalPoints - a.totalPoints),
@@ -725,7 +727,7 @@ export const history = query({
               userId: opponent._id,
               handle: opponent.handle,
               displayName: opponent.displayName,
-              avatarUrl: opponent.avatarUrl,
+              avatarUrl: publicAvatarUrl(opponent),
               elo: opponent.elo,
               isBot: opponent.isBot === true,
             }

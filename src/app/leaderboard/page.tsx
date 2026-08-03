@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { PLACEMENT_MATCHES, RANK_TIERS } from "@/engine/config";
 import { formatGlobalRank, rankForElo } from "@/engine/ranks";
@@ -11,7 +11,8 @@ import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Avatar } from "@/game/ui";
 
-const PAGE = 25;
+/** Rows each tier band shows before it has to be expanded. */
+const PER_BAND = 10;
 
 /**
  * The global ladder.
@@ -23,20 +24,30 @@ const PAGE = 25;
  * people are in it, and climbing means crossing a visible line rather than watching an
  * integer tick down.
  *
+ * Every band is present from the first paint, each showing its best ten. A single global
+ * "Load more" meant Bronze was several clicks below the fold and most players never saw
+ * their own tier at all; expanding is per band now, so scrolling passes through the whole
+ * ladder and you open only the part you care about.
+ *
  * "Where am I?" is still the first question it has to answer, so your own row is pinned
  * whenever you are not already visible in the page.
  */
 export default function LeaderboardPage() {
-  const [shown, setShown] = useState(PAGE);
-
-  // The query caps at 200 internally; asking for more returns 200 anyway.
-  const board = useQuery(api.users.leaderboard, { limit: 200 });
+  const board = useQuery(api.users.leaderboard, { limit: 500 });
   const me = useQuery(api.users.me, {});
 
-  const visible = board?.slice(0, shown) ?? [];
   const myRow = board?.find((entry) => entry.userId === me?._id);
-  const inView = visible.some((entry) => entry.userId === me?._id);
   const myAccent = me ? rankForElo(me.elo).tier.accent : undefined;
+
+  /**
+   * Whether your own row appears in what is actually rendered.
+   *
+   * Bands collapse to ten, so being in the fetched 500 is not the same as being on
+   * screen — a player ranked 40th in Gold is loaded but hidden until that band is
+   * expanded. Computed inside `Bands`, which is the only thing that knows what it drew,
+   * and lifted here so the pinned rail can react to it.
+   */
+  const [meVisible, setMeVisible] = useState(false);
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-12">
@@ -67,27 +78,17 @@ export default function LeaderboardPage() {
         <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:gap-10">
           <div className="min-w-0 flex-1">
             <Bands
-              entries={visible}
+              entries={board}
               myUserId={me?._id}
               myAccent={myAccent}
+              onMeVisible={setMeVisible}
             />
-
-            {shown < board.length && (
-              <Button
-                variant="secondary"
-                block
-                className="mt-4"
-                onClick={() => setShown((current) => current + PAGE)}
-              >
-                Load more
-              </Button>
-            )}
           </div>
 
           {/* Pinned standing, only when you are not already in the list — the same row
               must never appear twice. On desktop it is a sticky rail; below `xl` it falls
               back underneath the board, which is where it used to live. */}
-          {me && !inView && (
+          {me && !meVisible && (
             <aside className="flex flex-col gap-2 xl:sticky xl:top-4 xl:w-64 xl:shrink-0">
               <SectionLabel>Your standing</SectionLabel>
               {/* `as="div"`: the pinned row is a copy of your standing, not an entry in
@@ -109,21 +110,29 @@ export default function LeaderboardPage() {
 /**
  * The board, cut into rank tiers.
  *
- * Bands are derived from the rows actually on screen rather than from RANK_TIERS directly,
- * so a tier nobody occupies never renders an empty header — and, more importantly, a band
- * whose members are all still behind "Load more" cannot render as a heading with nothing
- * under it.
+ * Bands are derived from the rows fetched rather than from RANK_TIERS directly, so a tier
+ * nobody occupies never renders an empty header.
+ *
+ * Each band shows its best ten and expands on its own. That is the difference between a
+ * board you read and a board you page through: every tier is on screen from the first
+ * paint, and opening Diamond does not push Bronze further away.
  */
 function Bands({
   entries,
   myUserId,
   myAccent,
+  onMeVisible,
 }: {
   entries: LadderEntry[];
   myUserId?: string;
   myAccent?: string;
+  /** Reports whether the viewer's own row was actually drawn, so the rail can hide. */
+  onMeVisible: (visible: boolean) => void;
 }) {
   const counts = useQuery(api.users.tierCounts, {});
+  // Keyed by tier, holding how many rows that band is currently showing. Absent means
+  // the default ten — so the initial state is genuinely empty rather than seeded.
+  const [expanded, setExpanded] = useState<Record<string, number>>({});
 
   const bands: { tierId: string; entries: LadderEntry[] }[] = [];
   for (const entry of entries) {
@@ -133,11 +142,31 @@ function Bands({
     else bands.push({ tierId, entries: [entry] });
   }
 
+  const shownFor = (band: { tierId: string; entries: LadderEntry[] }) =>
+    band.entries.slice(0, expanded[band.tierId] ?? PER_BAND);
+
+  /**
+   * Reported through an effect rather than during render.
+   *
+   * Whether your row is drawn depends on which bands are expanded, so it changes as the
+   * user clicks — and calling the parent's setState while rendering is exactly the
+   * cascading-render pattern the lint rules reject.
+   */
+  const meDrawn = myUserId
+    ? bands.some((band) => shownFor(band).some((entry) => entry.userId === myUserId))
+    : false;
+
+  useEffect(() => {
+    onMeVisible(meDrawn);
+  }, [meDrawn, onMeVisible]);
+
   return (
     <div className="flex flex-col gap-6">
       {bands.map((band) => {
         const tier = RANK_TIERS.find((candidate) => candidate.id === band.tierId);
         const population = counts?.find((entry) => entry.tierId === band.tierId);
+        const shown = shownFor(band);
+        const hidden = band.entries.length - shown.length;
 
         return (
           <section key={band.tierId} className="flex flex-col gap-2">
@@ -172,7 +201,7 @@ function Bands({
             {/* Still an `ol` of `li` with one link per row — the ladder spec walks this
                 structure to reach each profile. */}
             <ol className="flex flex-col gap-2">
-              {band.entries.map((entry) => (
+              {shown.map((entry) => (
                 <Row
                   key={entry.userId}
                   entry={entry}
@@ -181,6 +210,32 @@ function Bands({
                 />
               ))}
             </ol>
+
+            {hidden > 0 && (
+              <Button
+                variant="secondary"
+                block
+                onClick={() =>
+                  setExpanded((current) => ({
+                    ...current,
+                    [band.tierId]: band.entries.length,
+                  }))
+                }
+              >
+                Show {hidden} more in {tier?.name ?? band.tierId}
+              </Button>
+            )}
+
+            {/* The band holds more players than the page fetched. Said plainly rather
+                than hidden: the count in the header is the truth, and the list simply
+                cannot reach that far. */}
+            {hidden === 0 &&
+              population &&
+              (population.approximate || population.count > band.entries.length) && (
+                <p className="text-label text-muted text-center">
+                  Showing the top {band.entries.length} of {tier?.name ?? band.tierId}
+                </p>
+              )}
           </section>
         );
       })}

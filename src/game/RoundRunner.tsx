@@ -59,6 +59,7 @@ export function RoundRunner({
   const myStatus = useQuery(api.matches.myRoundStatus, { matchId });
   const submitGuess = useMutation(api.matches.submitGuess);
   const passRound = useMutation(api.matches.pass);
+  const markVsReady = useMutation(api.ranked.markVsReady);
 
   const phase = match?.phase ?? "guessing";
   const isGuessing = phase === "guessing";
@@ -130,6 +131,7 @@ export function RoundRunner({
     isBot: entry.isBot ?? false,
     bio: entry.bio ?? null,
     isMe: entry.isMe,
+    vsReady: entry.vsReady ?? false,
   }));
 
   const me = players.find((player) => player.isMe);
@@ -145,7 +147,14 @@ export function RoundRunner({
 
       <AnimatePresence mode="wait">
         {phase === "vs_reveal" && me && opponent && (
-          <VsReveal key="vs" me={me} opponent={opponent} matchup={match.matchup} />
+          <VsReveal
+            key="vs"
+            me={me}
+            opponent={opponent}
+            matchup={match.matchup}
+            phaseEndsAt={match.phaseEndsAt}
+            onReady={() => void markVsReady({ matchId })}
+          />
         )}
 
         {phase === "countdown" && (

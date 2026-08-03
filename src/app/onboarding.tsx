@@ -6,7 +6,8 @@ import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { play } from "@/audio/sfx";
-import { AVATAR_COLOURS } from "@/engine/config";
+import { AVATAR_COLOURS, HANDLE_MAX_LENGTH } from "@/engine/config";
+import { AvatarUpload } from "./avatar-upload";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { settle } from "@/ui/motion";
@@ -43,6 +44,7 @@ function OnboardingModal({
   const [handle, setHandle] = useState(suggestedHandle);
   const [bio, setBio] = useState("");
   const [colour, setColour] = useState<string | null>(null);
+  const [uploaded, setUploaded] = useState<string | null>(null);
   const [picked, setPicked] = useState<Id<"categories">[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +64,17 @@ function OnboardingModal({
       await complete({
         handle,
         bio: bio.trim() || undefined,
-        avatarUrl: colour ? `color:${colour}` : currentAvatar,
+        /**
+         * Only sent when a colour was actually chosen.
+         *
+         * This used to pass `currentAvatar` — the picture Clerk already had — straight
+         * back to the server, which now refuses any avatar string that is not a colour
+         * swatch. It never needed to: `ensureUser` wrote that URL at sign-up, so keeping
+         * it means leaving the field alone. Passing it would also stomp on a picture
+         * uploaded moments earlier in this same form, since `setAvatarImage` has already
+         * written that to the row.
+         */
+        avatarUrl: colour ? `color:${colour}` : undefined,
         preferredCategoryIds: picked.length > 0 ? picked : undefined,
       });
       play("podium");
@@ -95,13 +107,15 @@ function OnboardingModal({
           <Field
             label="Username"
             htmlFor="handle"
-            help="3–16 characters · letters, numbers, underscore"
+            help={`3–${HANDLE_MAX_LENGTH} characters · letters, numbers, underscore`}
           >
             <Input
               id="handle"
               size="lg"
               value={handle}
-              onChange={(event) => setHandle(event.target.value.toLowerCase().slice(0, 16))}
+              onChange={(event) =>
+                setHandle(event.target.value.toLowerCase().slice(0, HANDLE_MAX_LENGTH))
+              }
               autoComplete="off"
               spellCheck={false}
               prefix="@"
@@ -114,8 +128,25 @@ function OnboardingModal({
           <legend className="text-label text-secondary font-semibold tracking-[0.12em] uppercase">
             Avatar <span className="text-muted normal-case">— optional</span>
           </legend>
+
+          {/* Upload writes straight to the user row, so `uploaded` only exists to show the
+              result here — clearing `colour` at the same time, since a picture and a
+              swatch are alternatives and the swatch would otherwise still look chosen. */}
+          <div className="mt-3">
+            <AvatarUpload
+              currentUrl={uploaded ?? (colour ? `color:${colour}` : currentAvatar)}
+              name={handle || "player"}
+              onUploaded={(url) => {
+                setUploaded(url);
+                setColour(null);
+              }}
+              label={uploaded ? "Replace picture" : "Upload a picture"}
+            />
+          </div>
+
+          <p className="text-label text-muted mt-3">Or pick a colour</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentAvatar && (
+            {currentAvatar && !uploaded && (
               <button
                 type="button"
                 onClick={() => setColour(null)}

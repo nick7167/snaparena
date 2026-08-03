@@ -1,6 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { Landing } from "./landing";
-import { Hub } from "./hub";
+import { HomeSwitch } from "./home-switch";
 
 /**
  * Home.
@@ -22,15 +21,14 @@ import { Hub } from "./hub";
  *
  * The cost is that this route is server-rendered on demand rather than static. That is
  * correct for a page whose content depends on who is asking.
+ *
+ * The answer is handed to `HomeSwitch` rather than acted on here, because the server can
+ * be wrong in one direction — an expired session token whose handshake cannot refresh
+ * renders the signed-out page to someone Clerk's client knows is signed in. That component
+ * holds the server's answer until Clerk has loaded and then defers to it.
  */
 export default async function Home() {
   const { userId } = await auth();
 
-  return userId ? (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12">
-      <Hub />
-    </div>
-  ) : (
-    <Landing />
-  );
+  return <HomeSwitch signedInOnServer={Boolean(userId)} />;
 }

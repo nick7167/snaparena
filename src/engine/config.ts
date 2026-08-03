@@ -141,7 +141,16 @@ export const REVEAL_BEATS: readonly RevealBeat[] = [
  * owns this clock and schedules transitions; clients only render what phase they are in.
  */
 export const PHASE_DURATIONS_MS = {
-  vs_reveal: 5_000,
+  /**
+   * A ceiling, not a wait.
+   *
+   * The reveal is where you size up an opponent — rank, rating, record, what they are good
+   * at — and five seconds was not enough to read any of it, so this is the one phase that
+   * ends on player input rather than on its clock. Both players pressing Ready advances it
+   * immediately (see `ranked.markVsReady`); this timer only protects against someone who
+   * walked away from the keyboard.
+   */
+  vs_reveal: 30_000,
   countdown: 3_000,
   guessing: ROUND_DURATION_MS,
   reveal: 6_000,
@@ -216,6 +225,19 @@ export const ELO_FLOOR = 100;
 
 /** Matches played at high K before a rank badge is shown. */
 export const PLACEMENT_MATCHES = 5;
+
+/**
+ * Longest username a player may now choose. Down from 16.
+ *
+ * Every surface truncates rather than overflows, so 16 never broke a layout — but a
+ * 16-character name at display size in a VS panel on a 390px screen was being cut off
+ * often enough that players were seeing each other's names clipped. Twelve fits.
+ *
+ * Lives here rather than beside the validator so the two forms that enforce it as you
+ * type and the server that enforces it on write all read one number. Existing longer
+ * handles keep working — nothing re-validates a name that is not being changed.
+ */
+export const HANDLE_MAX_LENGTH = 12;
 
 export const K_PLACEMENT = 40;
 export const K_EARLY = 24;

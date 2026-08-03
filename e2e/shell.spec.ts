@@ -50,7 +50,6 @@ test.describe("sidebar", () => {
     // Signed in, Play means ranked. Signed out it means the daily — covered in
     // landing.spec.ts, which is the only project that runs without a session.
     await expect(play).toHaveAttribute("href", "/ranked");
-    await expect(play).toContainText("Ranked duel");
 
     // Level is XP and is shown during placements too — the old block hid it entirely
     // until a player had placed, which is exactly when it is most motivating.
@@ -71,28 +70,23 @@ test.describe("sidebar", () => {
     expect(levelBox.y).toBeLessThan(menuBox.y);
 
     /**
-     * Compact, and carrying your standing.
-     *
-     * This used to assert `height > 60` — the button stacked a caption under the word and
-     * added `py-4` on top of a `lg` Button, about 76px of sidebar for one verb and a fixed
-     * string. Loud is not the same as tall: the emphasis now comes from the gold fill and
-     * the press edge, and the height it gave back is spent on information instead.
-     *
-     * Still bounded on both sides, so this cannot silently drift back into a slab or
-     * collapse below the 44px touch target.
+     * Bounded on both sides, so it can neither drift back into a slab nor collapse below
+     * the 44px touch target. The upper bound moved from 60 to 96 when the control gained
+     * a labelled rank, rating and last-match row — three rows of named information do not
+     * fit in one, and the point of the change was that no number goes unexplained.
      */
     expect(playBox.height).toBeGreaterThanOrEqual(44);
-    expect(playBox.height).toBeLessThanOrEqual(60);
+    expect(playBox.height).toBeLessThanOrEqual(96);
 
     /**
-     * The information that replaced the height: a rating, or the placement count while
-     * the account is still placing. Exactly one of the two is always present.
+     * Every figure on the control is labelled — that is the whole reason it grew. A bare
+     * "941" told you nothing about what 941 was.
      *
-     * No word boundaries. The label and the rating are separate spans, so the button's
-     * text content reads "PLAY941Ranked duel▲+12" with no separator — and `\b` never
-     * matches between the "Y" and the "9".
+     * No word boundaries: the label and the value are separate spans, so the text content
+     * runs together as "PLAY941RATING" and `\b` never matches between "Y" and "9".
      */
     await expect(play).toContainText(/\d{3,4}|to place/);
+    await expect(play).toContainText(/RATING|to place/i);
 
     await page.screenshot({ path: path.join(SCREENSHOTS, "shell-sidebar.png") });
   });

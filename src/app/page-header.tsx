@@ -27,7 +27,6 @@ export function PageHeader({
   parent,
   title,
   actions,
-  width = "max-w-2xl",
 }: {
   /**
    * Where "up" goes when there is no history to go back to — a shared link, a refresh,
@@ -36,8 +35,6 @@ export function PageHeader({
   parent: { href: string; label: string };
   title?: ReactNode;
   actions?: ReactNode;
-  /** Matched to the page's own container so the header and the content share a gutter. */
-  width?: string;
 }) {
   const immersive = useImmersiveState();
 
@@ -63,7 +60,16 @@ export function PageHeader({
 
   return (
     <header className="bg-ink-900 border-line sticky top-0 z-30 border-b">
-      <div className={`mx-auto flex w-full items-center gap-3 px-4 py-3 ${width}`}>
+      {/**
+       * Flush left, not centred on the content column.
+       *
+       * This used to carry `mx-auto` and the page's own max-width so the back control
+       * lined up with the text beneath it. On a phone that is invisible — the viewport is
+       * narrower than the max-width, so the row is full-bleed anyway, which is why mobile
+       * always looked right. On desktop it parked the only way off the page in the middle
+       * of the bar. A back control belongs in the corner, at the edge of the screen.
+       */}
+      <div className="flex w-full items-center gap-3 px-4 py-3 sm:px-6">
         <Link
           href={target.href}
           className="text-secondary hover:text-paper -ml-1 flex min-h-9 shrink-0

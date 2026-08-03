@@ -100,15 +100,16 @@
  * of these on a surface not listed here, the answer is no.
  *
  *   --sheen-hero   ONE hero surface per screen. Card variant="hero" only.
- *   --plate-cut    the chamfer, on identity surfaces only — Card `you`, the VS plate.
- *   --tier tint    a player's rank accent as light. Two permitted surfaces and no others:
- *                  behind rank emblem artwork at lg/xl (the `.bloom-tier` utility), and
- *                  the two halves of the VS reveal, which is the one screen where both
- *                  players' ranks are the subject rather than a label.
+ *   --plate-cut    the chamfer, on identity surfaces only — Card `you`, the VS panels.
+ *   --bloom-tier   a player's rank accent as light, behind rank emblem ARTWORK at lg/xl
+ *                  and nowhere else. Never behind text, never as a page or panel
+ *                  background.
  *
- * The VS halves are the only place a tier tint sits behind text. It is capped at 18% over
- * ink-800, which keeps paper on the brightest accent (Legend) above 8:1 — comfortably
- * inside AA. Do not raise it without re-measuring.
+ * The VS reveal used to tint its two halves with a diagonal wash of each player's accent.
+ * That is gone. It was a gradient in a design that does not have gradients, and a soft
+ * wash behind the emblem was competing with the one object on that screen which should be
+ * loudest. Colour identity there is a hard hairline on the plate instead — flat, and the
+ * same device the ladder marks your own row with.
  */
 @theme {
   /**

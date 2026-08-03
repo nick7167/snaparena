@@ -7,6 +7,7 @@ import {
   currentUser,
   guestByToken,
   isValidGuestToken,
+  publicAvatarUrl,
   requireUser,
 } from "./users";
 import { pickTracksForMatch } from "./tracks";
@@ -326,7 +327,10 @@ export const leaderboard = query({
     return runs.map((run, index) => ({
       rank: index + 1,
       handle: users[index]?.handle ?? "unknown",
-      avatarUrl: users[index]?.avatarUrl,
+      avatarUrl: (() => {
+        const player = users[index];
+        return player ? publicAvatarUrl(player) : undefined;
+      })(),
       totalPoints: run.totalPoints,
       perRoundMs: run.perRoundMs,
     }));

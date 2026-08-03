@@ -101,16 +101,61 @@ export default function ProfilePage() {
        * centred, lit by its own tier accent, with the name and standing underneath.
        */}
       <section className="flex flex-col items-center gap-4 text-center">
-        {card && !placing ? (
-          <RankEmblem
-            tierId={card.rankTierId}
-            division={card.rankDivision}
-            size="xl"
-            bloom={card.rankAccent}
-          />
-        ) : (
-          <RankEmblem tierId="bronze" division={1} size="xl" unranked />
-        )}
+        {/**
+         * The person and the standing, as one object.
+         *
+         * The hero showed the rank and left the player out of it entirely — on the one
+         * page that exists to say who someone is. The portrait wears the app's chamfer so
+         * it reads as struck from the same material as the emblem beside it, and the two
+         * sit on a shared baseline rather than one being an accessory to the other.
+         */}
+        <div className="flex items-center justify-center gap-4 sm:gap-7">
+          {/* `isolate` so the accent fill can sit at -z-10 behind the portrait without
+              falling behind the page; `items-center` so the frame shows as an even
+              hairline on all four sides rather than only where the art fails to reach. */}
+          {/**
+           * Sized to hold its own beside the emblem.
+           *
+           * At 96px it was dwarfed: the trophy artwork renders around 200px tall at `xl`,
+           * so the portrait read as a sticker stuck next to it rather than half a pair.
+           * The emblem should still lead — it is the rank, and the rank is the subject —
+           * but the person has to be the other half of the composition, not a footnote.
+           */}
+          <span
+            className="relative isolate flex size-28 shrink-0 items-center justify-center sm:size-36"
+            style={{ ["--plate-cut" as string]: "20px" }}
+          >
+            <span
+              aria-hidden="true"
+              className="plate absolute inset-0 -z-10"
+              style={{
+                backgroundColor: placing
+                  ? "var(--color-line-strong)"
+                  : (card?.rankAccent ?? "var(--color-line-strong)"),
+              }}
+            />
+            {/* Insets rather than a width calc: the frame is the gap this leaves, so
+                stating it as a gap is more direct than sizing the portrait and trusting
+                it to centre. */}
+            <Avatar
+              plate
+              url={profile.avatarUrl}
+              name={profile.isBot ? profile.displayName : profile.handle}
+              className="absolute inset-[3px] text-4xl sm:text-5xl"
+            />
+          </span>
+
+          {card && !placing ? (
+            <RankEmblem
+              tierId={card.rankTierId}
+              division={card.rankDivision}
+              size="xl"
+              bloom={card.rankAccent}
+            />
+          ) : (
+            <RankEmblem tierId="bronze" division={1} size="xl" unranked />
+          )}
+        </div>
 
         <div className="flex flex-col items-center gap-2">
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -161,19 +206,22 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      {/* The stat strip. Four numbers, evenly weighted, in the app's numeral face —
-          this is the line you read to size someone up. */}
-      <Card variant="hero" className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+      {/**
+       * The stat strip. Five numbers, every one of them a single figure at the same size.
+       *
+       * Record used to be a fifth thing in a four-column row — "204W · 162L" does not fit
+       * a quarter of this card at 32px, so it had been dropped a size to stop it
+       * truncating, which left one stat visibly smaller than its neighbours. Splitting
+       * wins from losses means nothing has to be shrunk to fit.
+       *
+       * Three columns below `sm`: five across a 390px screen gives each 71px, and a
+       * four-digit rating needs more than that.
+       */}
+      <Card variant="hero" className="grid grid-cols-3 gap-4 p-5 sm:grid-cols-5">
         <Stat label="Rating" value={placing ? "—" : String(profile.elo)} />
         <Stat label="Level" value={card ? `L${card.level}` : "—"} />
-        {/* Record carries two numbers where the others carry one, so it gets the smaller
-            size. At display-2 a career like "204W · 168L" truncates to "204W …", which is
-            the one thing a stat strip must never do. */}
-        <Stat
-          label="Record"
-          value={card ? `${card.wins}W · ${card.losses}L` : "—"}
-          size="sm"
-        />
+        <Stat label="Won" value={card ? String(card.wins) : "—"} />
+        <Stat label="Lost" value={card ? String(card.losses) : "—"} />
         <Stat label="Win rate" value={winRate === null ? "—" : `${winRate}%`} />
       </Card>
 
@@ -183,33 +231,45 @@ export default function ProfilePage() {
 
       <RecentMatches userId={profile.userId} />
 
-      {/* Reporting a bio you can't see is meaningless, and you can't report yourself. */}
-      {!isMe && !profile.isBot && card?.bio && me && (
-        <ReportDialog userId={profile.userId} displayName={nameFor(profile)} />
+      {/* Reporting something you can't see is meaningless, and you can't report yourself.
+          A picture is only reportable when it is actually a picture: a colour swatch has
+          nothing to object to. */}
+      {!isMe && !profile.isBot && me && (
+        <div className="flex flex-wrap gap-4">
+          {card?.bio && (
+            <ReportDialog
+              userId={profile.userId}
+              displayName={nameFor(profile)}
+              kind="bio"
+            />
+          )}
+          {profile.avatarUrl && !profile.avatarUrl.startsWith("color:") && (
+            <ReportDialog
+              userId={profile.userId}
+              displayName={nameFor(profile)}
+              kind="avatar"
+            />
+          )}
+        </div>
       )}
       </div>
     </>
   );
 }
 
-function Stat({
-  label,
-  value,
-  size = "lg",
-}: {
-  label: string;
-  value: string;
-  size?: "lg" | "sm";
-}) {
+/**
+ * One stat.
+ *
+ * No size variant any more. It existed only so Record could be shrunk to fit, and the
+ * cure was worse than the disease — every stat is one figure now, so every stat is one
+ * size.
+ */
+function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1">
       {/* Value above label. The numbers are what you scan; the words are what you read
           only if a number surprises you. */}
-      <span
-        className={`font-display text-paper truncate font-extrabold tabular-nums ${
-          size === "lg" ? "text-display-2" : "text-body-lg sm:text-numeral"
-        }`}
-      >
+      <span className="font-display text-numeral sm:text-display-2 text-paper truncate font-extrabold tabular-nums">
         {value}
       </span>
       <span className="text-label text-muted font-semibold tracking-wider uppercase">
@@ -244,12 +304,15 @@ function BadgeCase({ earned }: { earned: string[] }) {
           return (
             <div
               key={badge.id}
+              // Neutral border, coloured mark. Every earned badge used to be ringed in
+              // gold, which now fights the mark inside it — a teal Flawless in a gold box
+              // is two claims about the same badge. The colour lives on the mark.
               className={`flex items-center gap-3 rounded-md border p-3 ${
-                has ? "border-gold bg-ink-700" : "border-line bg-ink-800"
+                has ? "border-line-strong bg-ink-700" : "border-line bg-ink-800"
               }`}
             >
-              <span className={`text-2xl ${has ? "text-gold" : "text-faint"}`}>
-                <BadgeMark id={badge.id} />
+              <span className="text-2xl">
+                <BadgeMark id={badge.id} muted={!has} />
               </span>
               <div className="flex min-w-0 flex-col">
                 <span

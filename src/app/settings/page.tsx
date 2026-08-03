@@ -9,6 +9,8 @@ import { Button, ButtonLink } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, SectionLabel, Skeleton } from "@/ui/Surface";
 import { PageHeader } from "../page-header";
+import { AvatarUpload } from "../avatar-upload";
+import { HANDLE_MAX_LENGTH } from "@/engine/config";
 import {
   getMuteServerSnapshot,
   getMuteSnapshot,
@@ -41,12 +43,41 @@ export default function SettingsPage() {
       </SignedOut>
 
       <SignedIn>
+        <AvatarSection />
         <HandleSection />
       </SignedIn>
 
       <SoundSection />
       </div>
     </>
+  );
+}
+
+/**
+ * Your picture.
+ *
+ * Settings offered nothing but the handle and a sound toggle, so an avatar chosen during
+ * onboarding was permanent — the same gap `setHandle` had before it got a screen.
+ */
+function AvatarSection() {
+  const me = useQuery(api.users.me, {});
+  if (me === undefined) return <Skeleton className="h-28 w-full" />;
+  if (me === null) return null;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <SectionLabel>Picture</SectionLabel>
+      <Card className="flex flex-col items-start gap-3 p-5">
+        <AvatarUpload
+          currentUrl={me.avatarUrl}
+          name={me.handle}
+          label={me.avatarUrl?.startsWith("http") ? "Replace picture" : "Upload a picture"}
+        />
+        <p className="text-body-sm text-muted">
+          Shown on the leaderboard, on your profile, and to your opponents.
+        </p>
+      </Card>
+    </section>
   );
 }
 
@@ -75,7 +106,7 @@ function HandleSection() {
           label="Username"
           htmlFor="handle"
           error={error}
-          help="3–16 characters · letters, numbers, underscore"
+          help={`3–${HANDLE_MAX_LENGTH} characters · letters, numbers, underscore`}
         >
           <Input
             id="handle"
@@ -86,7 +117,7 @@ function HandleSection() {
             autoComplete="off"
             spellCheck={false}
             onChange={(event) => {
-              setDraft(event.target.value.toLowerCase().slice(0, 16));
+              setDraft(event.target.value.toLowerCase().slice(0, HANDLE_MAX_LENGTH));
               setError(null);
               setSaved(false);
             }}

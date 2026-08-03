@@ -10,6 +10,8 @@
  * dependency, no icon font, no network request.
  */
 
+import { badgeById, type BadgeTone } from "@/engine/badges";
+
 export type GlyphName =
   | "tier" // a scoring tier was earned
   | "rank" // rank / ladder
@@ -197,14 +199,43 @@ const BADGE_PATHS: Record<string, React.ReactNode> = {
   ),
 };
 
-export function BadgeMark({ id, className = "" }: { id: string; className?: string }) {
-  const art = BADGE_PATHS[id];
+/**
+ * Badge colour, keyed by the tone on the definition.
+ *
+ * `signal-text` rather than `signal` because a badge mark is small and `signal` is only
+ * legal at 24px and up — the same substitution the profile's match rows make.
+ */
+const BADGE_TONES: Record<BadgeTone, string> = {
+  signal: "text-signal-text",
+  gold: "text-gold",
+  paper: "text-paper",
+  teal: "text-teal",
+  neutral: "text-secondary",
+};
+
+export function BadgeMark({
+  id,
+  className = "",
+  muted = false,
+}: {
+  id: string;
+  className?: string;
+  /** Locked, or otherwise not earned — drawn in the decorative tone instead. */
+  muted?: boolean;
+}) {
+  const badge = badgeById(id);
   // An unknown id is a data problem, not a rendering one — draw nothing rather than a
   // broken box. `badgeById` has already dropped unknown ids everywhere this is called.
+  const art = BADGE_PATHS[id];
   if (!art) return null;
 
+  // Colour resolved here rather than at each call site, so a badge is the same colour on
+  // the VS panel, the profile case and the post-match celebration without three files
+  // having to agree about it.
+  const tone = muted ? "text-faint" : BADGE_TONES[badge?.tone ?? "neutral"];
+
   return (
-    <Mark className={className} filled={false}>
+    <Mark className={`${tone} ${className}`} filled={false}>
       {art}
     </Mark>
   );

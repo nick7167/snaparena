@@ -1,7 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query, type QueryCtx, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { STARTING_ELO, PLACEMENT_MATCHES, RANK_TIERS } from "../src/engine/config";
+import {
+  STARTING_ELO,
+  PLACEMENT_MATCHES,
+  RANK_TIERS,
+  HANDLE_MAX_LENGTH,
+} from "../src/engine/config";
 // DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
 import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
 
@@ -131,7 +136,7 @@ async function allocateHandle(ctx: MutationCtx, displayName: string): Promise<st
     displayName
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "")
-      .slice(0, 16) || "player";
+      .slice(0, HANDLE_MAX_LENGTH) || "player";
 
   for (let attempt = 0; attempt < 50; attempt++) {
     const candidate = attempt === 0 ? base : `${base}${attempt + 1}`;
@@ -149,10 +154,40 @@ async function allocateHandle(ctx: MutationCtx, displayName: string): Promise<st
  * Handle rules, shared by the live availability check and the write path so the
  * two can never disagree.
  */
-const HANDLE_PATTERN = /^[a-z0-9_]{3,16}$/;
+const HANDLE_PATTERN = /^[a-z0-9_]{3,12}$/;
 
 /** Bio cap. Short enough to read on a VS card, short enough to moderate cheaply. */
 const BIO_MAX_LENGTH = 80;
+
+/**
+ * Avatar upload limits.
+ *
+ * The client re-encodes to a 256px square before uploading, so anything arriving near this
+ * ceiling did not come from our own form. The cap exists for that case: the upload URL is
+ * reachable directly, which makes the client's own limit a convenience rather than a
+ * control.
+ */
+const AVATAR_MAX_BYTES = 512 * 1024;
+const AVATAR_CONTENT_TYPES = ["image/webp", "image/jpeg", "image/png"];
+
+/** Avatar colours are written as `color:#rrggbb` — the only string `updateProfile` takes. */
+const AVATAR_COLOUR_PATTERN = /^color:#[0-9a-fA-F]{6}$/;
+
+/**
+ * The avatar as everyone else should see it.
+ *
+ * A reported picture falls back to the initial-on-colour rather than vanishing — the
+ * player keeps an avatar, they just lose the image. Every public reader goes through this
+ * so a hidden picture cannot survive on one surface after being pulled from another; the
+ * bio has exactly this problem shape and solves it the same way.
+ *
+ * `users.me` deliberately does NOT use it. That query only ever returns the caller's own
+ * row, and hiding someone's picture from themselves would leave them unable to tell why
+ * it looks wrong to everyone else or to go and change it.
+ */
+export function publicAvatarUrl(user: Doc<"users">): string | undefined {
+  return user.avatarHidden ? undefined : user.avatarUrl;
+}
 
 /**
  * Obvious-slur blocklist.
@@ -217,7 +252,9 @@ export const completeOnboarding = mutation({
     const handle = args.handle.toLowerCase().trim();
 
     if (!HANDLE_PATTERN.test(handle)) {
-      throw new Error("Username must be 3-16 characters: letters, numbers, underscore");
+      throw new Error(
+        `Username must be 3-${HANDLE_MAX_LENGTH} characters: letters, numbers, underscore`,
+      );
     }
     if (containsBlockedTerm(handle)) throw new Error("That username isn't allowed");
 
@@ -231,6 +268,13 @@ export const completeOnboarding = mutation({
 
     const bio = (args.bio ?? "").trim().slice(0, BIO_MAX_LENGTH);
     if (bio && containsBlockedTerm(bio)) throw new Error("That bio isn't allowed");
+
+    // Same rule as `updateProfile`: a colour swatch, or nothing. An uploaded picture
+    // arrives through `setAvatarImage`, and keeping the one Clerk supplied means simply
+    // not sending this field.
+    if (args.avatarUrl !== undefined && !AVATAR_COLOUR_PATTERN.test(args.avatarUrl)) {
+      throw new Error("Unsupported avatar");
+    }
 
     await ctx.db.patch(user._id, {
       handle,
@@ -256,11 +300,98 @@ export const updateProfile = mutation({
     const bio = (args.bio ?? "").trim().slice(0, BIO_MAX_LENGTH);
     if (bio && containsBlockedTerm(bio)) throw new Error("That bio isn't allowed");
 
+    /**
+     * Only a colour swatch may be set through here.
+     *
+     * This argument used to accept any string and store it verbatim — which meant a
+     * crafted call could point a player's avatar at any third-party URL, and that URL
+     * would then be fetched by every browser rendering the ladder. Uploads have their own
+     * mutation; keeping the picture Clerk supplied at sign-up needs no write at all,
+     * because `ensureUser` already put it there.
+     */
+    if (args.avatarUrl !== undefined && !AVATAR_COLOUR_PATTERN.test(args.avatarUrl)) {
+      throw new Error("Unsupported avatar");
+    }
+
+    // Choosing a colour clears any uploaded file, so storage does not keep a picture the
+    // player has visibly replaced.
+    if (args.avatarUrl !== undefined && user.avatarStorageId) {
+      await ctx.storage.delete(user.avatarStorageId);
+    }
+
     await ctx.db.patch(user._id, {
       bio: bio || undefined,
       avatarUrl: args.avatarUrl ?? user.avatarUrl,
+      ...(args.avatarUrl !== undefined
+        ? { avatarStorageId: undefined, avatarHidden: undefined }
+        : {}),
       preferredCategoryIds: args.preferredCategoryIds ?? user.preferredCategoryIds,
     });
+  },
+});
+
+/**
+ * Step one of an upload: a one-time URL the browser can POST the file to.
+ *
+ * Signed in only. The URL itself carries no size or type restriction — that is enforced
+ * in `setAvatarImage`, once the file exists and its real metadata can be read.
+ */
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Step two: adopt an uploaded file as this player's avatar.
+ *
+ * Validation happens here rather than in the browser because the upload URL is reachable
+ * without going through our form — the client's own resize and type check make the common
+ * path cheap, and this is what actually holds.
+ *
+ * The URL is resolved once and stored. Convex serving URLs stay valid until the file is
+ * deleted, so there is nothing to refresh, and every reader — the ladder, the VS screen,
+ * every profile — keeps reading a plain string with no storage lookup of its own.
+ */
+export const setAvatarImage = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+
+    const file = await ctx.db.system.get("_storage", args.storageId);
+    if (!file) throw new Error("That upload could not be found");
+
+    const rejected =
+      file.size > AVATAR_MAX_BYTES ||
+      !file.contentType ||
+      !AVATAR_CONTENT_TYPES.includes(file.contentType);
+
+    if (rejected) {
+      // Drop it rather than leaving a rejected file sitting in storage unreferenced.
+      await ctx.storage.delete(args.storageId);
+      throw new Error("That image is too large or not a supported format");
+    }
+
+    const url = await ctx.storage.getUrl(args.storageId);
+    if (!url) throw new Error("That upload could not be read");
+
+    // Delete what this replaces. Done after the new file is known good, so a failed
+    // upload never costs the player the picture they already had.
+    if (user.avatarStorageId) {
+      await ctx.storage.delete(user.avatarStorageId);
+    }
+
+    await ctx.db.patch(user._id, {
+      avatarUrl: url,
+      avatarStorageId: args.storageId,
+      // A fresh picture starts unhidden; the reports that hid the last one were about a
+      // different image.
+      avatarHidden: undefined,
+    });
+
+    return { url };
   },
 });
 
@@ -275,8 +406,19 @@ export const updateProfile = mutation({
  */
 export const REPORTS_TO_HIDE_BIO = 3;
 
-export const reportBio = mutation({
-  args: { userId: v.id("users"), reason: v.string() },
+/**
+ * Reports a player's bio or avatar.
+ *
+ * `kind` is counted separately, so three people objecting to a tagline do not also take
+ * down a picture that nobody complained about. Rows written before avatars existed have no
+ * `kind` at all and read as the bio reports they were.
+ */
+export const reportProfile = mutation({
+  args: {
+    userId: v.id("users"),
+    reason: v.string(),
+    kind: v.union(v.literal("bio"), v.literal("avatar")),
+  },
   handler: async (ctx, args) => {
     const reporter = await requireUser(ctx);
     if (reporter._id === args.userId) throw new Error("You cannot report yourself");
@@ -284,28 +426,31 @@ export const reportBio = mutation({
     const target = await ctx.db.get(args.userId);
     if (!target) throw new Error("No such player");
 
-    const existing = await ctx.db
+    const isHidden = () =>
+      args.kind === "bio" ? target.bioHidden === true : target.avatarHidden === true;
+
+    const all = await ctx.db
       .query("reports")
       .withIndex("by_reported", (q) => q.eq("reportedUserId", args.userId))
       .collect();
 
-    // One report per person per target. Without this, a single reporter could reach any
-    // threshold alone just by pressing the button repeatedly.
+    // An absent `kind` is a bio report — every row predating avatars is one.
+    const existing = all.filter((report) => (report.kind ?? "bio") === args.kind);
+
+    // One report per person per target per kind. Without this, a single reporter could
+    // reach any threshold alone just by pressing the button repeatedly.
     const alreadyReported = existing.some(
       (report) => report.reporterUserId === reporter._id,
     );
 
     if (alreadyReported) {
-      return {
-        reported: true as const,
-        duplicate: true as const,
-        hidden: target.bioHidden === true,
-      };
+      return { reported: true as const, duplicate: true as const, hidden: isHidden() };
     }
 
     await ctx.db.insert("reports", {
       reportedUserId: args.userId,
       reporterUserId: reporter._id,
+      kind: args.kind,
       reason: args.reason.slice(0, 200),
       createdAt: Date.now(),
     });
@@ -316,8 +461,11 @@ export const reportBio = mutation({
     ]).size;
 
     const hidden = distinctReporters >= REPORTS_TO_HIDE_BIO;
-    if (hidden && target.bioHidden !== true) {
-      await ctx.db.patch(args.userId, { bioHidden: true });
+    if (hidden && !isHidden()) {
+      await ctx.db.patch(
+        args.userId,
+        args.kind === "bio" ? { bioHidden: true } : { avatarHidden: true },
+      );
     }
 
     return { reported: true as const, duplicate: false as const, hidden };
@@ -330,8 +478,13 @@ export const setHandle = mutation({
     const user = await requireUser(ctx);
     const handle = args.handle.toLowerCase().trim();
 
-    if (!/^[a-z0-9_]{3,16}$/.test(handle)) {
-      throw new Error("Handle must be 3-16 characters: letters, numbers, underscore");
+    // The shared constant, not a second copy of the pattern. This path had its own
+    // inline regex, which is how the two rules drift: the cap changed in one place and
+    // this one would have gone on accepting sixteen characters.
+    if (!HANDLE_PATTERN.test(handle)) {
+      throw new Error(
+        `Handle must be 3-${HANDLE_MAX_LENGTH} characters: letters, numbers, underscore`,
+      );
     }
 
     // Onboarding blocks these via isHandleAvailable; renaming afterwards did not, which
@@ -458,7 +611,16 @@ export async function globalPosition(
 export const leaderboard = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    const limit = Math.min(args.limit ?? 50, 200);
+    /**
+     * 500, raised from 200.
+     *
+     * The board is banded by rank tier and each band pages independently, so the ceiling
+     * is no longer "how many rows fit on screen" but "how deep can a band be expanded".
+     * At 200 the lower tiers — which is most of the population — could not be opened at
+     * all. Bounded rather than unbounded: the page reads a fixed slice of the ladder, and
+     * a band that runs past it still reports its true size from `tierCounts`.
+     */
+    const limit = Math.min(args.limit ?? 50, 500);
 
     // DEV ONLY — delete with convex/devbots.ts. The sixteen rank bots exist to make this
     // board show every rank at once; the twelve shipping practice bots stay hidden either
@@ -487,7 +649,7 @@ export const leaderboard = query({
       userId: user._id,
       handle: user.handle,
       displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
+      avatarUrl: publicAvatarUrl(user),
       elo: user.elo,
       gamesPlayed: user.gamesPlayed,
     }));
@@ -641,7 +803,7 @@ export const profile = query({
       userId: user._id,
       handle: user.handle,
       displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
+      avatarUrl: publicAvatarUrl(user),
       elo: user.elo,
       gamesPlayed: user.gamesPlayed,
       placementsRemaining: user.placementsRemaining,

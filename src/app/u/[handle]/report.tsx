@@ -9,22 +9,26 @@ import { Card } from "@/ui/Surface";
 import { Field, Input } from "@/ui/Input";
 
 /**
- * Bio reporting.
+ * Profile reporting, for a bio or an uploaded picture.
  *
  * Deliberately understated — a prominent Report control invites use as a weapon rather
  * than as a last resort. It sits at the bottom of the profile, collapsed.
  *
- * The mutation now requires several distinct reporters before anything is hidden, so
- * the copy is careful not to promise an outcome this action alone will not produce.
+ * The mutation requires several distinct reporters before anything is hidden, so the copy
+ * is careful not to promise an outcome this action alone will not produce. Counts are kept
+ * per kind, so reporting a picture never touches the tagline and vice versa.
  */
 export function ReportDialog({
   userId,
   displayName,
+  kind,
 }: {
   userId: Id<"users">;
   displayName: string;
+  kind: "bio" | "avatar";
 }) {
-  const reportBio = useMutation(api.users.reportBio);
+  const reportProfile = useMutation(api.users.reportProfile);
+  const subject = kind === "bio" ? "bio" : "picture";
 
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -42,8 +46,8 @@ export function ReportDialog({
         </p>
         <p className="text-body-sm text-muted">
           {result.hidden
-            ? "This bio is now hidden pending review."
-            : "It'll be reviewed. Bios are hidden once enough separate players report them."}
+            ? `This ${subject} is now hidden pending review.`
+            : `It'll be reviewed. A ${subject} is hidden once enough separate players report it.`}
         </p>
       </Card>
     );
@@ -55,7 +59,7 @@ export function ReportDialog({
         onClick={() => setOpen(true)}
         className="text-body-sm text-muted hover:text-paper self-start rounded-xs px-2 py-1 transition-colors"
       >
-        Report this bio
+        Report this {subject}
       </button>
     );
   }
@@ -64,10 +68,10 @@ export function ReportDialog({
     <Card className="flex flex-col gap-4 p-4">
       <div className="flex flex-col gap-1">
         <p className="text-body text-paper font-semibold">
-          Report {displayName}&rsquo;s bio
+          Report {displayName}&rsquo;s {subject}
         </p>
         <p className="text-body-sm text-muted">
-          For bios that are abusive or offensive. Reports are attributed to your account.
+          For anything abusive or offensive. Reports are attributed to your account.
         </p>
       </div>
 
@@ -96,7 +100,7 @@ export function ReportDialog({
             setSending(true);
             setError(null);
             try {
-              const outcome = await reportBio({ userId, reason: reason.trim() });
+              const outcome = await reportProfile({ userId, reason: reason.trim(), kind });
               setResult({ duplicate: outcome.duplicate, hidden: outcome.hidden });
             } catch (caught) {
               setError(caught instanceof Error ? caught.message : "Could not send that");

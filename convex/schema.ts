@@ -77,7 +77,28 @@ export default defineSchema({
     clerkId: v.string(), // UNIQUE
     handle: v.string(), // UNIQUE, lowercased for the index
     displayName: v.string(),
+    /**
+     * What to draw for this player, in one of three forms:
+     *
+     *   `color:#rrggbb`   a swatch chosen during onboarding, rendered as an initial
+     *   an https URL       either the picture Clerk had at sign-up, or an upload
+     *   absent             falls back to the initial on ink
+     *
+     * For an upload this holds the RESOLVED storage URL rather than an id. Convex serving
+     * URLs are permanent — they stay valid until the file is deleted — so resolving once
+     * at upload time keeps every reader free. The ladder reads this for up to 500 rows;
+     * calling `storage.getUrl` per row would put 500 storage lookups on one page view.
+     */
     avatarUrl: v.optional(v.string()),
+    /**
+     * The uploaded file behind `avatarUrl`, when there is one.
+     *
+     * Kept so a replacement can delete what it replaces — without it, every new upload
+     * would orphan the previous file in storage forever.
+     */
+    avatarStorageId: v.optional(v.id("_storage")),
+    /** Hidden pending review after reports. Mirrors `bioHidden`. */
+    avatarHidden: v.optional(v.boolean()),
     elo: v.number(),
     gamesPlayed: v.number(),
     placementsRemaining: v.number(),
@@ -139,6 +160,14 @@ export default defineSchema({
   reports: defineTable({
     reportedUserId: v.id("users"),
     reporterUserId: v.id("users"),
+    /**
+     * What was reported — "bio" or "avatar".
+     *
+     * Optional because every row written before avatars existed is a bio report, and an
+     * absent value reads as exactly that. Without this the two share one threshold, and
+     * three people objecting to someone's tagline would also take down their picture.
+     */
+    kind: v.optional(v.string()),
     reason: v.string(),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),
@@ -278,6 +307,15 @@ export default defineSchema({
      * round, which is what stops a slow connection producing a truncated song.
      */
     readyForRound: v.optional(v.number()),
+    /**
+     * When this player pressed Ready on the opponent reveal.
+     *
+     * Separate from `readyForRound`, which answers a different question — that one is
+     * "has your browser buffered the clip", a per-round technical barrier. This is a
+     * deliberate human "I have read this and I want to start", asked once per match.
+     * Overloading one field with both would tie the audio barrier to a button press.
+     */
+    vsReadyAt: v.optional(v.number()),
     /** Set when the player passes; the round can end once everyone is done. */
     passedRound: v.optional(v.number()),
     /** XP earned from this match, kept for the results screen breakdown. */

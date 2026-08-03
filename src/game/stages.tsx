@@ -3,9 +3,9 @@
 import { motion } from "motion/react";
 import { useEffect } from "react";
 import { PHASE_DURATIONS_MS, REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
-import { isNotable } from "@/engine/ranks";
+import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { play } from "@/audio/sfx";
-import { Avatar, BadgeRow, BotBadge, Stage, TierChip, hpTone, nameFor } from "./ui";
+import { Avatar, BadgeRow, BotBadge, PhaseTimer, Stage, TierChip, hpTone, nameFor } from "./ui";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { Card, Chip, Meter } from "@/ui/Surface";
@@ -45,6 +45,8 @@ export interface PlayerCardData {
   isBot: boolean;
   bio?: string | null;
   isMe?: boolean;
+  /** Pressed Ready on the opponent reveal. Bots never set it — see ReadyBar. */
+  vsReady?: boolean;
 }
 
 /**
@@ -59,10 +61,14 @@ export function VsReveal({
   me,
   opponent,
   matchup,
+  phaseEndsAt,
+  onReady,
 }: {
   me: PlayerCardData;
   opponent: PlayerCardData;
   matchup: string | null;
+  phaseEndsAt: number | null;
+  onReady: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
 
@@ -80,9 +86,10 @@ export function VsReveal({
    * from nowhere. Each half carries its player's tier colour, which is the one moment in
    * a duel where both ranks are the subject.
    *
-   * The 5s phase budget is the server's (`PHASE_DURATIONS_MS.vs_reveal`) and this must
-   * not depend on it — every beat below lands inside 3.2s so the composition is complete
-   * and readable well before the phase ends, whatever the server decides.
+   * The phase now runs up to 30s and ends on Ready rather than on its clock, so this has
+   * room to be read: identity above, a scannable head-to-head below. Every beat still
+   * lands inside ~2.6s — the composition must be complete long before the phase is, and
+   * must never depend on how long the server gives it.
    */
   const beat = (delay: number) =>
     reduced
@@ -95,240 +102,513 @@ export function VsReveal({
 
   return (
     /* Width via the prop, not className: two `max-w-*` utilities on one element resolve
-       by stylesheet order, so an override is a coin flip. The single wrapper below also
-       means Stage's `gap-6` has nothing to apply between, so it needs no overriding. */
+       by stylesheet order, so an override is a coin flip. */
     <Stage keyName="vs" width="max-w-4xl">
-      {/* One child, so Stage's `gap-6` has nothing to apply between and needs no
-          overriding — the spacing below is owned by these two sections. */}
-      <div className="flex w-full flex-col">
-      {/* Tall enough to be a moment rather than a panel. The first version was a ~430px
-          card floating in the top half of the viewport, which is precisely the card
-          framing this screen exists to get away from. */}
-      <div className="relative isolate flex min-h-[76vh] w-full items-center overflow-hidden">
-        {/* The two tinted halves. Drawn as siblings clipped to complementary polygons so
-            the seam is a single hard edge rather than two shapes that nearly meet. */}
-        <Half side="left" accent={me.rankAccent} reduced={reduced} />
-        <Half side="right" accent={opponent.rankAccent} reduced={reduced} />
-        {/* The seam itself, drawn rather than implied. Two players of the same tier tint
-            their halves the same colour — which is most matches, since you are matched on
-            rating — and without this the split simply disappears. */}
-        <Seam reduced={reduced} />
+      <div className="flex w-full flex-col gap-4 py-2">
+        {/* The clock, first and fixed. A HUD element that moves is one players have to
+            re-find every time they look at it, so this holds one position for the whole
+            phase and never resizes as the digits change. */}
+        <VsClock phaseEndsAt={phaseEndsAt} reduced={reduced} />
 
-        <div className="relative grid w-full grid-cols-2 items-center gap-2 px-4 py-10 sm:gap-6 sm:px-10 sm:py-14">
-          <VsSide player={me} align="start" reduced={reduced} delay={0.45} youAre />
-          <VsSide player={opponent} align="end" reduced={reduced} delay={0.6} />
+        {/* Two panels and a mark. No tinted halves and no diagonal wash: those were a
+            gradient, this design does not have gradients, and a soft wash behind a rank
+            emblem was fighting the one object on screen that should be loudest. Colour
+            identity now comes from the plate's hairline — flat, hard-edged, and the same
+            device the ladder marks your own row with. */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-1.5 sm:gap-3">
+          <VsPanel player={me} reduced={reduced} delay={0.3} youAre />
+          <VsMark reduced={reduced} />
+          <VsPanel player={opponent} reduced={reduced} delay={0.45} />
         </div>
 
-        {/* VS, struck as a plate. Centred over the seam — it is the seam's label. */}
-        <motion.div
-          initial={reduced ? false : { scale: 0.4, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={
-            reduced ? undefined : { delay: 0.3, type: "spring", stiffness: 320, damping: 15 }
-          }
-          className="absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
-        >
-          <span className="bg-ink-900 relative flex size-14 items-center justify-center sm:size-16">
-            <span
-              aria-hidden="true"
-              className="plate bg-line-strong absolute inset-0 -z-10"
-              style={{ ["--plate-cut" as string]: "10px" }}
-            />
-            <span
-              aria-hidden="true"
-              className="plate bg-ink-900 absolute inset-[1.5px] -z-10"
-              style={{ ["--plate-cut" as string]: "10px" }}
-            />
-            <span className="font-display text-paper text-xl font-extrabold tracking-tight sm:text-2xl">
-              VS
-            </span>
-          </span>
-        </motion.div>
-
-        {/* The verdict line, inside the composition rather than stranded beneath it.
-            Absolute so it cannot push the halves around as it fades in. */}
-        <div className="absolute inset-x-0 bottom-8 z-10 flex flex-col items-center gap-2">
+        {/* The verdict line. The standalone "#N GLOBAL" flag that used to live here is
+            gone: both panels carry each player's position now, and printing the
+            opponent's a third time within one screen is noise. */}
         {matchup && (
           <motion.p
-            {...beat(1.05)}
-            className="font-display text-body-lg text-paper font-bold tracking-[0.2em]"
+            {...beat(1.6)}
+            className="font-display text-body-lg text-paper text-center font-bold tracking-[0.2em]"
           >
             {matchup}
           </motion.p>
         )}
 
-        {/* `globalRank` carries a real position for every placed player, so the notable
-            cutoff has to be applied here. Without it every duel would open with a rank
-            flag, which is precisely what makes the flag mean nothing. */}
-        {isNotable(opponent.globalRank) && (
-          <motion.p
-            {...beat(1.25)}
-            className="text-body-sm text-gold flex items-center gap-1.5 font-semibold tracking-wide"
-          >
-            <Glyph name="win" filled />#{opponent.globalRank} GLOBAL
-          </motion.p>
-        )}
-        </div>
-      </div>
+        {/* The head-to-head. Four rows, one per stat, each bar leaning toward whoever
+            leads — the whole point is that you can read who is stronger at a glance
+            rather than comparing two columns of numerals yourself. */}
+        <CompareStrip me={me} opponent={opponent} reduced={reduced} />
+
+        <ReadyBar me={me} onReady={onReady} reduced={reduced} />
       </div>
     </Stage>
   );
 }
 
 /**
- * One tinted half of the split.
+ * The countdown, as the biggest number on screen.
  *
- * The chamfer angle is the emblem's, expressed as a polygon that runs corner to corner
- * with the same asymmetric bias — left half takes the top, right half takes the bottom,
- * so the seam leans the way the plate's cut leans.
+ * Always visible and always in the same place. The previous version tucked a "starts in
+ * 27s" under the button in label type, which is where you put something nobody needs to
+ * see — and this is the one figure that tells a player how long they have to read.
  *
- * The tint is `--bloom-tier` territory: a licensed exception, at low alpha, behind
- * everything. It never touches text.
+ * `tabular-nums` via `font-display` so the digits do not reflow as they count down; a
+ * clock that jitters reads as broken.
  */
-function Half({
-  side,
-  accent,
+function VsClock({
+  phaseEndsAt,
   reduced,
 }: {
-  side: "left" | "right";
-  accent: string;
+  phaseEndsAt: number | null;
   reduced: boolean;
 }) {
-  const clip =
-    side === "left"
-      ? "polygon(0 0, 58% 0, 42% 100%, 0 100%)"
-      : "polygon(58% 0, 100% 0, 100% 100%, 42% 100%)";
+  const now = useNow(250);
+  const remaining = phaseEndsAt ? Math.max(0, phaseEndsAt - now) : 0;
+  const seconds = Math.ceil(remaining / 1000);
+  const urgent = seconds <= 5;
 
   return (
-    <motion.span
-      aria-hidden="true"
-      initial={reduced ? false : { opacity: 0, x: side === "left" ? "-8%" : "8%" }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={reduced ? undefined : { duration: 0.4, ease: [0.2, 0, 0, 1] }}
-      className="absolute inset-0 -z-10"
-      style={{
-        clipPath: clip,
-        backgroundColor: "var(--color-ink-900)",
-        // color-mix keeps the tint honest: the tier's own colour, at a strength low
-        // enough that paper text over it still clears contrast. Strongest at the outer
-        // edge and falling away toward the seam, so the two never muddy where they meet.
-        backgroundImage: `linear-gradient(to ${
-          side === "left" ? "right" : "left"
-        }, color-mix(in srgb, ${accent} 26%, transparent), transparent 75%)`,
-      }}
-    />
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={reduced ? undefined : { duration: 0.3 }}
+      className="flex flex-col items-center gap-1"
+    >
+      <p className="text-label text-muted tracking-[0.3em] uppercase">Match starts in</p>
+      <p
+        className={`font-display text-display-2 font-extrabold tabular-nums ${
+          urgent ? "text-signal-text" : "text-paper"
+        }`}
+      >
+        {seconds}
+      </p>
+      <div className="w-full max-w-xs">
+        <PhaseTimer endsAt={phaseEndsAt} durationMs={PHASE_DURATIONS_MS.vs_reveal} />
+      </div>
+    </motion.div>
+  );
+}
+
+/** The struck plate between the two panels. */
+function VsMark({ reduced }: { reduced: boolean }) {
+  return (
+    <motion.div
+      initial={reduced ? false : { scale: 0.4, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={
+        reduced ? undefined : { delay: 0.2, type: "spring", stiffness: 320, damping: 15 }
+      }
+      className="flex items-center justify-center"
+    >
+      <span className="relative flex size-11 items-center justify-center sm:size-14">
+        <span
+          aria-hidden="true"
+          className="plate bg-line-strong absolute inset-0 -z-10"
+          style={{ ["--plate-cut" as string]: "9px" }}
+        />
+        <span
+          aria-hidden="true"
+          className="plate bg-ink-900 absolute inset-[1.5px] -z-10"
+          style={{ ["--plate-cut" as string]: "9px" }}
+        />
+        <span className="font-display text-paper text-base font-extrabold tracking-tight sm:text-xl">
+          VS
+        </span>
+      </span>
+    </motion.div>
   );
 }
 
 /**
- * The diagonal seam, as an actual drawn edge.
+ * One player, as a struck plate.
  *
- * Matchmaking pairs players by rating, so both halves usually carry the same tier accent
- * — and two identical tints meeting at an invisible boundary is not a split, it is a
- * rectangle. This is the line that makes it read as two territories regardless of who
- * turned up. Same geometry as the halves, one hairline wide.
+ * Hierarchy is the whole brief, and it is enforced by contrast rather than by size alone:
+ *
+ *   1. RANK      the emblem at `xl` and the tier name at display size, in the tier accent.
+ *                Brightest, largest, top of the panel.
+ *   2. NAME      display-2 in paper. Second loudest, nothing else competing on that line.
+ *   3. THE REST  rating, level, badges — `muted`, small, and last.
+ *
+ * The panel is flat ink-800 inside a hairline of the player's own tier accent. That
+ * hairline is the only colour on the panel, which is what lets the rank read from across
+ * the room without a wash behind it.
  */
-function Seam({ reduced }: { reduced: boolean }) {
-  return (
-    <motion.span
-      aria-hidden="true"
-      initial={reduced ? false : { opacity: 0, scaleY: 0.4 }}
-      animate={{ opacity: 1, scaleY: 1 }}
-      transition={reduced ? undefined : { duration: 0.4, ease: [0.2, 0, 0, 1] }}
-      className="bg-line-strong absolute inset-0 -z-10"
-      style={{ clipPath: "polygon(58% 0, 58.25% 0, 42.25% 100%, 42% 100%)" }}
-    />
-  );
-}
-
-function VsSide({
+function VsPanel({
   player,
-  align,
   reduced,
   delay,
   youAre = false,
 }: {
   player: PlayerCardData;
-  align: "start" | "end";
   reduced: boolean;
   delay: number;
   youAre?: boolean;
 }) {
-  const end = align === "end";
+  const placing = player.placementsRemaining > 0;
+  // A bot has no client to press with and is ready from the moment it exists — the same
+  // rule the server applies in `markVsReady`.
+  const ready = player.isBot || player.vsReady === true;
+
+  // `formatGlobalRank` returns null when there is no position to show, which is the same
+  // condition the profile uses to decide whether the line exists at all.
+  const position = placing ? null : formatGlobalRank(player.globalRank);
+  const notable = isNotable(player.globalRank);
 
   return (
     <motion.div
-      initial={reduced ? false : { opacity: 0, x: end ? 60 : -60 }}
-      animate={{ opacity: 1, x: 0 }}
+      initial={reduced ? false : { opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={
-        reduced ? undefined : { delay, type: "spring", stiffness: 220, damping: 20 }
+        reduced ? undefined : { delay, type: "spring", stiffness: 220, damping: 22 }
       }
-      className={`flex min-w-0 flex-col gap-2.5 ${
-        end ? "items-end text-right" : "items-start text-left"
-      }`}
+      className="relative isolate flex min-w-0 flex-col items-center gap-2 px-2 pt-4 pb-3 sm:px-4 sm:pt-6 sm:pb-4"
     >
+      {/* The plate, drawn as two stacked fills so the hairline survives the chamfer —
+          `clip-path` would cut a border away at the two cut corners. Same construction as
+          Card's `you` state and RankEmblem's unranked plate. */}
+      <span
+        aria-hidden="true"
+        className="plate absolute inset-0 -z-10"
+        style={{
+          ["--plate-cut" as string]: "16px",
+          backgroundColor: placing ? "var(--color-line-strong)" : player.rankAccent,
+        }}
+      />
+      <span
+        aria-hidden="true"
+        className="plate bg-ink-800 absolute inset-[1.5px] -z-10"
+        style={{ ["--plate-cut" as string]: "16px" }}
+      />
+
+      {/* 1 — RANK. */}
       <RankEmblem
         tierId={player.rankTierId}
         division={player.rankDivision}
-        size="lg"
-        unranked={player.placementsRemaining > 0}
-        bloom={player.placementsRemaining > 0 ? undefined : player.rankAccent}
+        size="xl"
+        unranked={placing}
+        bloom={placing ? undefined : player.rankAccent}
+        className="max-w-full"
       />
-
-      {/* Avatar beside the name rather than stacked under the emblem, which read as two
-          unrelated marks sitting on top of each other. `flex-row-reverse` keeps the
-          avatar on the outer edge on both sides, so the two halves mirror. */}
-      <div
-        className={`flex min-w-0 max-w-full items-center gap-2.5 ${
-          end ? "flex-row-reverse" : ""
-        }`}
+      <p
+        className="font-display text-body-lg sm:text-display-2 w-full truncate text-center font-extrabold tracking-tight"
+        style={{ color: placing ? undefined : player.rankAccent }}
       >
-        {/* The avatar's fallback is a single initial, so it takes the handle rather than
-            nameFor — "@" is not an initial. */}
+        {placing ? "Unranked" : player.rankLabel}
+      </p>
+
+      {/* Ladder position, on both sides and for everyone who has one — bots included.
+          It used to appear only above the opponent, only when inside the notable cutoff,
+          which meant most duels showed neither player's standing at all. It belongs with
+          the rank because it IS rank information: the tier says which band you are in,
+          this says where in the world.
+
+          The notable cutoff still decides the treatment rather than the presence: top-100
+          is struck in gold with the trophy, everyone else gets the same fact quietly. */}
+      {position && (
+        <span
+          className={`text-label -mt-1 flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-bold tracking-[0.1em] tabular-nums ${
+            notable ? "bg-gold text-ink-900" : "text-muted"
+          }`}
+        >
+          {notable && <Glyph name="win" filled />}
+          {position} GLOBAL
+        </span>
+      )}
+
+      {/* 2 — NAME. */}
+      <div className="flex min-w-0 max-w-full items-center gap-2">
         <Avatar
+          plate
           url={player.avatarUrl}
           name={player.isBot ? player.displayName : player.handle}
-          className="size-9 shrink-0 text-sm sm:size-11 sm:text-base"
+          className="size-7 shrink-0 text-xs sm:size-9 sm:text-sm"
         />
-        <p className="font-display text-body-lg sm:text-display-2 min-w-0 truncate font-extrabold tracking-tight">
+        <p className="font-display text-body sm:text-body-lg text-paper min-w-0 truncate font-bold">
           {youAre ? "You" : nameFor(player)}
         </p>
       </div>
 
-      {/* Only bots carry a second line: their proper name is above, so the handle is
-          extra information rather than the same string twice. */}
-      {player.isBot && (
-        <p className="text-body-sm text-muted w-full truncate">@{player.handle}</p>
-      )}
-      {player.isBot && <BotBadge />}
-
-      <p
-        className="font-display text-body font-bold"
-        style={{ color: player.placementsRemaining > 0 ? undefined : player.rankAccent }}
-      >
-        {player.placementsRemaining > 0
-          ? `${player.placementsRemaining} placement${player.placementsRemaining === 1 ? "" : "s"} left`
-          : player.rankLabel}
-      </p>
-
-      <div className="text-body-sm text-secondary flex flex-wrap gap-x-3 gap-y-0.5">
-        {player.placementsRemaining === 0 && (
-          <span className="tabular-nums">{player.elo}</span>
-        )}
+      {/* 3 — everything else, quietly. */}
+      <div className="text-label text-muted flex flex-wrap items-center justify-center gap-x-2 tabular-nums">
+        {!placing && <span>{player.elo}</span>}
         <span>L{player.level}</span>
-        <span className="tabular-nums">
-          {player.wins}W · {player.losses}L
-        </span>
+        {player.isBot && <BotBadge />}
       </div>
 
-      <BadgeRow badges={player.badges} max={4} />
+      <div className="min-h-6">
+        <BadgeRow badges={player.badges} max={4} />
+      </div>
 
-      {player.bestCategory && (
-        <p className="text-label text-muted w-full truncate">best: {player.bestCategory}</p>
-      )}
+      {/* The readiness strip, full width at the foot of the panel. A block of colour is
+          read before any word on it — so the state is the colour, and the label only
+          confirms what the colour already said. */}
+      {/* Sits inside the plate rather than bleeding to its edge: the bottom-right corner
+          is chamfered, and a full-bleed bar would hang out through the cut. */}
+      <div
+        className={`mt-1 flex w-full items-center justify-center gap-1.5 rounded-xs py-2 transition-colors ${
+          ready ? "bg-teal text-ink-900" : "bg-ink-600 text-muted"
+        }`}
+      >
+        <span className="text-sm leading-none">
+          <Glyph name={ready ? "win" : "timer"} filled={ready} />
+        </span>
+        <span className="text-label font-bold tracking-[0.14em] uppercase">
+          {ready ? "Ready" : "Not ready"}
+        </span>
+      </div>
     </motion.div>
   );
 }
+
+/**
+ * The Ready gate.
+ *
+ * The reveal is the one phase that ends on player input rather than on its clock. Both
+ * players pressing advances it immediately; the timer above is the ceiling for someone who
+ * walked away, not a wait anyone should sit through.
+ *
+ * A bot is counted ready from the start — it has nothing to read and no client to press
+ * with, which is the same rule the server applies in `markVsReady`. Showing "1 / 2" against
+ * a bot that will never press would be a counter that never completes.
+ */
+/**
+ * The button.
+ *
+ * The state of both players is already shown on the panels above — that is where a player
+ * looks to find out who is waiting on whom — so this is only the control, not a status
+ * readout. Once pressed it says so and stops being pressable.
+ */
+function ReadyBar({
+  me,
+  onReady,
+  reduced,
+}: {
+  me: PlayerCardData;
+  onReady: () => void;
+  reduced: boolean;
+}) {
+  const iAmReady = me.vsReady === true;
+
+  return (
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={reduced ? undefined : { delay: 1.85, duration: 0.35 }}
+      className="flex flex-col items-center"
+    >
+      <Button
+        size="lg"
+        onClick={onReady}
+        disabled={iAmReady}
+        className="min-w-60 tracking-wide"
+      >
+        {iAmReady ? "Waiting for opponent…" : "I'm ready"}
+      </Button>
+    </motion.div>
+  );
+}
+
+/**
+ * Head-to-head comparison.
+ *
+ * Deliberately not two columns of numbers. Two columns make the reader do the comparing;
+ * a bar that leans tells them who is ahead before they have read either figure — which is
+ * the whole job of this screen.
+ *
+ * The leading side is drawn in `paper` and the trailing side in `muted`, rather than in the
+ * two players' tier accents: matchmaking pairs on rating, so both accents are usually the
+ * same colour and would say nothing at all.
+ */
+function CompareStrip({
+  me,
+  opponent,
+  reduced,
+}: {
+  me: PlayerCardData;
+  opponent: PlayerCardData;
+  reduced: boolean;
+}) {
+  const winRate = (player: PlayerCardData) => {
+    const decided = player.wins + player.losses;
+    return decided > 0 ? Math.round((player.wins / decided) * 100) : null;
+  };
+
+  // A player still in placements has no rating and no ladder position to compare — those
+  // rows show a dash rather than a bar pinned at zero, which would read as "terrible"
+  // rather than as "not measured yet".
+  const placed = (player: PlayerCardData) => player.placementsRemaining === 0;
+
+  const rows = [
+    {
+      label: "Rating",
+      left: placed(me) ? me.elo : null,
+      right: placed(opponent) ? opponent.elo : null,
+      format: (value: number) => String(value),
+      higherWins: true,
+    },
+    {
+      label: "Level",
+      left: me.level,
+      right: opponent.level,
+      format: (value: number) => `L${value}`,
+      higherWins: true,
+    },
+    {
+      label: "Win rate",
+      left: winRate(me),
+      right: winRate(opponent),
+      format: (value: number) => `${value}%`,
+      higherWins: true,
+    },
+  ];
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      {rows.map((row, index) => (
+        <CompareRow
+          key={row.label}
+          {...row}
+          reduced={reduced}
+          delay={1.15 + index * 0.11}
+        />
+      ))}
+
+      {/* Best category, in the same shape as the rows above it.
+          It used to be a cramped line of three unequal fragments — a dash, a centred
+          caption and a genre — that matched neither the comparison rows nor anything
+          else on the screen. It is the one stat with no number to compare, so it gets
+          chips rather than a bar: same label position, same three-column rhythm, and the
+          value reads as a thing you are good at rather than as a missing figure. */}
+      {(me.bestCategory || opponent.bestCategory) && (
+        <motion.div
+          initial={reduced ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduced ? undefined : { delay: 1.48, duration: 0.3 }}
+          className="flex flex-col gap-1"
+        >
+          <span className="text-label text-muted text-center tracking-[0.14em] uppercase">
+            Best category
+          </span>
+          <div className="flex items-center gap-3">
+            <div className="flex w-16 shrink-0 justify-end sm:w-24">
+              {me.bestCategory ? (
+                <Chip size="sm" className="max-w-full truncate">
+                  {me.bestCategory}
+                </Chip>
+              ) : (
+                <span className="font-display text-numeral text-muted font-extrabold">—</span>
+              )}
+            </div>
+            {/* An empty middle column, so the chips land on the same rails as the
+                numerals above and the row does not look like a different table. */}
+            <div className="min-w-0 flex-1" />
+            <div className="flex w-16 shrink-0 justify-start sm:w-24">
+              {opponent.bestCategory ? (
+                <Chip size="sm" className="max-w-full truncate">
+                  {opponent.bestCategory}
+                </Chip>
+              ) : (
+                <span className="font-display text-numeral text-muted font-extrabold">—</span>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+function CompareRow({
+  label,
+  left,
+  right,
+  format,
+  higherWins,
+  reduced,
+  delay,
+}: {
+  label: string;
+  left: number | null;
+  right: number | null;
+  format: (value: number) => string;
+  higherWins: boolean;
+  reduced: boolean;
+  delay: number;
+}) {
+  const comparable = left !== null && right !== null;
+
+  /**
+   * Where the bar splits.
+   *
+   * For "higher wins" the left share is its own value over the total. For Global, where a
+   * smaller number is better, the shares swap — otherwise #212 would draw a longer bar
+   * than #47 and the picture would say the exact opposite of the truth.
+   */
+  let leftShare = 0.5;
+  if (comparable) {
+    const total = left + right;
+    if (total > 0) leftShare = higherWins ? left / total : right / total;
+    // Kept off the extremes so the losing side never vanishes entirely.
+    leftShare = Math.min(0.85, Math.max(0.15, leftShare));
+  }
+
+  const leftLeads = comparable && (higherWins ? left > right : left < right);
+  const rightLeads = comparable && (higherWins ? right > left : right < left);
+
+  return (
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={reduced ? undefined : { delay, duration: 0.3 }}
+      className="flex flex-col gap-1"
+    >
+      {/* Label above the pair rather than under the bar. Underneath, it sat between two
+          bars and belonged visually to neither; on top it captions the row it heads. */}
+      <span className="text-label text-muted text-center tracking-[0.14em] uppercase">
+        {label}
+      </span>
+
+      <div className="flex items-center gap-3">
+        <span
+          className={`font-display text-numeral w-16 shrink-0 text-right font-extrabold tabular-nums sm:w-24 ${
+            leftLeads ? "text-paper" : "text-muted"
+          }`}
+        >
+          {left === null ? "—" : format(left)}
+        </span>
+
+        <div className="bg-ink-inset flex h-2.5 min-w-0 flex-1 overflow-hidden rounded-full shadow-[inset_0_0_0_1px_var(--color-line)]">
+          {comparable ? (
+            <>
+              <motion.span
+                className={leftLeads ? "bg-paper" : "bg-muted"}
+                initial={reduced ? false : { width: "50%" }}
+                animate={{ width: `${leftShare * 100}%` }}
+                transition={
+                  reduced
+                    ? undefined
+                    : { delay: delay + 0.1, duration: 0.55, ease: [0.16, 1, 0.3, 1] }
+                }
+              />
+              {/* The divider is what makes the split legible when the two bars are close
+                  in value and similar in tone. */}
+              <span className="bg-ink-900 w-0.5 shrink-0" />
+              <span className={`flex-1 ${rightLeads ? "bg-paper" : "bg-muted"}`} />
+            </>
+          ) : null}
+        </div>
+
+        <span
+          className={`font-display text-numeral w-16 shrink-0 font-extrabold tabular-nums sm:w-24 ${
+            rightLeads ? "text-paper" : "text-muted"
+          }`}
+        >
+          {right === null ? "—" : format(right)}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
 
 /**
  * Round intro.
