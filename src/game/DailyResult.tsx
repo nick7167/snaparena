@@ -154,7 +154,7 @@ function SaveScore({
   run: { totalPoints: number; rank: number; totalPlayers: number };
 }) {
   return (
-    <Card emphasis className="flex flex-col gap-4 p-5 sm:p-6">
+    <Card variant="hero" className="flex flex-col gap-4 p-5 sm:p-6">
       <div className="flex flex-col gap-1">
         {/* Flex with an explicit gap, not a text space: `Glyph` is an inline-block sized
             in `em`, so it sat hard against the "Y" and read as "▲You're". */}

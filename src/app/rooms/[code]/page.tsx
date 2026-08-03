@@ -10,6 +10,8 @@ import { Button } from "@/ui/Button";
 import { Card, Chip, SectionLabel } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 import { Avatar } from "@/game/ui";
+import { rankForElo } from "@/engine/ranks";
+import { PageHeader } from "../../page-header";
 
 export default function RoomPage() {
   const params = useParams<{ code: string }>();
@@ -57,7 +59,14 @@ export default function RoomPage() {
   const emptySlots = Math.max(0, room.minPlayers - room.members.length);
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-12">
+    <>
+      <PageHeader
+        parent={{ href: "/rooms", label: "Rooms" }}
+        title={`Room ${room.code}`}
+        width="max-w-md"
+      />
+
+      <div className="mx-auto flex w-full max-w-md flex-col gap-8 px-4 py-12">
       {/* The code is the whole point of the screen — it is what you read out loud. */}
       <section className="flex flex-col items-center gap-3">
         <SectionLabel>Room code</SectionLabel>
@@ -89,7 +98,10 @@ export default function RoomPage() {
             <Card
               as="li"
               key={member.userId}
-              emphasis={member.userId === me?._id}
+              you={member.userId === me?._id}
+              // The roster carries no rating, so the accent comes from the viewer's own
+              // rank — which is whose row it is anyway.
+              accent={me ? rankForElo(me.elo).tier.accent : undefined}
               className="flex items-center gap-3 px-3 py-2.5"
             >
               <Avatar url={member.avatarUrl} name={member.handle} className="size-9" />
@@ -137,7 +149,8 @@ export default function RoomPage() {
           <LeaveRoom roomId={room.roomId} isHost={isHost} />
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 

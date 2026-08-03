@@ -10,8 +10,9 @@ import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { Avatar, BotBadge, nameFor } from "@/game/ui";
 import { Card, Chip, Empty, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
-import { Glyph } from "@/ui/Glyph";
+import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { ReportDialog } from "./report";
+import { PageHeader } from "../../page-header";
 
 /**
  * Public player profile.
@@ -25,6 +26,13 @@ import { ReportDialog } from "./report";
  * `profile` is the entry point because the URL carries a handle; it returns `userId`
  * so the card can be fetched for the rest.
  */
+/**
+ * Where a profile goes "up" to when there is no history — a shared link, or a refresh.
+ * The ladder is the page profiles are reached from, and the one place every profile in
+ * the app is listed.
+ */
+const LADDER = { href: "/leaderboard", label: "Leaderboard" };
+
 export default function ProfilePage() {
   const params = useParams<{ handle: string }>();
   const handle = (params.handle ?? "").toLowerCase();
@@ -34,23 +42,38 @@ export default function ProfilePage() {
   const card = useQuery(api.matches.card, profile ? { userId: profile.userId } : "skip");
   const me = useQuery(api.users.me, {});
 
+  /**
+   * Both early branches carry the header too.
+   *
+   * A profile that is still loading, or that does not exist, is precisely when you most
+   * want a way out — and it is the one case where the browser back button is the only
+   * thing left if the page does not offer one.
+   */
   if (profile === undefined) {
     return (
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-12">
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-48 w-full" />
-      </div>
+      <>
+        <PageHeader parent={LADDER} />
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-10">
+          <Skeleton className="mx-auto size-28" />
+          <Skeleton className="mx-auto h-10 w-56" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-48 w-full" />
+        </div>
+      </>
     );
   }
 
   if (profile === null) {
     return (
-      <div className="mx-auto w-full max-w-2xl px-4 py-12">
-        <Empty
-          title="No player with that name"
-          body={`Nobody here goes by @${handle}.`}
-        />
-      </div>
+      <>
+        <PageHeader parent={LADDER} />
+        <div className="mx-auto w-full max-w-2xl px-4 py-12">
+          <Empty
+            title="No player with that name"
+            body={`Nobody here goes by @${handle}.`}
+          />
+        </div>
+      </>
     );
   }
 
@@ -59,74 +82,95 @@ export default function ProfilePage() {
   const globalRank = formatGlobalRank(card?.globalRank, card?.globalRankApproximate);
   const notable = isNotable(card?.globalRank);
 
+  // Record is already on the card; the rate it implies is the stat people actually quote,
+  // and deriving it here costs nothing rather than another query.
+  const decided = card ? card.wins + card.losses : 0;
+  const winRate = decided > 0 ? Math.round((card!.wins / decided) * 100) : null;
+
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12">
-      {/* Identity */}
-      <Card className="flex flex-col gap-4 p-5">
-        <div className="flex items-start gap-4">
-          {/* The avatar fallback is a single initial, so it takes the bare handle —
-              "@" is not an initial. */}
-          <Avatar
-            url={profile.avatarUrl}
-            name={profile.isBot ? profile.displayName : profile.handle}
-            className="size-16 text-2xl"
+    <>
+      <PageHeader parent={LADDER} title={nameFor(profile)} />
+
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10">
+      {/**
+       * The hero.
+       *
+       * The emblem artwork used to sit at `lg` in the top-right corner of an identity
+       * card, at which size it is a marker rather than a trophy — the app's single
+       * strongest asset, filed as decoration. It is the subject of the page now: `xl`,
+       * centred, lit by its own tier accent, with the name and standing underneath.
+       */}
+      <section className="flex flex-col items-center gap-4 text-center">
+        {card && !placing ? (
+          <RankEmblem
+            tierId={card.rankTierId}
+            division={card.rankDivision}
+            size="xl"
+            bloom={card.rankAccent}
           />
+        ) : (
+          <RankEmblem tierId="bronze" division={1} size="xl" unranked />
+        )}
 
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-display-2 truncate font-extrabold">
-                {nameFor(profile)}
-              </h1>
-              {profile.isBot && <BotBadge size="md" />}
-              {isMe && <Chip size="sm">you</Chip>}
-            </div>
-            {/* Only bots carry a second line: their proper name heads the card, so the
-                handle is extra information rather than the same string twice. */}
-            {profile.isBot && <p className="text-body text-muted">@{profile.handle}</p>}
-
-            {card?.bio && (
-              <p className="text-body text-secondary mt-1">{card.bio}</p>
-            )}
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <h1 className="font-display text-display-2 sm:text-display-1 font-extrabold tracking-tight">
+              {nameFor(profile)}
+            </h1>
+            {profile.isBot && <BotBadge size="md" />}
+            {isMe && <Chip size="sm">you</Chip>}
           </div>
 
-          {card && !placing && (
-            <RankEmblem tierId={card.rankTierId} division={card.rankDivision} size="lg" />
+          <p className="text-body-lg flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-bold">
+            <span style={{ color: placing ? undefined : card?.rankAccent }}>
+              {placing ? "Unranked" : (card?.rankLabel ?? "—")}
+            </span>
+            {globalRank && (
+              <>
+                <span className="text-faint" aria-hidden="true">
+                  ·
+                </span>
+                {/* Only the notable cutoff earns gold and the trophy glyph. Everyone
+                    else still gets their real position — just quietly. */}
+                <span
+                  className={`inline-flex items-center gap-1 ${
+                    notable ? "text-gold" : "text-muted"
+                  }`}
+                >
+                  {notable && <Glyph name="win" filled />}
+                  {globalRank} global
+                </span>
+              </>
+            )}
+          </p>
+
+          {/* Only bots carry a handle line: their proper name heads the page, so the
+              handle is extra information rather than the same string twice. */}
+          {profile.isBot && <p className="text-body text-muted">@{profile.handle}</p>}
+
+          {card?.bio && (
+            <p className="text-body text-secondary max-w-md text-balance">{card.bio}</p>
+          )}
+
+          {placing && (
+            <p className="text-body-sm text-muted">
+              {profile.placementsRemaining} placement match
+              {profile.placementsRemaining === 1 ? "" : "es"} to go before a rank appears.
+            </p>
           )}
         </div>
+      </section>
 
-        <div className="border-line grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-4">
-          <Stat
-            label="Rank"
-            value={placing ? "Unranked" : (card?.rankLabel ?? "—")}
-            accent={placing ? undefined : card?.rankAccent}
-          />
-          <Stat label="Rating" value={placing ? "—" : String(profile.elo)} />
-          <Stat label="Level" value={card ? `L${card.level}` : "—"} />
-          <Stat
-            label="Record"
-            value={card ? `${card.wins}W · ${card.losses}L` : "—"}
-          />
-        </div>
-
-        {placing && (
-          <p className="text-body-sm text-muted">
-            {profile.placementsRemaining} placement match
-            {profile.placementsRemaining === 1 ? "" : "es"} to go before a rank appears.
-          </p>
-        )}
-
-        {/* Every placed player gets a position, not just the top 100 — "where am I?" is
-            the question a ladder exists to answer. Past 500 the server reports a bucket
-            rather than an exact figure, so this reads "1,500+ global".
-
-            Only the notable cutoff earns gold and the trophy glyph. A neutral chip below
-            it keeps the flag meaning something. */}
-        {globalRank && (
-          <Chip tone={notable ? "gold" : "neutral"} size="sm" className="w-fit">
-            {notable && <Glyph name="win" filled />}
-            {globalRank} global
-          </Chip>
-        )}
+      {/* The stat strip. Four numbers, evenly weighted, in the app's numeral face —
+          this is the line you read to size someone up. */}
+      <Card variant="hero" className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+        <Stat label="Rating" value={placing ? "—" : String(profile.elo)} />
+        <Stat label="Level" value={card ? `L${card.level}` : "—"} />
+        <Stat
+          label="Record"
+          value={card ? `${card.wins}W · ${card.losses}L` : "—"}
+        />
+        <Stat label="Win rate" value={winRate === null ? "—" : `${winRate}%`} />
       </Card>
 
       <BadgeCase earned={card?.badges.map((badge) => badge.id) ?? []} />
@@ -139,29 +183,21 @@ export default function ProfilePage() {
       {!isMe && !profile.isBot && card?.bio && me && (
         <ReportDialog userId={profile.userId} displayName={nameFor(profile)} />
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
-function Stat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: string;
-}) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
+      {/* Value above label. The numbers are what you scan; the words are what you read
+          only if a number surprises you. */}
+      <span className="font-display text-display-2 text-paper truncate font-extrabold tabular-nums">
+        {value}
+      </span>
       <span className="text-label text-muted font-semibold tracking-wider uppercase">
         {label}
-      </span>
-      <span
-        className="font-display text-body-lg truncate font-bold tabular-nums"
-        style={accent ? { color: accent } : undefined}
-      >
-        {value}
       </span>
     </div>
   );
@@ -196,8 +232,8 @@ function BadgeCase({ earned }: { earned: string[] }) {
                 has ? "border-gold bg-ink-700" : "border-line bg-ink-800"
               }`}
             >
-              <span className={`text-2xl ${has ? "" : "opacity-25 grayscale"}`}>
-                {badge.emoji}
+              <span className={`text-2xl ${has ? "text-gold" : "text-faint"}`}>
+                <BadgeMark id={badge.id} />
               </span>
               <div className="flex min-w-0 flex-col">
                 <span
@@ -265,16 +301,25 @@ function RecentMatches({ userId }: { userId: Id<"users"> }) {
                 className="border-line bg-ink-800 hover:bg-ink-700 flex items-center gap-3
                            rounded-md border p-3 transition-colors"
               >
+                {/* Was a 1px coloured bar down the left edge — the same tab motif the
+                    ladder used, and just as anonymous. A result has a glyph for exactly
+                    this; `signal-text` rather than `signal` because the mark is small and
+                    `signal` is only legal at 24px and up. */}
                 <span
                   aria-hidden
-                  className={`h-9 w-1 shrink-0 rounded-full ${
+                  className={`flex size-9 shrink-0 items-center justify-center text-lg ${
                     result === "won"
-                      ? "bg-gold"
+                      ? "text-gold"
                       : result === "lost"
-                        ? "bg-signal"
-                        : "bg-ink-500"
+                        ? "text-signal-text"
+                        : "text-muted"
                   }`}
-                />
+                >
+                  <Glyph
+                    name={result === "won" ? "win" : result === "lost" ? "loss" : "draw"}
+                    filled={result === "won"}
+                  />
+                </span>
 
                 {match.opponent ? (
                   <Avatar

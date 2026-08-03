@@ -33,6 +33,10 @@
   --color-signal: #e03a2f; /* 4.1:1 — large text, bars, >=24px only */
   --color-signal-text: #ff6b5e; /* 6.4:1 — same meaning at body size */
   --color-gold: #f0b429; /* 9.6:1 */
+  /* Teal means LIVE — a queue that is filling, a room in session, a match in flight.
+     It used to have no assigned meaning at all, which is how it ended up as a
+     decorative left border on "this row is you" and read as arbitrary. Identity is
+     now the plate (see `.plate` below); teal is only ever "this is happening now". */
   --color-teal: #1f9e8c; /* 5.4:1 */
 
   /* Score tiers. SNAP is pure paper: nothing else in the app is this bright,
@@ -85,6 +89,93 @@
 @theme {
   --ease-ignite: cubic-bezier(0.2, 0, 0, 1);
   --ease-drain: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/**
+ * The three licensed exceptions to "no gradients and no glow".
+ *
+ * The law above is not softening. These three are named, tokenised and enumerated
+ * precisely so they cannot spread: a design where every surface has an inner highlight
+ * is the corporate-SaaS default this build exists to avoid. If you are reaching for one
+ * of these on a surface not listed here, the answer is no.
+ *
+ *   --sheen-hero   ONE hero surface per screen. Card variant="hero" only.
+ *   --plate-cut    the chamfer, on identity surfaces only — Card `you`, the VS plate.
+ *   --tier tint    a player's rank accent as light. Two permitted surfaces and no others:
+ *                  behind rank emblem artwork at lg/xl (the `.bloom-tier` utility), and
+ *                  the two halves of the VS reveal, which is the one screen where both
+ *                  players' ranks are the subject rather than a label.
+ *
+ * The VS halves are the only place a tier tint sits behind text. It is capped at 18% over
+ * ink-800, which keeps paper on the brightest accent (Legend) above 8:1 — comfortably
+ * inside AA. Do not raise it without re-measuring.
+ */
+@theme {
+  /**
+   * A 1px top inner highlight — the light catching the top edge of a raised object.
+   * Blur-free like everything else here: it is a hairline, not a glow.
+   */
+  --sheen-hero: inset 0 1px 0 0 rgb(255 255 255 / 0.06);
+
+  /**
+   * The corner cut, in absolute length rather than the percentage RankEmblem uses.
+   *
+   * The emblem's polygon is 22%, which is right for a square plate and catastrophic on a
+   * 600×56 leaderboard row — 22% of the width is a 132px bite. A fixed length keeps the
+   * cut reading as the same struck corner at every aspect ratio.
+   */
+  --plate-cut: 14px;
+}
+
+@layer utilities {
+  /**
+   * The chamfer. Sharp cuts at top-left and bottom-right — asymmetric, so it reads as
+   * struck rather than as a hexagon. Same geometry as the rank emblem plate, which is
+   * the whole point: identity surfaces wear the shape of the thing you are ranked by.
+   *
+   * Clips the border box, so a bordered element loses its border at the two cuts. Draw
+   * the outline as a stacked fill instead — see the `you` branch of Card, which mirrors
+   * what RankEmblem does for its unranked state.
+   */
+  .plate {
+    clip-path: polygon(
+      var(--plate-cut) 0,
+      100% 0,
+      100% calc(100% - var(--plate-cut)),
+      calc(100% - var(--plate-cut)) 100%,
+      0 100%,
+      0 var(--plate-cut)
+    );
+  }
+
+  .sheen {
+    box-shadow: var(--sheen-hero);
+  }
+
+  /**
+   * Ambient tier light behind emblem artwork.
+   *
+   * Reads `--tier-accent` from the call site, so the colour is owned by RANK_TIERS and
+   * this stays a shape. Drawn on a ::before beneath the art rather than as a background
+   * on the element itself, so the emblem PNG keeps its own transparency.
+   */
+  .bloom-tier {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .bloom-tier::before {
+    content: "";
+    position: absolute;
+    inset: -35%;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--tier-accent, transparent) 20%, transparent),
+      transparent 100%
+    );
+  }
 }
 
 @layer base {

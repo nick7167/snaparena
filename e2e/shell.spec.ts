@@ -70,9 +70,29 @@ test.describe("sidebar", () => {
     expect(playBox.y).toBeLessThan(levelBox.y);
     expect(levelBox.y).toBeLessThan(menuBox.y);
 
-    // Loud enough to be the thing you see first. A `lg` Button is 52px; this carries a
-    // caption and is deliberately taller.
-    expect(playBox.height).toBeGreaterThan(60);
+    /**
+     * Compact, and carrying your standing.
+     *
+     * This used to assert `height > 60` — the button stacked a caption under the word and
+     * added `py-4` on top of a `lg` Button, about 76px of sidebar for one verb and a fixed
+     * string. Loud is not the same as tall: the emphasis now comes from the gold fill and
+     * the press edge, and the height it gave back is spent on information instead.
+     *
+     * Still bounded on both sides, so this cannot silently drift back into a slab or
+     * collapse below the 44px touch target.
+     */
+    expect(playBox.height).toBeGreaterThanOrEqual(44);
+    expect(playBox.height).toBeLessThanOrEqual(60);
+
+    /**
+     * The information that replaced the height: a rating, or the placement count while
+     * the account is still placing. Exactly one of the two is always present.
+     *
+     * No word boundaries. The label and the rating are separate spans, so the button's
+     * text content reads "PLAY941Ranked duel▲+12" with no separator — and `\b` never
+     * matches between the "Y" and the "9".
+     */
+    await expect(play).toContainText(/\d{3,4}|to place/);
 
     await page.screenshot({ path: path.join(SCREENSHOTS, "shell-sidebar.png") });
   });

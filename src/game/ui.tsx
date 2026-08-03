@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { SCORE_TIERS } from "@/engine/config";
 import { Chip } from "@/ui/Surface";
-import { Glyph } from "@/ui/Glyph";
+import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { settle } from "@/ui/motion";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -135,10 +135,18 @@ export function Stage({
   children,
   keyName,
   className = "",
+  width = "max-w-2xl",
 }: {
   children: ReactNode;
   keyName: string;
   className?: string;
+  /**
+   * An explicit prop rather than a `max-w-*` in `className`, because two width utilities
+   * on one element resolve by stylesheet order rather than by which was written last —
+   * so an override silently wins or loses depending on where Tailwind happens to sort it.
+   * The VS reveal is the one stage that wants more room than the default column.
+   */
+  width?: string;
 }) {
   const reduced = usePrefersReducedMotion();
 
@@ -149,7 +157,7 @@ export function Stage({
       animate={{ opacity: 1, y: 0 }}
       exit={reduced ? undefined : { opacity: 0, y: -12 }}
       transition={settle}
-      className={`mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 ${className}`}
+      className={`mx-auto flex w-full flex-col gap-6 px-4 ${width} ${className}`}
     >
       {children}
     </motion.div>
@@ -273,9 +281,9 @@ export function BadgeRow({
         <span
           key={badge.id}
           title={badge.name}
-          className="bg-ink-600 rounded-xs px-1.5 py-0.5 text-sm leading-none"
+          className="bg-ink-600 text-secondary rounded-xs px-1.5 py-1 text-sm leading-none"
         >
-          {badge.emoji}
+          <BadgeMark id={badge.id} />
         </span>
       ))}
       {badges.length > max && (

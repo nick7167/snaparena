@@ -95,7 +95,16 @@ test.describe("leaderboard", () => {
      * would make every row a different width and shove the handles around.
      */
     await page.goto("/leaderboard");
-    const marks = smallEmblems(page);
+    /**
+     * Scoped to rows, not to the whole board.
+     *
+     * The ladder is banded by rank tier now, and each band header carries its tier's mark
+     * at `md` — which is drawn from the same /ranks/sm/ asset set as the rows but at 40px
+     * rather than 28px. That is deliberate: a band header is not a row and has no handle
+     * to align with. Measuring both together compared a heading against a row and failed
+     * on a difference that is the design.
+     */
+    const marks = page.locator('main ol > li img[src^="/ranks/sm/"]:visible');
     await expect(marks.first()).toBeVisible({ timeout: 30_000 });
 
     const widths = new Set<number>();

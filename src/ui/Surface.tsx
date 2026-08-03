@@ -8,23 +8,79 @@ import type { ReactNode } from "react";
  * hand-rolled progress bars that had drifted apart in height, radius and colour.
  */
 
-/** A raised panel. The default container for anything grouped. */
+/**
+ * A raised panel. The default container for anything grouped.
+ *
+ * `variant` and `you` are deliberately separate axes. They used to be one boolean called
+ * `emphasis`, which drew a teal left border and was asked to mean two unrelated things:
+ * "this card is the important one" (the landing page's challenge card, the daily result)
+ * and "this row is you" (the ladder, the room roster, the duel scoreboard). One look for
+ * two meanings is why it read as generic — a coloured tab on the left is the house style
+ * of every template on earth, and it was not even saying a consistent thing.
+ *
+ *   variant="hero"   importance. A brighter surface and a 1px top sheen.
+ *   you              identity. The struck plate — the shape of the rank emblem itself.
+ *
+ * `you` wins outright rather than composing with `variant`. The sheen is a hairline along
+ * a rectangular top edge, and the plate's visible surface is not rectangular — drawing
+ * both puts a lit stub outside the chamfer at each cut corner. No surface in the app needs
+ * to be simultaneously the most important thing on screen and the row that is you.
+ */
 export function Card({
   children,
   className = "",
-  /** Draws attention without colour — used for "this row is you". */
-  emphasis = false,
+  variant = "default",
+  /**
+   * "This one is you." Draws the app's chamfered plate with a hairline in `accent`,
+   * which should be the viewer's own rank accent — so your row on the ladder is marked
+   * in the colour of the rank you actually hold.
+   */
+  you = false,
+  accent,
   as: Tag = "div",
 }: {
   children: ReactNode;
   className?: string;
-  emphasis?: boolean;
+  variant?: "default" | "hero";
+  you?: boolean;
+  accent?: string;
   as?: "div" | "section" | "li" | "article";
 }) {
+  /**
+   * The plate is drawn as two stacked fills rather than a clip on a bordered box,
+   * because `clip-path` cuts the border away at the two chamfers and leaves the corners
+   * hanging open. Fill, inset by a hairline, fill again — the same construction
+   * RankEmblem uses for its unranked plate, so both come out identical.
+   */
+  if (you) {
+    return (
+      /**
+       * `isolate` is load-bearing. The two fills are positioned and the content is not,
+       * and a positioned element paints above static in-flow content regardless of DOM
+       * order — so without a stacking context here the plate covers the row. Isolating
+       * lets the fills sit at -z-10 behind the content without falling behind the page.
+       *
+       * The caller's className still lands on this element, so every existing layout
+       * class (padding, flex, gap) keeps working and children stay direct flex items.
+       */
+      <Tag className={`relative isolate ${className}`}>
+        <span
+          aria-hidden="true"
+          className="plate absolute inset-0 -z-10"
+          style={{ backgroundColor: accent ?? "var(--color-line-strong)" }}
+        />
+        <span aria-hidden="true" className="plate bg-ink-600 absolute inset-[1.5px] -z-10" />
+        {children}
+      </Tag>
+    );
+  }
+
   return (
     <Tag
-      className={`rounded-md ${
-        emphasis ? "bg-ink-600 border-teal border-l-4" : "bg-ink-700 border-line border"
+      className={`rounded-md border ${
+        variant === "hero"
+          ? "bg-ink-700 border-line-strong sheen"
+          : "bg-ink-700 border-line"
       } ${className}`}
     >
       {children}

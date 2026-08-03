@@ -8,6 +8,7 @@ import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, SectionLabel, Skeleton } from "@/ui/Surface";
+import { PageHeader } from "../page-header";
 import {
   getMuteServerSnapshot,
   getMuteSnapshot,
@@ -23,7 +24,13 @@ import {
  */
 export default function SettingsPage() {
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12">
+    <>
+      {/* Settings is reached from the account menu, which is on every page — so "where
+          you came from" is genuinely unpredictable here and the history-aware label
+          earns its keep more than anywhere else in the app. */}
+      <PageHeader parent={{ href: "/", label: "Home" }} />
+
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12">
       <h1 className="font-display text-display-1 font-extrabold">Settings</h1>
 
       <SignedOut>
@@ -38,7 +45,8 @@ export default function SettingsPage() {
       </SignedIn>
 
       <SoundSection />
-    </div>
+      </div>
+    </>
   );
 }
 

@@ -16,6 +16,7 @@ import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
 import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
+import { recordVisit } from "./nav-history";
 import { clearGuestToken, getGuestToken } from "./guest";
 import {
   getMuteServerSnapshot,
@@ -57,6 +58,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-full flex-col lg:flex-row">
+      <NavRecorder />
       {!immersive && <Sidebar />}
 
       <main
@@ -71,6 +73,25 @@ export function AppShell({ children }: { children: ReactNode }) {
       {!immersive && <TabBar />}
     </div>
   );
+}
+
+/**
+ * Records every route change so the back control on sub-pages knows where you came from.
+ *
+ * Mounted in the shell rather than in PageHeader: the header only exists on the pages
+ * that HAVE a way back, so if it did the recording it would never see the ladder or the
+ * home page — the two routes people most often arrive from.
+ *
+ * Renders nothing, and runs in an effect so it never touches storage during render.
+ */
+function NavRecorder() {
+  const pathname = usePathname();
+
+  useEffect(() => {
+    recordVisit(pathname);
+  }, [pathname]);
+
+  return null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -149,19 +170,83 @@ function Sidebar() {
 /**
  * The primary action, and the only control in the app allowed to be this loud.
  *
- * Deliberately taller than a `lg` Button and carrying a caption, because its job is to be
- * unmissable from across the room — a sidebar where every control has the same weight is
- * a sidebar with no answer to "what do I do now?".
+ * It used to stack a caption under the word and run `py-4` on top of a `lg` button — about
+ * 76px of sidebar for one verb and a fixed string. Loud is not the same as tall: the same
+ * emphasis now comes from the gold fill and the press edge, in a single 52px row, and the
+ * space that bought buys information instead.
+ *
+ * The right rail carries the rating and the way it last moved. That pairing is the point —
+ * the number you are trying to move, and the control that moves it, are the same object.
  */
 function PlayButton({ href, caption }: { href: string; caption: string }) {
   return (
-    <ButtonLink href={href} size="lg" block className="flex-col gap-0.5 py-4">
-      <span className="flex items-center gap-2 text-xl font-extrabold tracking-wide">
-        <Glyph name="tier" filled />
-        PLAY
+    // `justify-between` only, no padding override: SIZES.lg already sets px-7, and two
+    // competing padding utilities resolve by stylesheet order rather than by which one is
+    // written last. hub.tsx sets justify-between on a ButtonLink the same way.
+    <ButtonLink href={href} size="lg" block className="justify-between">
+      <span className="flex flex-col items-start">
+        <span className="flex items-center gap-1.5 text-xl leading-none font-extrabold tracking-wide">
+          <Glyph name="tier" filled />
+          PLAY
+        </span>
+        <span className="text-label mt-0.5 font-medium opacity-70">{caption}</span>
       </span>
-      <span className="text-body-sm font-normal opacity-75">{caption}</span>
+      <SignedIn>
+        <RatingRail />
+      </SignedIn>
     </ButtonLink>
+  );
+}
+
+/**
+ * Rating, and the last swing.
+ *
+ * Sits inside the gold button, so it inherits `text-ink-900` — the delta colours below are
+ * therefore drawn from the ink end of the palette rather than the usual gold/signal-text
+ * pair, which would vanish on a gold fill.
+ *
+ * Zero is its own case, not a small win. A loss at the rating floor reports a delta of 0
+ * (applyMatchResult deliberately reports the drop actually taken), and rendering that as a
+ * gain would be a lie told by a colour.
+ */
+function RatingRail() {
+  const me = useQuery(api.users.me, {});
+  const delta = useQuery(api.users.lastRatingChange, {});
+
+  if (!me) return null;
+
+  // During placements there is no rating worth showing — the same rule the user menu and
+  // the profile already follow. The placement count is the useful number instead.
+  if (me.placementsRemaining > 0) {
+    return (
+      <span className="flex shrink-0 flex-col items-end leading-none">
+        <span className="font-display text-body font-bold tabular-nums">
+          {me.placementsRemaining}
+        </span>
+        <span className="text-label mt-0.5 font-medium opacity-70">to place</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex shrink-0 flex-col items-end leading-none">
+      <span className="font-display text-body font-bold tabular-nums">{me.elo}</span>
+      {delta !== null && delta !== undefined && (
+        <span
+          className={`text-label mt-0.5 flex items-center gap-0.5 font-bold tabular-nums ${
+            delta > 0 ? "opacity-100" : delta < 0 ? "opacity-70" : "opacity-50"
+          }`}
+        >
+          {delta !== 0 && (
+            <span className={delta > 0 ? "" : "rotate-180"}>
+              <Glyph name="win" filled />
+            </span>
+          )}
+          {delta > 0 ? "+" : ""}
+          {delta}
+        </span>
+      )}
+    </span>
   );
 }
 

@@ -2,12 +2,12 @@
 
 import { useQuery } from "convex/react";
 import { useParams, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { MatchEnd, type MatchEndPlayer } from "@/game/MatchEnd";
 import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { Empty, Skeleton } from "@/ui/Surface";
+import { PageHeader } from "../../page-header";
 
 /**
  * A finished match, reopened.
@@ -56,49 +56,45 @@ export default function MatchRecapPage() {
   // the branded id types, which arrive as strings on the wire.
   const players = recap.players as unknown as MatchEndPlayer[];
 
-  return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
-      <p className="text-body-sm text-muted text-center">
-        {formatWhen(recap.completedAt)}
-        {recap.mode === "practice" && " · practice"}
-        {recap.suddenDeath && " · sudden death"}
-      </p>
+  /**
+   * The declared parent is the subject's profile — the page a match record hangs off, and
+   * where the history list that links here lives. PageHeader overrides it with wherever
+   * you actually came from; this is what a shared link lands on.
+   */
+  const subject =
+    players.find((player) => player.userId === recap.perspectiveUserId) ?? players[0];
 
-      <MatchEnd
-        matchId={matchId}
-        players={players}
-        winnerId={recap.winnerId ? String(recap.winnerId) : null}
-        maxHp={recap.mode === "room" ? ROOM_STARTING_HP : DUEL_STARTING_HP}
-        perspectiveUserId={
-          recap.perspectiveUserId ? String(recap.perspectiveUserId) : undefined
+  return (
+    <>
+      <PageHeader
+        parent={
+          subject
+            ? { href: `/u/${subject.handle}`, label: `@${subject.handle}` }
+            : { href: "/leaderboard", label: "Leaderboard" }
         }
+        title="Match record"
       />
 
-      {/* No "Play again" here — this is a record, not a lobby. The way back is to the
-          player whose page you came from. */}
-      <BackToProfile players={players} perspectiveUserId={recap.perspectiveUserId} />
-    </div>
-  );
-}
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
+        <p className="text-body-sm text-muted text-center">
+          {formatWhen(recap.completedAt)}
+          {recap.mode === "practice" && " · practice"}
+          {recap.suddenDeath && " · sudden death"}
+        </p>
 
-function BackToProfile({
-  players,
-  perspectiveUserId,
-}: {
-  players: MatchEndPlayer[];
-  perspectiveUserId: string | null;
-}) {
-  const subject =
-    players.find((player) => player.userId === perspectiveUserId) ?? players[0];
-  if (!subject) return null;
-
-  return (
-    <Link
-      href={`/u/${subject.handle}`}
-      className="text-body-sm text-muted hover:text-paper mx-auto underline underline-offset-4"
-    >
-      Back to @{subject.handle}
-    </Link>
+        {/* No "Play again" here — this is a record, not a lobby. The way back used to be
+            a lone underlined link at the bottom of the page; it is the header now. */}
+        <MatchEnd
+          matchId={matchId}
+          players={players}
+          winnerId={recap.winnerId ? String(recap.winnerId) : null}
+          maxHp={recap.mode === "room" ? ROOM_STARTING_HP : DUEL_STARTING_HP}
+          perspectiveUserId={
+            recap.perspectiveUserId ? String(recap.perspectiveUserId) : undefined
+          }
+        />
+      </div>
+    </>
   );
 }
 

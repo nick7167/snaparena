@@ -5,7 +5,8 @@ import { useEffect } from "react";
 import { PHASE_DURATIONS_MS, REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
 import { isNotable } from "@/engine/ranks";
 import { play } from "@/audio/sfx";
-import { Avatar, BadgeRow, BotBadge, RankBadge, Stage, TierChip, hpTone, nameFor } from "./ui";
+import { Avatar, BadgeRow, BotBadge, Stage, TierChip, hpTone, nameFor } from "./ui";
+import { RankEmblem } from "@/ui/RankEmblem";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { Card, Chip, Meter } from "@/ui/Surface";
 import { Button } from "@/ui/Button";
@@ -69,100 +70,224 @@ export function VsReveal({
     play("whoosh");
   }, []);
 
-  const slam = (fromX: number) =>
+  /**
+   * Full-bleed, and no cards.
+   *
+   * Two players in two identical `Card`s with a small italic "VS" between them is a
+   * table of two rows — it describes a matchup rather than staging one. The screen is
+   * split along the chamfer instead: the same angle the rank emblem is cut on, so the
+   * seam between you and them is the app's own geometry rather than a diagonal borrowed
+   * from nowhere. Each half carries its player's tier colour, which is the one moment in
+   * a duel where both ranks are the subject.
+   *
+   * The 5s phase budget is the server's (`PHASE_DURATIONS_MS.vs_reveal`) and this must
+   * not depend on it — every beat below lands inside 3.2s so the composition is complete
+   * and readable well before the phase ends, whatever the server decides.
+   */
+  const beat = (delay: number) =>
     reduced
-      ? { initial: false as const, animate: { opacity: 1, x: 0 } }
+      ? { initial: false as const, animate: { opacity: 1, x: 0, y: 0 } }
       : {
-          initial: { opacity: 0, x: fromX, scale: 0.85 },
-          animate: { opacity: 1, x: 0, scale: 1 },
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          transition: { delay, duration: 0.35, ease: "easeOut" as const },
         };
 
   return (
-    <Stage keyName="vs" className="py-10 text-center">
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6">
-        <motion.div {...slam(-120)} transition={{ type: "spring", stiffness: 220, damping: 18 }}>
-          <VsCard player={me} />
-        </motion.div>
+    /* Width via the prop, not className: two `max-w-*` utilities on one element resolve
+       by stylesheet order, so an override is a coin flip. The single wrapper below also
+       means Stage's `gap-6` has nothing to apply between, so it needs no overriding. */
+    <Stage keyName="vs" width="max-w-4xl">
+      {/* One child, so Stage's `gap-6` has nothing to apply between and needs no
+          overriding — the spacing below is owned by these two sections. */}
+      <div className="flex w-full flex-col">
+      <div className="relative isolate w-full overflow-hidden rounded-lg">
+        {/* The two tinted halves. Drawn as siblings clipped to complementary polygons so
+            the seam is a single hard edge rather than two shapes that nearly meet. */}
+        <Half side="left" accent={me.rankAccent} reduced={reduced} />
+        <Half side="right" accent={opponent.rankAccent} reduced={reduced} />
 
+        <div className="relative grid grid-cols-2 items-start gap-2 px-4 py-8 sm:gap-6 sm:px-8 sm:py-12">
+          <VsSide player={me} align="start" reduced={reduced} delay={0.45} youAre />
+          <VsSide player={opponent} align="end" reduced={reduced} delay={0.6} />
+        </div>
+
+        {/* VS, struck as a plate. Centred over the seam — it is the seam's label. */}
         <motion.div
-          initial={reduced ? false : { scale: 0, rotate: -25 }}
-          animate={{ scale: 1, rotate: 0 }}
-          transition={{ delay: 0.25, type: "spring", stiffness: 300, damping: 14 }}
-          className="font-display text-display-2 sm:text-display-1 text-muted font-extrabold italic"
+          initial={reduced ? false : { scale: 0.4, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={
+            reduced ? undefined : { delay: 0.3, type: "spring", stiffness: 320, damping: 15 }
+          }
+          className="absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
         >
-          VS
-        </motion.div>
-
-        <motion.div {...slam(120)} transition={{ type: "spring", stiffness: 220, damping: 18 }}>
-          <VsCard player={opponent} />
+          <span className="bg-ink-900 relative flex size-14 items-center justify-center sm:size-16">
+            <span
+              aria-hidden="true"
+              className="plate bg-line-strong absolute inset-0 -z-10"
+              style={{ ["--plate-cut" as string]: "10px" }}
+            />
+            <span
+              aria-hidden="true"
+              className="plate bg-ink-900 absolute inset-[1.5px] -z-10"
+              style={{ ["--plate-cut" as string]: "10px" }}
+            />
+            <span className="font-display text-paper text-xl font-extrabold tracking-tight sm:text-2xl">
+              VS
+            </span>
+          </span>
         </motion.div>
       </div>
 
-      {/* `globalRank` now carries a real position for every placed player, so the
-          notable cutoff has to be applied here. Without it every duel would open with a
-          rank flag, which is precisely what makes the flag mean nothing. */}
-      {isNotable(opponent.globalRank) && (
-        <motion.p
-          initial={reduced ? false : { opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-          className="text-body-sm text-gold font-semibold tracking-wide"
-        >
-          #{opponent.globalRank} GLOBAL
-        </motion.p>
-      )}
+      <div className="flex flex-col items-center gap-2 pt-5 pb-8">
+        {matchup && (
+          <motion.p
+            {...beat(1.05)}
+            className="font-display text-body-lg text-paper font-bold tracking-[0.2em]"
+          >
+            {matchup}
+          </motion.p>
+        )}
 
-      {matchup && (
-        <motion.p
-          initial={reduced ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.75 }}
-          className="font-display text-body-lg text-paper font-bold tracking-[0.2em]"
-        >
-          {matchup}
-        </motion.p>
-      )}
+        {/* `globalRank` carries a real position for every placed player, so the notable
+            cutoff has to be applied here. Without it every duel would open with a rank
+            flag, which is precisely what makes the flag mean nothing. */}
+        {isNotable(opponent.globalRank) && (
+          <motion.p
+            {...beat(1.25)}
+            className="text-body-sm text-gold flex items-center gap-1.5 font-semibold tracking-wide"
+          >
+            <Glyph name="win" filled />#{opponent.globalRank} GLOBAL
+          </motion.p>
+        )}
+      </div>
+      </div>
     </Stage>
   );
 }
 
-function VsCard({ player }: { player: PlayerCardData }) {
+/**
+ * One tinted half of the split.
+ *
+ * The chamfer angle is the emblem's, expressed as a polygon that runs corner to corner
+ * with the same asymmetric bias — left half takes the top, right half takes the bottom,
+ * so the seam leans the way the plate's cut leans.
+ *
+ * The tint is `--bloom-tier` territory: a licensed exception, at low alpha, behind
+ * everything. It never touches text.
+ */
+function Half({
+  side,
+  accent,
+  reduced,
+}: {
+  side: "left" | "right";
+  accent: string;
+  reduced: boolean;
+}) {
+  const clip =
+    side === "left"
+      ? "polygon(0 0, 58% 0, 42% 100%, 0 100%)"
+      : "polygon(58% 0, 100% 0, 100% 100%, 42% 100%)";
+
   return (
-    <Card className="flex flex-col items-center gap-2 p-3 sm:p-4">
+    <motion.span
+      aria-hidden="true"
+      initial={reduced ? false : { opacity: 0, x: side === "left" ? "-8%" : "8%" }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={reduced ? undefined : { duration: 0.4, ease: [0.2, 0, 0, 1] }}
+      className="absolute inset-0 -z-10"
+      style={{
+        clipPath: clip,
+        backgroundColor: "var(--color-ink-900)",
+        // color-mix keeps the tint honest: the tier's own colour, at a strength low
+        // enough that paper text over it still clears contrast.
+        backgroundImage: `linear-gradient(to ${
+          side === "left" ? "right" : "left"
+        }, color-mix(in srgb, ${accent} 18%, transparent), transparent 70%)`,
+      }}
+    />
+  );
+}
+
+function VsSide({
+  player,
+  align,
+  reduced,
+  delay,
+  youAre = false,
+}: {
+  player: PlayerCardData;
+  align: "start" | "end";
+  reduced: boolean;
+  delay: number;
+  youAre?: boolean;
+}) {
+  const end = align === "end";
+
+  return (
+    <motion.div
+      initial={reduced ? false : { opacity: 0, x: end ? 60 : -60 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={
+        reduced ? undefined : { delay, type: "spring", stiffness: 220, damping: 20 }
+      }
+      className={`flex min-w-0 flex-col gap-2 ${
+        end ? "items-end text-right" : "items-start text-left"
+      }`}
+    >
+      <RankEmblem
+        tierId={player.rankTierId}
+        division={player.rankDivision}
+        size="lg"
+        unranked={player.placementsRemaining > 0}
+        bloom={player.placementsRemaining > 0 ? undefined : player.rankAccent}
+      />
+
       {/* The avatar's fallback is a single initial, so it takes the handle rather than
           nameFor — "@" is not an initial. */}
       <Avatar
         url={player.avatarUrl}
         name={player.isBot ? player.displayName : player.handle}
-        className="h-14 w-14 text-xl sm:h-20 sm:w-20"
+        className="size-10 text-base sm:size-12 sm:text-lg"
       />
-      <p className="text-body max-w-full truncate font-semibold">{nameFor(player)}</p>
+
+      <p className="font-display text-body-lg sm:text-display-2 w-full truncate font-extrabold tracking-tight">
+        {youAre ? "You" : nameFor(player)}
+      </p>
+
       {/* Only bots carry a second line: their proper name is above, so the handle is
           extra information rather than the same string twice. */}
       {player.isBot && (
-        <p className="text-body-sm text-muted max-w-full truncate">@{player.handle}</p>
+        <p className="text-body-sm text-muted w-full truncate">@{player.handle}</p>
       )}
       {player.isBot && <BotBadge />}
-      <RankBadge
-        label={player.rankLabel}
-        tierId={player.rankTierId}
-        division={player.rankDivision}
-        accent={player.rankAccent}
-        placements={player.placementsRemaining}
-        size="sm"
-      />
-      <div className="text-body-sm text-secondary flex gap-3">
-        <span className="tabular-nums">{player.elo}</span>
+
+      <p
+        className="font-display text-body font-bold"
+        style={{ color: player.placementsRemaining > 0 ? undefined : player.rankAccent }}
+      >
+        {player.placementsRemaining > 0
+          ? `${player.placementsRemaining} placement${player.placementsRemaining === 1 ? "" : "s"} left`
+          : player.rankLabel}
+      </p>
+
+      <div className="text-body-sm text-secondary flex flex-wrap gap-x-3 gap-y-0.5">
+        {player.placementsRemaining === 0 && (
+          <span className="tabular-nums">{player.elo}</span>
+        )}
         <span>L{player.level}</span>
+        <span className="tabular-nums">
+          {player.wins}W · {player.losses}L
+        </span>
       </div>
-      <div className="text-body-sm text-muted tabular-nums">
-        {player.wins}W · {player.losses}L
-      </div>
-      <BadgeRow badges={player.badges} max={5} />
+
+      <BadgeRow badges={player.badges} max={4} />
+
       {player.bestCategory && (
-        <p className="text-label text-muted">best: {player.bestCategory}</p>
+        <p className="text-label text-muted w-full truncate">best: {player.bestCategory}</p>
       )}
-    </Card>
+    </motion.div>
   );
 }
 
@@ -367,7 +492,8 @@ export function RevealStage({
           return (
             <Card
               key={result.userId}
-              emphasis={player?.isMe}
+              you={player?.isMe}
+              accent={player?.rankAccent}
               className="text-body flex items-center justify-between gap-3 px-3 py-2.5"
             >
               <span className={player?.isMe ? "text-paper font-semibold" : "text-secondary"}>
@@ -928,7 +1054,8 @@ export function MilestoneStage({
           .map((player) => (
             <Card
               key={player.userId}
-              emphasis={player.isMe}
+              you={player.isMe}
+              accent={player.rankAccent}
               className="flex flex-col gap-2.5 p-3"
             >
               <div className="flex items-center justify-between gap-3">

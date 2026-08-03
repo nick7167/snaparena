@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query, type QueryCtx, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { STARTING_ELO, PLACEMENT_MATCHES } from "../src/engine/config";
-// DEV ONLY — delete with convex/devbots.ts. Single call site, in `leaderboard`.
+import { STARTING_ELO, PLACEMENT_MATCHES, RANK_TIERS } from "../src/engine/config";
+// DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
 import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
 
 /** Resolves the signed-in Clerk identity to a user row, or null when signed out. */
@@ -515,6 +515,99 @@ export const myStanding = query({
       position,
       approximate,
     };
+  },
+});
+
+/**
+ * The rating swing from the player's most recent ranked match.
+ *
+ * Feeds the sidebar Play button, which now reads "1204 / ▲+18" — the control you press to
+ * move the number also tells you which way it last moved.
+ *
+ * Its own query rather than a field on `me`, for the same reason `myStanding` is separate:
+ * the sidebar subscribes to `me` on every page in the app, and widening that payload makes
+ * every screen pay for something only one control reads.
+ *
+ * No match lookups. `ratingDelta` is written in exactly one place — `applyRanked` in
+ * progression.ts, which only runs for `mode === "ranked"` at completion — so its presence
+ * on a row already means "a ranked match that finished". Fetching each match to re-confirm
+ * that would triple the read for no new information.
+ */
+const RATING_CHANGE_SCAN = 20;
+
+export const lastRatingChange = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await currentUser(ctx);
+    if (!user) return null;
+
+    // Bounded: a player whose last 20 matches were all practice or rooms simply gets no
+    // delta, which renders as the rating alone. That is the correct answer, not a reason
+    // to walk the whole history.
+    const rows = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .take(RATING_CHANGE_SCAN);
+
+    const rated = rows.find((row) => row.ratingDelta !== undefined);
+    return rated?.ratingDelta ?? null;
+  },
+});
+
+/**
+ * How many placed players sit in each rank tier.
+ *
+ * The ladder is grouped into tier bands now, and a band header that cannot say how many
+ * people are in it is just a coloured rule. Counts are what make the ladder read as a
+ * population you are climbing through rather than a list that happens to be sorted.
+ *
+ * Deliberately bounded and honest rather than exact. Convex has no count operator, and the
+ * guidelines are explicit that counting rows by reading them does not scale — so each tier
+ * reads at most `TIER_COUNT_CAP + 1` documents through the `by_elo` range and reports
+ * `approximate` when it hits the cap, which the client renders as "50+". Six tiers puts the
+ * worst case at ~306 documents, and Bronze being "50+" rather than 4,812 costs the reader
+ * nothing.
+ *
+ * The alternative — @convex-dev/aggregate — is the right answer if these ever need to be
+ * exact, but it is a component plus a backfill, and no header on this page needs a precise
+ * number.
+ */
+const TIER_COUNT_CAP = 50;
+
+export const tierCounts = query({
+  args: {},
+  handler: async (ctx) => {
+    const showRankBots = devRankBotsEnabled();
+
+    return await Promise.all(
+      RANK_TIERS.map(async (tier, index) => {
+        const next = RANK_TIERS[index + 1];
+
+        // The range is the tier's own Elo band: at or above its floor, below the next
+        // tier's. The top tier has no ceiling, so its range is open-ended.
+        const rows = await ctx.db
+          .query("users")
+          .withIndex("by_elo", (q) =>
+            next
+              ? q.gte("elo", tier.minElo).lt("elo", next.minElo)
+              : q.gte("elo", tier.minElo),
+          )
+          .filter((q) => onBoard(q, showRankBots))
+          .take(TIER_COUNT_CAP + 1);
+
+        // Applied after the index scan for the same reason `leaderboard` does it: the
+        // dev-bot persona check cannot be expressed as an index filter, and both readers
+        // have to agree about who is on the board.
+        const visible = rows.filter((user) => onBoardDoc(user, showRankBots));
+
+        return {
+          tierId: tier.id,
+          count: Math.min(visible.length, TIER_COUNT_CAP),
+          approximate: visible.length > TIER_COUNT_CAP,
+        };
+      }),
+    );
   },
 });
 

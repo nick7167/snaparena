@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { RANK_TIERS, SCORE_TIERS } from "@/engine/config";
+import { BADGES } from "@/engine/badges";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, Chip, Empty, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
-import { Glyph, type GlyphName } from "@/ui/Glyph";
+import { BadgeMark, Glyph, type GlyphName } from "@/ui/Glyph";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Avatar, BadgeRow, BotBadge, PhaseTimer, RankBadge, TierChip } from "@/game/ui";
 import { useNow } from "@/game/usePrefersReducedMotion";
@@ -13,7 +14,7 @@ import { useNow } from "@/game/usePrefersReducedMotion";
 const GLYPHS: GlyphName[] = [
   "tier", "rank", "bot", "streak", "damage", "skip",
   "mute", "sound", "timer", "win", "loss", "draw", "song",
-  "settings", "leave",
+  "settings", "leave", "user", "chevron",
 ];
 
 /** Mirrors rejectionMessage() in RoundRunner. Every branch must render somewhere. */
@@ -201,16 +202,30 @@ function Inputs() {
 
 function Surfaces() {
   return (
-    <Group title="Surface" note="Card, emphasis card, chips, skeletons, empty state.">
+    <Group
+      title="Surface"
+      note="Card — default, hero and you — plus chips, skeletons and the empty state."
+    >
       <div className="flex flex-col gap-6">
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* The two axes that replaced `emphasis`. It was one boolean drawing a teal left
+            rail, asked to mean both "this card matters" and "this row is you" — one look
+            for two meanings, and the reason it read as a template. */}
+        <div className="grid gap-3 sm:grid-cols-3">
           <Card className="p-4">
-            <p className="text-body">Default card</p>
+            <p className="text-body">Default</p>
             <p className="text-body-sm text-muted">bg-ink-700, hairline border</p>
           </Card>
-          <Card emphasis className="p-4">
-            <p className="text-body">Emphasis card — &ldquo;this row is you&rdquo;</p>
-            <p className="text-body-sm text-muted">Teal rail, no hue change to the fill</p>
+          <Card variant="hero" className="p-4">
+            <p className="text-body">variant=&ldquo;hero&rdquo; — importance</p>
+            <p className="text-body-sm text-muted">
+              Stronger border plus the 1px sheen. One per screen.
+            </p>
+          </Card>
+          <Card you accent={RANK_TIERS[3].accent} className="flex flex-col gap-1 p-4">
+            <p className="text-body">you — identity</p>
+            <p className="text-body-sm text-muted">
+              The struck plate, hairlined in your own tier accent.
+            </p>
           </Card>
         </div>
 
@@ -275,14 +290,39 @@ function Meters() {
 
 function Glyphs() {
   return (
-    <Group title="Glyph" note="Twelve marks, one 16×16 grid, one stroke weight. Replaces the emoji set.">
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-7">
-        {GLYPHS.map((name) => (
-          <div key={name} className="bg-ink-700 flex flex-col items-center gap-2 rounded-md p-3">
-            <span className="text-2xl"><Glyph name={name} /></span>
-            <span className="text-label text-muted">{name}</span>
+    <Group
+      title="Glyph"
+      note="Every mark, one 16×16 grid, one stroke weight. Badge art is the same grid — the emoji set is fully retired."
+    >
+      <div className="flex flex-col gap-6">
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-7">
+          {GLYPHS.map((name) => (
+            <div key={name} className="bg-ink-700 flex flex-col items-center gap-2 rounded-md p-3">
+              <span className="text-2xl"><Glyph name={name} /></span>
+              <span className="text-label text-muted">{name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="text-body-sm text-secondary font-semibold">
+            Badge marks — earned (gold) and locked (faint)
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {BADGES.map((badge) => (
+              <div
+                key={badge.id}
+                className="bg-ink-700 flex flex-col items-center gap-2 rounded-md p-3 text-center"
+              >
+                <span className="flex items-center gap-2 text-2xl">
+                  <span className="text-gold"><BadgeMark id={badge.id} /></span>
+                  <span className="text-faint"><BadgeMark id={badge.id} /></span>
+                </span>
+                <span className="text-label text-muted">{badge.name}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
     </Group>
   );
@@ -378,13 +418,9 @@ function GameChrome() {
           <Avatar name="Big" url="color:#F0B429" className="h-16 w-16 text-2xl" />
         </div>
 
-        <BadgeRow
-          badges={[
-            { id: "a", name: "Quick Draw", emoji: "🎯" },
-            { id: "b", name: "Perfect Round", emoji: "💯" },
-            { id: "c", name: "Comeback", emoji: "🔁" },
-          ]}
-        />
+        {/* Real ids, not placeholders: badge art is looked up by id now, so an invented
+            id renders nothing and the demo would silently show empty tiles. */}
+        <BadgeRow badges={BADGES.slice(0, 3)} />
         <BadgeRow badges={[]} />
       </div>
     </Group>

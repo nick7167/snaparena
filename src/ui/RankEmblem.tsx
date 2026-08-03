@@ -52,15 +52,22 @@ function artSize(tierId: string, division: number, px: number) {
   return { width: Math.round(asset.w * scale), height: Math.round(asset.h * scale) };
 }
 
-/** The chamfer. Sharp cuts at top-left and bottom-right — asymmetric, so it reads as
- *  struck rather than as a hexagon. */
-const PLATE = "polygon(22% 0, 100% 0, 100% 78%, 78% 100%, 0 100%, 0 22%)";
+/**
+ * The chamfer. Sharp cuts at top-left and bottom-right — asymmetric, so it reads as
+ * struck rather than as a hexagon.
+ *
+ * Exported because it is the app's signature geometry and more than this file wears it
+ * now. This percentage form is for square plates only; anything with a non-square aspect
+ * uses the `.plate` utility in globals.css, which cuts a fixed length instead.
+ */
+export const PLATE = "polygon(22% 0, 100% 0, 100% 78%, 78% 100%, 0 100%, 0 22%)";
 
 export function RankEmblem({
   tierId,
   division = 1,
   size = "md",
   unranked = false,
+  bloom,
   className = "",
 }: {
   /** Tier id from RANK_TIERS, e.g. "gold". Selects the artwork. */
@@ -74,6 +81,15 @@ export function RankEmblem({
    * this a brand-new player is shown a Silver emblem next to the word "Unranked".
    */
   unranked?: boolean;
+  /**
+   * The tier's accent, which lights an ambient bloom behind the artwork.
+   *
+   * One of the three licensed exceptions to the no-glow law (see globals.css), and
+   * deliberately opt-in: it is for the two screens that make the emblem the subject —
+   * the profile hero and the VS reveal — not for every emblem in a list. Ignored at
+   * sm/md, where the mark is an inline marker rather than the thing you are looking at.
+   */
+  bloom?: string;
   className?: string;
 }) {
   const spec = SIZES[size];
@@ -126,14 +142,29 @@ export function RankEmblem({
   }
 
   const art = artSize(tierId, count, spec.px)!;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
+
+  /* eslint-disable @next/next/no-img-element */
+  const image = (
     <img
       src={`/ranks/${tierId}-${count}.png`}
       alt=""
       aria-hidden="true"
-      className={`shrink-0 select-none ${className}`}
+      className={`shrink-0 select-none ${bloom ? "" : className}`}
       style={{ width: art.width, height: art.height }}
     />
+  );
+  /* eslint-enable @next/next/no-img-element */
+
+  if (!bloom) return image;
+
+  // Wrapped rather than applied to the <img> itself: the bloom draws on a ::before at
+  // z-index -1, which needs a positioned parent that is not the transparent artwork.
+  return (
+    <span
+      className={`bloom-tier inline-flex shrink-0 ${className}`}
+      style={{ ["--tier-accent" as string]: bloom }}
+    >
+      {image}
+    </span>
   );
 }

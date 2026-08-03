@@ -112,6 +112,23 @@ export function Glyph({
   filled?: boolean;
 }) {
   return (
+    <Mark className={className} filled={filled}>
+      {PATHS[name]}
+    </Mark>
+  );
+}
+
+/** The shared 16×16 shell. One viewBox, one stroke weight, sized in `em`. */
+function Mark({
+  children,
+  className,
+  filled,
+}: {
+  children: React.ReactNode;
+  className: string;
+  filled: boolean;
+}) {
+  return (
     <svg
       viewBox="0 0 16 16"
       aria-hidden="true"
@@ -123,7 +140,72 @@ export function Glyph({
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      {PATHS[name]}
+      {children}
     </svg>
+  );
+}
+
+/**
+ * Badge art.
+ *
+ * Kept apart from `GlyphName` deliberately: those are UI affordances that carry a
+ * `filled` convention and appear in navigation, and these are awards. Same grid and same
+ * stroke weight, so they sit on the app's optical weight — but a badge is never a button.
+ *
+ * Keyed by the badge id from engine/badges.ts. These replace the emoji set
+ * (🩸⚡🎯🔥👑🥶🗡️🏅) that survived the last icon pass: emoji render as a different
+ * illustration on every operating system, which is precisely the objection Glyph was
+ * created to answer, and the badge case was the last place they were left.
+ */
+const BADGE_PATHS: Record<string, React.ReactNode> = {
+  // A droplet. The first blood drawn.
+  first_blood: <path d="M8 2.25c0 0-4.25 5.05-4.25 7.5a4.25 4.25 0 0 0 8.5 0c0-2.45-4.25-7.5-4.25-7.5z" />,
+  // The SNAP spark — the same struck mark the score tier uses, because this badge is
+  // literally a count of SNAPs.
+  snap_10: <path d="M9 1.5 3.5 9h3.2l-.7 5.5L12.5 7H9.3z" />,
+  // The same spark, ringed. Mastery of the thing above it, not a different thing.
+  snap_100: (
+    <>
+      <path d="M9.1 3.5 5.6 8.4h2l-.4 3.6 3.4-5.1H8.5z" />
+      <circle cx="8" cy="8" r="6.25" />
+    </>
+  ),
+  // An unbroken shield. Flawless is "took no damage", so the mark must have no gap.
+  flawless: <path d="M8 2.25 13.25 4.4v4.3c0 3.05-2.5 4.85-5.25 5.35-2.75-.5-5.25-2.3-5.25-5.35V4.4z" />,
+  // Round the bottom and back up. A comeback is a shape, not a crown.
+  comeback: (
+    <>
+      <path d="M3.25 3v4.75a4.25 4.25 0 0 0 4.25 4.25h4.25" />
+      <path d="m9.5 9.5 2.5 2.5-2.5 2.5" />
+    </>
+  ),
+  // A pulse holding steady, then spiking. Nerves under sudden death.
+  sudden_death: <path d="M1.75 9h3l1.6-4.5L8.9 13l1.6-4h3.75" />,
+  // A struck peak: the giant, and the line through it.
+  giant_slayer: (
+    <>
+      <path d="M2.5 13 7 4.5 11.5 13z" />
+      <path d="M13.5 3 9 14" />
+    </>
+  ),
+  // A tally. One hundred matches is a count, so the mark counts.
+  centurion: (
+    <>
+      <path d="M3.5 4v8M6.25 4v8M9 4v8M11.75 4v8" />
+      <path d="M2.25 12.75 13 3.25" />
+    </>
+  ),
+};
+
+export function BadgeMark({ id, className = "" }: { id: string; className?: string }) {
+  const art = BADGE_PATHS[id];
+  // An unknown id is a data problem, not a rendering one — draw nothing rather than a
+  // broken box. `badgeById` has already dropped unknown ids everywhere this is called.
+  if (!art) return null;
+
+  return (
+    <Mark className={className} filled={false}>
+      {art}
+    </Mark>
   );
 }

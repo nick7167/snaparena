@@ -103,7 +103,7 @@ function TodayCard() {
   const stats = useQuery(api.daily.todayStats, {});
 
   return (
-    <Card emphasis className="flex flex-col gap-4 p-5 sm:gap-5 sm:p-7">
+    <Card variant="hero" className="flex flex-col gap-4 p-5 sm:gap-5 sm:p-7">
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Today&rsquo;s challenge</SectionLabel>
         <span className="text-body-sm text-muted tabular-nums">

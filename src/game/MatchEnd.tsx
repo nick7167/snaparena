@@ -13,7 +13,7 @@ import { BadgeRow, BotBadge, RankBadge, Stage, hpTone, nameFor } from "./ui";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { Button } from "@/ui/Button";
 import { Card, Chip, Meter, SectionLabel } from "@/ui/Surface";
-import { Glyph } from "@/ui/Glyph";
+import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
 import type { PlayerCardData } from "./stages";
 
@@ -149,10 +149,11 @@ export function MatchEnd({
             <Card
               as="li"
               key={player.userId}
-              // Emphasis follows the subject, not the viewer — on a recap that is the
+              // The plate follows the subject, not the viewer — on a recap that is the
               // player whose profile you arrived from. The "You" label below still keys
               // off `isMe`, because only the viewer is ever "you".
-              emphasis={player.userId === subject?.userId}
+              you={player.userId === subject?.userId}
+              accent={player.rankAccent}
               className="flex flex-col gap-2 px-4 py-3"
             >
               <div className="flex items-center justify-between">
@@ -531,7 +532,9 @@ function NewBadges({ ids }: { ids: string[] }) {
             transition={{ delay: 0.4 + index * 0.12, type: "spring", stiffness: 300, damping: 14 }}
             className="bg-ink-600 flex items-center gap-2 rounded-sm px-3 py-1.5"
           >
-            <span className="text-lg">{badge!.emoji}</span>
+            <span className="text-gold text-lg">
+              <BadgeMark id={badge!.id} />
+            </span>
             <span className="text-body-sm">{badge!.name}</span>
           </motion.div>
         ))}
