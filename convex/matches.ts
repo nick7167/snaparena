@@ -726,6 +726,17 @@ export const history = query({
         hp: row.hp ?? null,
         ratingDelta: row.ratingDelta ?? null,
         forfeited: row.forfeited,
+        /**
+         * What the match gave you, beyond the rating.
+         *
+         * Already on the row this loop reads, so these are free — and they are what lets
+         * the dashboard's "last time out" panel restate a result without a second round
+         * trip to `recap`. Null until `progression.finalizeMatch` has landed, which the
+         * reader must treat as "not known yet" rather than as "nothing was earned".
+         */
+        badgesEarned: row.badgesEarned ?? [],
+        levelBefore: row.levelBefore ?? null,
+        levelAfter: row.levelAfter ?? null,
         opponent: opponent
           ? {
               userId: opponent._id,

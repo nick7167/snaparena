@@ -83,8 +83,18 @@ test("a new account is onboarded, then plays its first daily", async ({ page }) 
   await start.click();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
 
-  // The chosen handle is now the identity everywhere.
-  await expect(page.getByRole("heading", { name: `Welcome back, @${handle}` })).toBeVisible();
+  /**
+   * The chosen handle is now the identity everywhere.
+   *
+   * On the dashboard that means the player banner, which carries the handle beside the
+   * rank it belongs to. This used to assert a "Welcome back, @handle" heading; the
+   * greeting was folded into the banner when the dashboard was rebuilt, so the heading is
+   * the rank now — "Unranked" for an account this new — and the handle sits under it.
+   * Scoped to `main` because the sidebar's account menu also shows it, and that is
+   * asserted separately on the next line.
+   */
+  await expect(page.getByRole("heading", { name: "Unranked" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(`@${handle}`);
   await expect(
     page.locator("aside").getByRole("button", { name: "Account menu" }),
   ).toContainText(`@${handle}`);

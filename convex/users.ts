@@ -7,6 +7,7 @@ import {
   RANK_TIERS,
   HANDLE_MAX_LENGTH,
 } from "../src/engine/config";
+import { computeStreak, dayKey } from "../src/engine/streak";
 // DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
 import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
 
@@ -817,6 +818,132 @@ export const profile = query({
           games: entry.games,
         }))
         .sort((a, b) => b.rating - a.rating),
+    };
+  },
+});
+
+/**
+ * How many `matchPlayers` rows the streak walk reads.
+ *
+ * A budget in ROWS, not days, and the two come apart fast: someone playing one match a
+ * day gets over a year of history out of this, someone playing eight gets seven weeks.
+ * That is the honest trade for a single indexed read with no joins, and `approximate`
+ * tells the caller when the ceiling was the thing that stopped the walk rather than a
+ * genuine gap.
+ */
+const STREAK_SCAN = 400;
+
+/**
+ * Consecutive days the player has played anything at all.
+ *
+ * Cheap because of an accident of the schema worth stating: a daily run creates a
+ * `matchPlayers` row exactly as a duel does — that is how `xpEarnedForRun` finds one —
+ * so ONE scan of `by_user` covers ranked, practice, rooms and the daily together. No
+ * `matches` lookups, no second index, and `_creationTime` is the day it was played.
+ *
+ * Computed on read rather than denormalised onto `users`: there is nothing to backfill,
+ * no write path to add to `finalizeMatch`, and a derived number cannot drift out of sync
+ * with the matches it claims to describe. The walk itself lives in `src/engine/streak.ts`
+ * so its three awkward rules — today is not yet a miss, one gap is absorbed, a second
+ * ends the run — are covered by unit tests instead of by playing on consecutive days.
+ */
+export const dailyStreak = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await currentUser(ctx);
+    if (!user) return null;
+
+    const rows = await ctx.db
+      .query("matchPlayers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .take(STREAK_SCAN);
+
+    const activeDays = new Set(rows.map((row) => dayKey(row._creationTime)));
+
+    return computeStreak(activeDays, Date.now(), rows.length >= STREAK_SCAN);
+  },
+});
+
+/** Players shown either side of you. Five rows total fits the panel without scrolling. */
+const NEIGHBOUR_REACH = 2;
+
+/**
+ * The players immediately above and below you on the ladder.
+ *
+ * Turns an abstract "#142" into a target: the gap to the player ahead is a number you can
+ * close in one match. Walks `by_elo` exactly as `globalPosition` does — same order, same
+ * `onBoard`/`onBoardDoc` pair, same ceiling — and keeps a rolling window instead of only
+ * a counter. Reusing that rule rather than restating it is deliberate: the board and the
+ * position count have already drifted apart twice, both times because a second reader
+ * measured against a population the board did not show.
+ */
+export const ladderNeighbours = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await currentUser(ctx);
+    // No rank yet means no neighbours — the panel hides rather than inventing a slot.
+    if (!user || user.placementsRemaining > 0) return null;
+
+    const showRankBots = devRankBotsEnabled();
+
+    /** The last NEIGHBOUR_REACH players ahead, oldest-first once the walk stops. */
+    const above: Doc<"users">[] = [];
+    let ahead = 0;
+    let truncated = false;
+
+    for await (const other of ctx.db
+      .query("users")
+      .withIndex("by_elo", (q) => q.gte("elo", user.elo))
+      .order("desc")
+      .filter((q) => onBoard(q, showRankBots))) {
+      // Same terminator as globalPosition: ties come back newest first, so this is the
+      // player's own slot in the total order.
+      if (other.elo === user.elo && other._creationTime <= user._creationTime) break;
+      if (!onBoardDoc(other, showRankBots)) continue;
+
+      above.push(other);
+      if (above.length > NEIGHBOUR_REACH) above.shift();
+      if (++ahead > POSITION_CEILING) {
+        truncated = true;
+        break;
+      }
+    }
+
+    // Everything at or below the player's Elo, skipping the player's own row.
+    const below: Doc<"users">[] = [];
+    for await (const other of ctx.db
+      .query("users")
+      .withIndex("by_elo", (q) => q.lte("elo", user.elo))
+      .order("desc")
+      .filter((q) => onBoard(q, showRankBots))) {
+      if (other._id === user._id) continue;
+      // Skip anyone tied but ranked ABOVE the player, or they would appear on both sides.
+      if (other.elo === user.elo && other._creationTime > user._creationTime) continue;
+      if (!onBoardDoc(other, showRankBots)) continue;
+
+      below.push(other);
+      if (below.length >= NEIGHBOUR_REACH) break;
+    }
+
+    const position = ahead + 1;
+    const row = (other: Doc<"users">, offset: number) => ({
+      userId: other._id,
+      handle: other.handle,
+      displayName: other.displayName,
+      avatarUrl: publicAvatarUrl(other),
+      elo: other.elo,
+      position: position + offset,
+      /** Signed, from the player's point of view: positive means they are ahead of you. */
+      gap: other.elo - user.elo,
+    });
+
+    return {
+      position,
+      approximate: truncated || ahead >= POSITION_EXACT_TO,
+      elo: user.elo,
+      above: above.map((other, index) => row(other, index - above.length)),
+      below: below.map((other, index) => row(other, index + 1)),
     };
   },
 });

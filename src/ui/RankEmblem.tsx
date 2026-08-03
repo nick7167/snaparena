@@ -62,6 +62,28 @@ function artSize(tierId: string, division: number, px: number) {
  */
 export const PLATE = "polygon(22% 0, 100% 0, 100% 78%, 78% 100%, 0 100%, 0 22%)";
 
+/**
+ * How far to drop an emblem so its PLATE, rather than its bounding box, reads as centred.
+ *
+ * A fraction of the emblem's own height, so it scales with `size` and with rank.
+ *
+ * One constant instead of sixteen, and deliberately so. The plate is not the whole
+ * artwork — Silver and Gold hang a plinth below theirs, Diamond and Legend add a crown
+ * above — so centring the bounding box, which is what a flex row does, leaves the plate
+ * sitting high on the tiers with the heaviest bases. Aligning the plate exactly would
+ * need its position per emblem, and that cannot be measured: on Platinum, Diamond and
+ * Legend the plate sits INSIDE a frame, so the silhouette never exposes its edges.
+ * Modal-width, contiguous-run, stable-band, neck-walk and widest-row detection all
+ * disagree there, which is the same wall `scripts/slice-emblems.ts` hit measuring plate
+ * WIDTHS — Legend's had to be converged by eye.
+ *
+ * 6% is tuned on Silver and Gold, the two tiers whose plinths make the error visible.
+ * Bronze, which needs none, ends a few pixels low; the crowned tiers a few pixels high.
+ * Both are well inside what reads as level, and the alternative is sixteen hand-set
+ * numbers that have to be re-converged every time the artwork changes.
+ */
+const PLATE_NUDGE = 0.06;
+
 export function RankEmblem({
   tierId,
   division = 1,
@@ -69,6 +91,7 @@ export function RankEmblem({
   unranked = false,
   bloom,
   fit = false,
+  plateAligned = false,
   className = "",
 }: {
   /** Tier id from RANK_TIERS, e.g. "gold". Selects the artwork. */
@@ -102,6 +125,14 @@ export function RankEmblem({
    * larger than a Bronze and a short one simply fits them both.
    */
   fit?: boolean;
+  /**
+   * Centre the emblem on its PLATE rather than on its bounding box. Large sizes only.
+   *
+   * For anywhere the emblem sits beside something square that it has to look level with —
+   * the dashboard's portrait, for one. See PLATE_NUDGE for why this is an approximation
+   * and why it is a single constant.
+   */
+  plateAligned?: boolean;
   className?: string;
 }) {
   const spec = SIZES[size];
@@ -188,7 +219,25 @@ export function RankEmblem({
       alt=""
       aria-hidden="true"
       className={`shrink-0 select-none ${bloom ? "" : className}`}
-      style={{ width: art.width, height: art.height }}
+      /**
+       * The nudge is a pair of cancelling margins, not a transform.
+       *
+       * `translateY` would move the artwork without telling the layout, so a flex row
+       * would still centre the box it used to occupy and the emblem would drift out of
+       * the space reserved for it. Equal and opposite margins keep the margin box exactly
+       * `height` tall — so the row centres and sizes as before — while placing the border
+       * box that much lower inside it. Nothing else on the card moves.
+       */
+      style={{
+        width: art.width,
+        height: art.height,
+        ...(plateAligned
+          ? {
+              marginTop: Math.round(art.height * PLATE_NUDGE),
+              marginBottom: -Math.round(art.height * PLATE_NUDGE),
+            }
+          : {}),
+      }}
     />
   );
   /* eslint-enable @next/next/no-img-element */

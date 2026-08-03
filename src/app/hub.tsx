@@ -1,68 +1,75 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import { ButtonLink } from "@/ui/Button";
 import { Glyph } from "@/ui/Glyph";
-import { Form, RecentMatches, StandingHero } from "./standing";
+import { Form, RecentMatches } from "./standing";
+import { Beat } from "./dashboard/motion";
+import { PlayerBanner } from "./dashboard/player-banner";
+import { DailyCard } from "./dashboard/daily-card";
+import { LastResult } from "./dashboard/last-result";
+import { Neighbours } from "./dashboard/neighbours";
+import { Categories } from "./dashboard/categories";
+import { BadgeCase } from "./dashboard/badge-case";
 
 /**
  * The signed-in dashboard.
  *
- * Leads with the ladder now. It used to be a greeting, a small card that named a rating
- * without saying what it was near, and four stacked buttons — the top one of which said
- * "Find a match" while a gold Play button offering the same thing sat on screen beside it
- * the whole time. A player opening the app wants to know two things: where am I, and is
- * there anything waiting for me. So: standing, form, the daily, and the modes the Play
- * button does not already cover.
+ * Composition only — every panel owns its own queries and its own empty state, which is
+ * what lets one layout serve a first-week player and a two-hundred-match regular without
+ * branching on either. A panel with nothing to say renders nothing at all rather than an
+ * "no activity yet" box arguing for its own existence.
  *
- * The standing block is the same component /ranked leads with (see standing.tsx), one
- * size down. Nothing here adds a query.
+ * The order is the argument: standing, then the thing with a deadline, then what you just
+ * earned, then the long game. `/` is deliberately NOT a launcher — the gold Play button is
+ * on screen at all times on both form factors, so a mode list here would be the same
+ * action twice within one viewport, and the duller of the two. The `Welcome back` heading
+ * went with it: the handle is on the banner, where it sits next to the rank it belongs to.
+ *
+ * `Beat` indexes stage the entrance. They are positions in a sequence, not delays — see
+ * dashboard/motion.tsx for why that distinction is enforced rather than trusted.
  */
 export function Hub() {
-  const me = useQuery(api.users.me, {});
-  const myRun = useQuery(api.daily.myRun, {});
-  const dailyPlayed = myRun !== undefined && myRun !== null;
-
   return (
-    <div className="flex flex-col gap-8">
-      {/* Kept as the h1 and kept word for word — it is the only thing on the page that
-          addresses the player by name, and StandingHero steps down to a <p> beneath it
-          rather than competing for the heading. */}
-      <h1 className="font-display text-display-2 px-4 font-extrabold">
-        Welcome back{me?.handle ? `, @${me.handle}` : ""}
-      </h1>
+    <div className="flex flex-col gap-6">
+      <Beat index={0} className="px-4">
+        <PlayerBanner />
+      </Beat>
 
-      <StandingHero size="lg" />
+      <Beat index={1} className="px-4">
+        <DailyCard />
+      </Beat>
 
-      <Form />
+      <Beat index={2} className="px-4">
+        <LastResult />
+      </Beat>
 
-      {/* The recurring hook. Loud while unplayed, quiet once it's done. */}
-      <ButtonLink
-        variant={dailyPlayed ? "secondary" : "primary"}
-        size="lg"
-        block
-        href="/daily"
-        className="mx-4 w-auto justify-between"
+      <Beat index={3}>
+        <Form />
+      </Beat>
+
+      {/* Two panels side by side, unless only one of them has anything to say — during
+          placements there are no neighbours — in which case the survivor takes the full
+          width rather than sitting in half a row next to nothing. Done in CSS so neither
+          panel has to know whether the other rendered. */}
+      <Beat
+        index={4}
+        className="grid gap-4 px-4 lg:grid-cols-2 [&>*:only-child]:lg:col-span-2"
       >
-        <span className="flex items-center gap-2">
-          <Glyph name="song" />
-          Today&rsquo;s challenge
-        </span>
-        <span className="text-body-sm font-normal opacity-80">
-          {myRun === undefined
-            ? ""
-            : dailyPlayed
-              ? `${myRun.totalPoints} pts · #${myRun.rank}`
-              : "Not played yet"}
-        </span>
-      </ButtonLink>
+        <Neighbours />
+        <Categories />
+      </Beat>
 
-      {/* No "Find a match" here. The gold Play control is on screen at all times on both
-          form factors — the sidebar on desktop, the raised centre button on mobile — so
-          this was the same action twice within one viewport, and the duller of the two.
-          These are the modes it does NOT cover. */}
-      <div className="grid gap-3 px-4 sm:grid-cols-2">
+      <Beat index={5} className="px-4">
+        <BadgeCase />
+      </Beat>
+
+      <Beat index={6}>
+        <RecentMatches />
+      </Beat>
+
+      {/* The two modes the Play button does not cover. Quiet, and last: someone who came
+          here to play a room already knows they can. */}
+      <Beat index={7} className="grid gap-3 px-4 sm:grid-cols-2">
         <ButtonLink variant="secondary" size="lg" href="/practice" className="justify-start">
           <Glyph name="bot" />
           Practice a bot
@@ -71,9 +78,7 @@ export function Hub() {
           <Glyph name="timer" />
           Play with friends
         </ButtonLink>
-      </div>
-
-      <RecentMatches />
+      </Beat>
     </div>
   );
 }
