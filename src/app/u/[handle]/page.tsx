@@ -166,9 +166,13 @@ export default function ProfilePage() {
       <Card variant="hero" className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
         <Stat label="Rating" value={placing ? "—" : String(profile.elo)} />
         <Stat label="Level" value={card ? `L${card.level}` : "—"} />
+        {/* Record carries two numbers where the others carry one, so it gets the smaller
+            size. At display-2 a career like "204W · 168L" truncates to "204W …", which is
+            the one thing a stat strip must never do. */}
         <Stat
           label="Record"
           value={card ? `${card.wins}W · ${card.losses}L` : "—"}
+          size="sm"
         />
         <Stat label="Win rate" value={winRate === null ? "—" : `${winRate}%`} />
       </Card>
@@ -188,12 +192,24 @@ export default function ProfilePage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  size = "lg",
+}: {
+  label: string;
+  value: string;
+  size?: "lg" | "sm";
+}) {
   return (
     <div className="flex flex-col gap-1">
       {/* Value above label. The numbers are what you scan; the words are what you read
           only if a number surprises you. */}
-      <span className="font-display text-display-2 text-paper truncate font-extrabold tabular-nums">
+      <span
+        className={`font-display text-paper truncate font-extrabold tabular-nums ${
+          size === "lg" ? "text-display-2" : "text-body-lg sm:text-numeral"
+        }`}
+      >
         {value}
       </span>
       <span className="text-label text-muted font-semibold tracking-wider uppercase">

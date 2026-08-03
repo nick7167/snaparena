@@ -101,13 +101,20 @@ export function VsReveal({
       {/* One child, so Stage's `gap-6` has nothing to apply between and needs no
           overriding — the spacing below is owned by these two sections. */}
       <div className="flex w-full flex-col">
-      <div className="relative isolate w-full overflow-hidden rounded-lg">
+      {/* Tall enough to be a moment rather than a panel. The first version was a ~430px
+          card floating in the top half of the viewport, which is precisely the card
+          framing this screen exists to get away from. */}
+      <div className="relative isolate flex min-h-[76vh] w-full items-center overflow-hidden">
         {/* The two tinted halves. Drawn as siblings clipped to complementary polygons so
             the seam is a single hard edge rather than two shapes that nearly meet. */}
         <Half side="left" accent={me.rankAccent} reduced={reduced} />
         <Half side="right" accent={opponent.rankAccent} reduced={reduced} />
+        {/* The seam itself, drawn rather than implied. Two players of the same tier tint
+            their halves the same colour — which is most matches, since you are matched on
+            rating — and without this the split simply disappears. */}
+        <Seam reduced={reduced} />
 
-        <div className="relative grid grid-cols-2 items-start gap-2 px-4 py-8 sm:gap-6 sm:px-8 sm:py-12">
+        <div className="relative grid w-full grid-cols-2 items-center gap-2 px-4 py-10 sm:gap-6 sm:px-10 sm:py-14">
           <VsSide player={me} align="start" reduced={reduced} delay={0.45} youAre />
           <VsSide player={opponent} align="end" reduced={reduced} delay={0.6} />
         </div>
@@ -137,9 +144,10 @@ export function VsReveal({
             </span>
           </span>
         </motion.div>
-      </div>
 
-      <div className="flex flex-col items-center gap-2 pt-5 pb-8">
+        {/* The verdict line, inside the composition rather than stranded beneath it.
+            Absolute so it cannot push the halves around as it fades in. */}
+        <div className="absolute inset-x-0 bottom-8 z-10 flex flex-col items-center gap-2">
         {matchup && (
           <motion.p
             {...beat(1.05)}
@@ -160,6 +168,7 @@ export function VsReveal({
             <Glyph name="win" filled />#{opponent.globalRank} GLOBAL
           </motion.p>
         )}
+        </div>
       </div>
       </div>
     </Stage>
@@ -201,11 +210,33 @@ function Half({
         clipPath: clip,
         backgroundColor: "var(--color-ink-900)",
         // color-mix keeps the tint honest: the tier's own colour, at a strength low
-        // enough that paper text over it still clears contrast.
+        // enough that paper text over it still clears contrast. Strongest at the outer
+        // edge and falling away toward the seam, so the two never muddy where they meet.
         backgroundImage: `linear-gradient(to ${
           side === "left" ? "right" : "left"
-        }, color-mix(in srgb, ${accent} 18%, transparent), transparent 70%)`,
+        }, color-mix(in srgb, ${accent} 26%, transparent), transparent 75%)`,
       }}
+    />
+  );
+}
+
+/**
+ * The diagonal seam, as an actual drawn edge.
+ *
+ * Matchmaking pairs players by rating, so both halves usually carry the same tier accent
+ * — and two identical tints meeting at an invisible boundary is not a split, it is a
+ * rectangle. This is the line that makes it read as two territories regardless of who
+ * turned up. Same geometry as the halves, one hairline wide.
+ */
+function Seam({ reduced }: { reduced: boolean }) {
+  return (
+    <motion.span
+      aria-hidden="true"
+      initial={reduced ? false : { opacity: 0, scaleY: 0.4 }}
+      animate={{ opacity: 1, scaleY: 1 }}
+      transition={reduced ? undefined : { duration: 0.4, ease: [0.2, 0, 0, 1] }}
+      className="bg-line-strong absolute inset-0 -z-10"
+      style={{ clipPath: "polygon(58% 0, 58.25% 0, 42.25% 100%, 42% 100%)" }}
     />
   );
 }
@@ -232,7 +263,7 @@ function VsSide({
       transition={
         reduced ? undefined : { delay, type: "spring", stiffness: 220, damping: 20 }
       }
-      className={`flex min-w-0 flex-col gap-2 ${
+      className={`flex min-w-0 flex-col gap-2.5 ${
         end ? "items-end text-right" : "items-start text-left"
       }`}
     >
@@ -244,17 +275,25 @@ function VsSide({
         bloom={player.placementsRemaining > 0 ? undefined : player.rankAccent}
       />
 
-      {/* The avatar's fallback is a single initial, so it takes the handle rather than
-          nameFor — "@" is not an initial. */}
-      <Avatar
-        url={player.avatarUrl}
-        name={player.isBot ? player.displayName : player.handle}
-        className="size-10 text-base sm:size-12 sm:text-lg"
-      />
-
-      <p className="font-display text-body-lg sm:text-display-2 w-full truncate font-extrabold tracking-tight">
-        {youAre ? "You" : nameFor(player)}
-      </p>
+      {/* Avatar beside the name rather than stacked under the emblem, which read as two
+          unrelated marks sitting on top of each other. `flex-row-reverse` keeps the
+          avatar on the outer edge on both sides, so the two halves mirror. */}
+      <div
+        className={`flex min-w-0 max-w-full items-center gap-2.5 ${
+          end ? "flex-row-reverse" : ""
+        }`}
+      >
+        {/* The avatar's fallback is a single initial, so it takes the handle rather than
+            nameFor — "@" is not an initial. */}
+        <Avatar
+          url={player.avatarUrl}
+          name={player.isBot ? player.displayName : player.handle}
+          className="size-9 shrink-0 text-sm sm:size-11 sm:text-base"
+        />
+        <p className="font-display text-body-lg sm:text-display-2 min-w-0 truncate font-extrabold tracking-tight">
+          {youAre ? "You" : nameFor(player)}
+        </p>
+      </div>
 
       {/* Only bots carry a second line: their proper name is above, so the handle is
           extra information rather than the same string twice. */}
