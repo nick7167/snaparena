@@ -23,15 +23,33 @@ test.describe("ranked against a dev rank bot", () => {
     await page.goto("/ranked");
     await assertOnboarded(page);
 
-    // The dev control is rendered from a server-read flag, so its absence means the
-    // roster is not live and there is nothing here to test.
-    await expect(page.getByRole("heading", { name: "Ranked 1v1" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Find a match" }).click();
+    /**
+     * The queue control, not a page heading.
+     *
+     * This asserted on an "Ranked 1v1" heading, which the signed-in ranked page no longer
+     * has — it leads with your rank now, so the `h1` reads "Gold II" or "Unranked" and
+     * changes with the account. The precondition being checked is "the ranked home has
+     * rendered and is ready to queue", and the control clicked on the next line is a
+     * truer statement of that than any wording.
+     */
+    const findMatch = page.getByRole("button", { name: "Find a match" });
+    await expect(findMatch).toBeVisible({ timeout: 30_000 });
+    await findMatch.click();
 
     // Pairing is a client poll every 2s against a queue the cron keeps stocked.
     const devBar = page.getByRole("button", { name: "Random", exact: true });
     await expect(devBar).toBeVisible({ timeout: 45_000 });
+
+    /**
+     * Get through the opponent reveal.
+     *
+     * That phase holds for up to 30 seconds now and ends on both players pressing Ready —
+     * a bot counts as ready from the start, so this press alone advances it. Waiting it
+     * out instead would land the draft exactly on this block's own timeout.
+     */
+    const ready = page.getByRole("button", { name: /I'm ready/ });
+    await expect(ready).toBeVisible({ timeout: 30_000 });
+    await ready.click();
 
     // Proof it is a rated match and not the practice fallback: the practice path never
     // renders a draft, and `startBotMatch` would have said so on the queue screen.
