@@ -254,10 +254,8 @@ export function RankEmblem({
   // artwork follows, rather than the artwork dictating the layout.
   if (fit) {
     return (
-      <span
-        className={`relative block min-h-0 w-full ${bloom ? "bloom-tier" : ""} ${className}`}
-        style={bloom ? { ["--tier-accent" as string]: bloom } : undefined}
-      >
+      <span className={`relative block min-h-0 w-full ${className}`}>
+        {bloom && <FitBloom art={art} accent={bloom} />}
         {image}
       </span>
     );
@@ -273,6 +271,48 @@ export function RankEmblem({
       style={{ ["--tier-accent" as string]: bloom }}
     >
       {image}
+    </span>
+  );
+}
+
+/**
+ * The bloom, for the fitting variant only.
+ *
+ * It cannot ride on the wrapper the way the natural-size variant's does. That wrapper is
+ * the GROWTH BOX — it is whatever width and height the layout hands it, which is the whole
+ * point of `fit` — and `.bloom-tier::before` is `inset: -35%`, a proportion of its parent.
+ * Put the two together and the glow is sized to the container rather than to the picture:
+ * on /ranked that made it a 640px-wide ellipse spanning the column and the full height of
+ * the slack, which the hero's `overflow-hidden` then cut into a hard-edged rectangle. It
+ * read as a glowing box behind the emblem instead of light coming off it.
+ *
+ * So the bloom gets its own element, sized to the ARTWORK rather than to the box, by
+ * repeating `object-contain`'s arithmetic: natural width, the art's aspect ratio, and both
+ * maxima at 100% so that capping the height takes the width down with it. That is the same
+ * rectangle the image paints into at every size, so the halo tracks the artwork as it
+ * shrinks.
+ *
+ * Two elements rather than one, because `.bloom-tier` sets `position: relative` and this
+ * has to be `absolute` — one class attribute holding both would be decided by the order
+ * Tailwind emits them rather than by what was written.
+ */
+function FitBloom({
+  art,
+  accent,
+}: {
+  art: { width: number; height: number };
+  accent: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full"
+      style={{ width: art.width, aspectRatio: `${art.width} / ${art.height}` }}
+    >
+      <span
+        className="bloom-tier block size-full"
+        style={{ ["--tier-accent" as string]: accent }}
+      />
     </span>
   );
 }

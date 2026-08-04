@@ -59,6 +59,13 @@ function RankedHome() {
  * exists precisely to keep things that need the viewport out of the 672px reading column.
  * Everything below it is reading material and goes back inside.
  *
+ * The hero is now a one-screen contract rather than merely full-bleed: it is bound to the
+ * viewport in both its states so that neither the queue button nor, once searching, the
+ * Cancel beside it can fall below the fold. `Form` and `RecentMatches` therefore start
+ * BELOW the first screen by design. That is the right trade — they answer "am I on a good
+ * run?", which is a question you ask before deciding to queue, not one you need in view
+ * while the queue is running.
+ *
  * `Form` and `RecentMatches` also appear on the dashboard, from this same import. That
  * duplication is a deliberate call rather than an oversight: they answer a pre-match
  * question here ("am I on a good run before I queue?") that they answer as history there,

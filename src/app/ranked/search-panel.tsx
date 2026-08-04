@@ -27,6 +27,11 @@ import { useQueue } from "../queue-driver";
  * unchanged — the only edit is that it no longer carries its own horizontal padding, so
  * the hero can place it in the same column as the button it replaces. It is the strongest
  * thing on this route and was deliberately left alone.
+ *
+ * It wears `variant="hero"` because it is now the SUBJECT of the searching screen rather
+ * than a card at the foot of a stack. That does not spend a second licensed sheen:
+ * `StakesCard` holds this screen's one exception in the idle state, and the two never
+ * render together — the hero swaps compositions rather than swapping a slot.
  */
 export function SearchPanel() {
   const queue = useQueue();
@@ -44,7 +49,22 @@ export function SearchPanel() {
   const botSeconds = Math.ceil(botIn / 1000);
 
   return (
-    <Card className="flex flex-col gap-4 p-5">
+    /**
+     * The floor exists to stop Cancel moving under a finger already reaching for it.
+     *
+     * Falling back drops the rating-range block and the queue count and adds one short
+     * paragraph — about 48px net — and the panel is centred in the viewport now, so that
+     * shrink lifts every control on it by half as much again. The number is the measured
+     * height of the placed, still-searching branch, which is the tallest this panel gets.
+     *
+     * Conditional because it is only that branch that changes height mid-search: a player
+     * in placements never renders the range block at all, and pinning them to a floor
+     * derived from it would just add 70px of empty card under the buttons.
+     */
+    <Card
+      variant="hero"
+      className={`flex flex-col gap-4 p-5 ${placed ? "min-h-[16.5rem]" : ""}`}
+    >
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>{queue.fallingBack ? "No humans found" : "Searching"}</SectionLabel>
         <span className="font-display text-numeral text-paper font-extrabold tabular-nums">

@@ -40,6 +40,25 @@ test.describe("ranked against a dev rank bot", () => {
     await expect(findMatch).toBeVisible({ timeout: 30_000 });
     await findMatch.click();
 
+    /**
+     * The searching state is a one-screen contract.
+     *
+     * This is the regression that prompted the hero rebuild: `SearchPanel` is ~2.5× the
+     * height of the button it replaces and used to mount at the foot of a hero that gave
+     * up nothing, which put both of these below the fold on every phone narrower than a
+     * 390 and on every laptop. `toBeVisible` would have passed throughout — the elements
+     * were rendered, just not on screen — so the assertion has to be positional.
+     *
+     * `exact` matters: at `lg:` the sidebar's Play button becomes a searching indicator
+     * with its own "Cancel search" control, and a substring match resolves to both.
+     */
+    await expect(
+      page.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeInViewport();
+    await expect(
+      page.getByRole("button", { name: "Play a bot instead" }),
+    ).toBeInViewport();
+
     // Pairing is a client poll every 2s against a queue the cron keeps stocked.
     const devBar = page.getByRole("button", { name: "Random", exact: true });
     await expect(devBar).toBeVisible({ timeout: 45_000 });

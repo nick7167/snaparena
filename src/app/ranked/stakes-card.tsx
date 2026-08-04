@@ -21,9 +21,12 @@ import { Glyph } from "@/ui/Glyph";
  * describe something a single win cannot actually deliver. See that file for the maths and
  * the priority order.
  *
- * `variant="hero"` spends this screen's one licensed sheen. The emblem above takes the
- * bloom, and those are two different exceptions — the surface gets a hairline, the artwork
- * gets ambient light.
+ * `variant="hero"` spends this screen's one licensed sheen — in the IDLE state, which is
+ * the only state this card renders in. Searching is a separate composition that drops both
+ * this and the hero emblem, and hands the sheen to `SearchPanel`; the budget is one per
+ * screen, and the two are never on screen together. The emblem above takes the bloom, and
+ * those are two different exceptions — the surface gets a hairline, the artwork gets
+ * ambient light.
  */
 export function StakesCard({ stakes }: { stakes: Stakes }) {
   const { headline, atRisk, evenSwing } = stakes;

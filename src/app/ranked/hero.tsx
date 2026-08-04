@@ -1,6 +1,8 @@
 "use client";
 
+import { AnimatePresence, motion } from "motion/react";
 import { useQuery } from "convex/react";
+import type { ReactNode } from "react";
 import { api } from "../../../convex/_generated/api";
 import { rankForElo } from "@/engine/ranks";
 import { openingRange, stakesFor } from "@/engine/stakes";
@@ -13,6 +15,8 @@ import { RankEmblem } from "@/ui/RankEmblem";
 import { Button } from "@/ui/Button";
 import { Skeleton } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
+import { enter } from "@/ui/motion";
+import { usePrefersReducedMotion } from "@/game/usePrefersReducedMotion";
 import { useQueue } from "../queue-driver";
 import { GlobalRank } from "../dashboard/global-rank";
 import { Beat, CountUp } from "../dashboard/motion";
@@ -32,6 +36,11 @@ import { SearchPanel } from "./search-panel";
  *
  * The order is the argument — rank, then what the next match can change, then the control.
  * Everything above the button is a reason to press it.
+ *
+ * TWO STATES, ONE SCREEN. Idle and searching are separate compositions rather than one
+ * stack with a swapped slot, and both are bound to the viewport by `HeroViewport`. The
+ * contract is that neither ever needs scrolling to reach its controls: idle must show the
+ * button, searching must show Cancel. See `QueueControl` for what that replaced and why.
  */
 export function RankedHero() {
   const me = useQuery(api.users.me, {});
@@ -40,16 +49,27 @@ export function RankedHero() {
   // placements, which `stakesFor` already handles by ignoring the gap entirely.
   const neighbours = useQuery(api.users.ladderNeighbours, {});
 
-  // Shaped like what is coming, at the width it will arrive at — same `max-w-2xl px-4`
-  // the loaded hero uses, so the card and button do not jump sideways on settle.
+  /**
+   * The queue is read HERE rather than down in `QueueControl`, because it now decides the
+   * whole composition rather than one child. It is a context read — `useQueue` returns a
+   * dormant state when no provider is mounted — so this costs nothing and keeps the design
+   * gallery and unit tests renderable without the shell.
+   */
+  const queue = useQueue();
+  const reduced = usePrefersReducedMotion();
+
+  // Shaped like what is coming, at the width it will arrive at, inside the same viewport
+  // box — so the card and button do not jump sideways or upward on settle.
   if (me === undefined) {
     return (
-      <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 pt-6 sm:pt-10">
-        <Skeleton className="size-28 sm:size-44" />
-        <Skeleton className="h-14 w-48" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-16 w-full" />
-      </div>
+      <HeroViewport>
+        <div className="flex min-h-0 flex-1 flex-col gap-6">
+          <Skeleton className="min-h-0 w-full flex-1" />
+          <Skeleton className="h-14 w-48 self-center" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      </HeroViewport>
     );
   }
   if (!me) return null;
@@ -74,43 +94,124 @@ export function RankedHero() {
   });
 
   return (
-    <div className="flex flex-col items-center gap-6 pt-6 sm:pt-10">
-      <Beat index={0} className="flex flex-col items-center gap-3 px-4">
-        {placing ? <PlacementMark /> : <RankMark elo={me.elo} />}
-      </Beat>
-
-      <Beat index={1} className="flex flex-col items-center gap-2 px-4 text-center">
-        {placing ? (
-          <PlacementRun remaining={me.placementsRemaining} />
-        ) : (
-          <Rating elo={me.elo} standing={standing} evenSwing={stakes.evenSwing} />
-        )}
-      </Beat>
-
+    <HeroViewport>
       {/**
-       * One column from here down, so the card, the control and everything the lobby
-       * renders below the hero share one edge.
-       *
-       * `max-w-2xl` with `px-4` is not an approximation of LobbyColumn — it is the same
-       * arithmetic. That column is `max-w-2xl` and its children apply their own `px-4`,
-       * so its content is 640px wide; matching only the max-width would land this 32px
-       * wider than the Form strip underneath, which reads as a misalignment rather than
-       * as two different widths.
+       * `initial={false}` matters more than the crossfade does: a player can arrive on
+       * /ranked ALREADY searching — the queue outlives navigation (see queue-driver) and a
+       * match found elsewhere pushes here — and without it that arrival would play a fade
+       * from nothing on first paint.
        */}
-      <div className="flex w-full max-w-2xl flex-col gap-4 px-4">
-        <Beat index={2}>
-          {placing ? (
-            <PlacementStakes remaining={me.placementsRemaining} evenSwing={stakes.evenSwing} />
-          ) : (
-            <StakesCard stakes={stakes} />
-          )}
-        </Beat>
+      <AnimatePresence mode="wait" initial={false}>
+        {queue.inQueue ? (
+          <Phase key="searching" keyName="searching" reduced={reduced}>
+            <RankStrip
+              elo={me.elo}
+              placing={placing}
+              remaining={me.placementsRemaining}
+            />
+            <SearchPanel />
+          </Phase>
+        ) : (
+          <Phase key="idle" keyName="idle" reduced={reduced}>
+            {/**
+             * The emblem block is the only child allowed to grow, and therefore the only
+             * one that gives height back on a short screen. Everything below it is either
+             * a number you came here to read or the control you came here to press, and
+             * all of it stops working the moment it loses pixels.
+             */}
+            <Beat index={0} className="flex min-h-0 flex-1 flex-col gap-3">
+              {placing ? <PlacementMark /> : <RankMark elo={me.elo} />}
+            </Beat>
 
-        <Beat index={3}>
-          <QueueControl elo={me.elo} placing={placing} />
-        </Beat>
-      </div>
+            <Beat index={1} className="flex flex-col items-center gap-2 text-center">
+              {placing ? (
+                <PlacementRun remaining={me.placementsRemaining} />
+              ) : (
+                <Rating elo={me.elo} standing={standing} evenSwing={stakes.evenSwing} />
+              )}
+            </Beat>
+
+            <Beat index={2}>
+              {placing ? (
+                <PlacementStakes
+                  remaining={me.placementsRemaining}
+                  evenSwing={stakes.evenSwing}
+                />
+              ) : (
+                <StakesCard stakes={stakes} />
+              )}
+            </Beat>
+
+            <Beat index={3}>
+              <QueueControl elo={me.elo} placing={placing} />
+            </Beat>
+          </Phase>
+        )}
+      </AnimatePresence>
+    </HeroViewport>
+  );
+}
+
+/**
+ * The one screen both states are composed into.
+ *
+ * The height budget is `100dvh` minus the chrome `<main>` does not own: the mobile top bar
+ * (3.5rem) and the fixed tab bar it reserves with `pb-20` (5rem). That is the same 8.5rem
+ * `landing.tsx` derives and documents — one constant, two screens. At `lg:` the sidebar
+ * layout has neither, and `<main>` drops to `lg:pb-0`, so the budget is the full viewport.
+ *
+ * `h-*` AND `max-h-*`, the pair `Stage`'s `fit` uses, rather than the `min-h-*` landing
+ * settles for. The difference is the whole mechanism: `min-h` lets the box grow to fit its
+ * content, which means nothing is ever asked to shrink and a tall rank simply pushes the
+ * button off the bottom again. A definite height is what gives `flex-1` something to
+ * resolve against.
+ *
+ * `overflow-hidden` is the backstop, not the plan — if content is being clipped here the
+ * composition is wrong, not the container.
+ *
+ * `max-w-2xl` with `px-4` is not an approximation of LobbyColumn, it is the same
+ * arithmetic. That column is `max-w-2xl` and its children apply their own `px-4`, so its
+ * content is 640px wide; matching only the max-width would land this 32px wider than the
+ * Form strip underneath, which reads as a misalignment rather than as two different widths.
+ */
+function HeroViewport({ children }: { children: ReactNode }) {
+  return (
+    <div className="mx-auto flex h-[calc(100dvh-8.5rem)] max-h-[calc(100dvh-8.5rem)] w-full max-w-2xl flex-col overflow-hidden px-4 py-6 lg:h-dvh lg:max-h-dvh lg:py-10">
+      {children}
     </div>
+  );
+}
+
+/**
+ * One of the two compositions, and the crossfade between them.
+ *
+ * Opacity only, and short. The two states differ by several hundred pixels of height, so
+ * anything that animates position — a slide, a layout transition — spends its whole
+ * duration showing the reflow rather than covering it.
+ *
+ * `justify-center` is what centres the searching state, which has no growing child. In the
+ * idle state the emblem's `flex-1` has already eaten the slack and this is inert.
+ */
+function Phase({
+  children,
+  keyName,
+  reduced,
+}: {
+  children: ReactNode;
+  keyName: string;
+  reduced: boolean;
+}) {
+  return (
+    <motion.div
+      key={keyName}
+      initial={enter(reduced, { opacity: 0 })}
+      animate={{ opacity: 1 }}
+      exit={reduced ? undefined : { opacity: 0 }}
+      transition={{ duration: 0.14 }}
+      className="flex min-h-0 flex-1 flex-col justify-center gap-4"
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -121,13 +222,19 @@ export function RankedHero() {
  * writes pixel dimensions inline, which no breakpoint can reach. Same `src` at both, so
  * the browser fetches once.
  *
+ * `fit` is what lets this screen keep its promise. It holds the plate-normalised size as a
+ * CEILING and puts a real floor under it, so a Legend still renders physically larger than
+ * a Bronze on a tall screen and a 360×640 simply fits them both. Read the prop's own
+ * docblock before touching it — the obvious version, a natural height with
+ * `max-height: 100%`, silently does nothing.
+ *
  * The bloom is one of the three exceptions globals.css licenses, reserved for screens that
- * make the emblem the subject — this is now one of them. It is also mechanically safe HERE
- * in a way it was not on the dashboard: `.bloom-tier::before` is `inset: -35%`, so an
- * emblem pinned to a card's right edge threw ~70px of halo past the viewport and scrolled
- * the page sideways with nothing in the DOM reporting an overflow, because a
- * pseudo-element does not. Centred in a column with room either side, it has somewhere
- * to go.
+ * make the emblem the subject — this is one of them, while the player is looking at it.
+ * It is also mechanically safe HERE in a way it was not on the dashboard:
+ * `.bloom-tier::before` is `inset: -35%`, so an emblem pinned to a card's right edge threw
+ * ~70px of halo past the viewport and scrolled the page sideways with nothing in the DOM
+ * reporting an overflow, because a pseudo-element does not. Centred in a column with room
+ * either side, it has somewhere to go.
  */
 function RankMark({ elo }: { elo: number }) {
   const rank = rankForElo(elo);
@@ -138,26 +245,36 @@ function RankMark({ elo }: { elo: number }) {
       {/**
        * Wrapped rather than given `hidden` / `sm:block` directly.
        *
-       * RankEmblem's bloom branch hardcodes `inline-flex` on its own wrapper, and a
-       * `hidden` passed through `className` lands in the same class attribute — so which
-       * one wins is decided by the order Tailwind emits the two display utilities, not by
-       * the order they are written. It lost, and BOTH emblems rendered on mobile, stacked.
-       * Owning the display on an element the component does not write is unambiguous.
+       * RankEmblem's bloom and fit branches both hardcode a display on their own wrapper,
+       * and a `hidden` passed through `className` lands in the same class attribute — so
+       * which one wins is decided by the order Tailwind emits the two display utilities,
+       * not by the order they are written. It lost, and BOTH emblems rendered on mobile,
+       * stacked. Owning the display on an element the component does not write is
+       * unambiguous.
+       *
+       * The wrapper carries the growth (`min-h-0 flex-1`) and the emblem fills it. That
+       * keeps the emblem a direct flex item of a box with a definite height, which is what
+       * `fit` needs — nested inside a shrink-to-fit centring div it has no height to
+       * resolve against and the artwork collapses to nothing.
        */}
-      <span className="sm:hidden">
+      <span className="flex min-h-0 flex-1 sm:hidden">
         <RankEmblem
           tierId={rank.tier.id}
           division={division}
           size="xl"
           bloom={rank.tier.accent}
+          fit
+          className="min-h-0 w-full flex-1"
         />
       </span>
-      <span className="hidden sm:block">
+      <span className="hidden min-h-0 flex-1 sm:flex">
         <RankEmblem
           tierId={rank.tier.id}
           division={division}
           size="hero"
           bloom={rank.tier.accent}
+          fit
+          className="min-h-0 w-full flex-1"
         />
       </span>
 
@@ -176,17 +293,84 @@ function PlacementMark() {
   return (
     <>
       {/* Wrapped for the same reason as RankMark — the unranked branch also writes its
-          own `inline-flex`, so a `hidden` passed through className is a coin toss. */}
-      <span className="sm:hidden">
-        <RankEmblem tierId="silver" division={1} size="xl" unranked />
+          own display, so a `hidden` passed through className is a coin toss. */}
+      <span className="flex min-h-0 flex-1 items-center justify-center sm:hidden">
+        <RankEmblem tierId="silver" division={1} size="xl" unranked fit />
       </span>
-      <span className="hidden sm:block">
-        <RankEmblem tierId="silver" division={1} size="hero" unranked />
+      <span className="hidden min-h-0 flex-1 items-center justify-center sm:flex">
+        <RankEmblem tierId="silver" division={1} size="hero" unranked fit />
       </span>
       <h1 className="font-display text-display-2 sm:text-display-1 text-secondary text-center font-extrabold tracking-tight uppercase">
         Unranked
       </h1>
     </>
+  );
+}
+
+/**
+ * The rank, reduced to a line, for the searching state.
+ *
+ * The screen belongs to the search now, but arriving at it should not feel like leaving
+ * your rank behind — so the identity survives as one row instead of vanishing.
+ *
+ * `size="lg"`, and the boundary is not cosmetic: `RankEmblem` switches ASSET SETS below
+ * it, with `sm`/`md` drawing the light 96px plate from /ranks/sm/ and `lg` and up drawing
+ * the full artwork. `lg` therefore shares its `src` with the `xl`/`hero` emblem the player
+ * was looking at a frame ago and comes straight from cache. `md` would be a fresh network
+ * request at the exact moment the layout is already moving, which is a flash of nothing
+ * where the rank used to be.
+ *
+ * No bloom. The licensed exception is for screens that make the emblem the subject, and
+ * this state deliberately does not — that is the entire point of the change.
+ */
+function RankStrip({
+  elo,
+  placing,
+  remaining,
+}: {
+  elo: number;
+  placing: boolean;
+  remaining: number;
+}) {
+  if (placing) {
+    const played = Math.max(0, PLACEMENT_MATCHES - remaining);
+    return (
+      <div className="flex items-center justify-center gap-3">
+        <RankEmblem tierId="silver" division={1} size="lg" unranked />
+        <span className="font-display text-body-lg text-secondary font-extrabold tracking-tight uppercase">
+          Unranked
+        </span>
+        <span className="text-faint" aria-hidden="true">
+          ·
+        </span>
+        <span className="text-body-sm text-secondary tabular-nums">
+          {played} of {PLACEMENT_MATCHES} played
+        </span>
+      </div>
+    );
+  }
+
+  const rank = rankForElo(elo);
+  const division = rank.tier.divisions > 1 ? rank.division : 1;
+
+  return (
+    <div className="flex items-center justify-center gap-3">
+      {/* `plateAligned` because the plate, not the bounding box, is what has to read level
+          with the text beside it — see PLATE_NUDGE for why that is one constant. */}
+      <RankEmblem tierId={rank.tier.id} division={division} size="lg" plateAligned />
+      <span
+        className="font-display text-body-lg font-extrabold tracking-tight uppercase"
+        style={{ color: rank.tier.accent }}
+      >
+        {rank.label}
+      </span>
+      <span className="text-faint" aria-hidden="true">
+        ·
+      </span>
+      <span className="font-display text-numeral text-paper font-extrabold tabular-nums">
+        {elo}
+      </span>
+    </div>
   );
 }
 
@@ -293,13 +477,20 @@ function PlacementStakes({
 }
 
 /**
- * The control, and the search that replaces it.
+ * The control. Idle only — the search is a separate composition now.
  *
- * Searching happens IN PLACE and that is deliberate — the emblem, the rating and the card
- * above all hold their positions, so pressing the button does not throw away the standing
- * you were just looking at. An earlier version replaced the whole page with a heading and
- * a bar, which meant the one moment a player is most invested in their rank was the moment
- * it disappeared.
+ * Searching used to happen IN PLACE, with the emblem, the rating and the card above all
+ * holding their positions, so that pressing the button did not throw away the standing you
+ * were just looking at. The intent was right and the arithmetic was not. `SearchPanel` is
+ * roughly 2.5× the height of the block it replaced, mounted at the bottom of a stack that
+ * gave up nothing, and the budget is `100dvh` minus 8.5rem of chrome: 708px on a 390×844
+ * phone against a searching state that measured 708px, 531px on a 375×667 against 730px,
+ * and 768px on a 1024×768 laptop against 985px. So the two controls a searching player
+ * actually needs — Cancel, and the bot offer — sat below the fold on every phone smaller
+ * than a 390 and on every laptop. A standing you can still see is worth less than a search
+ * you can call off.
+ *
+ * The rank is not thrown away, it is demoted: see `RankStrip`.
  *
  * The accessible name is exactly "Find a match". `dev-rank-bots.spec.ts` locates this
  * control by that string, so the wide lettering has to come from CSS tracking — spaces in
@@ -307,9 +498,6 @@ function PlacementStakes({
  */
 function QueueControl({ elo, placing }: { elo: number; placing: boolean }) {
   const queue = useQueue();
-
-  if (queue.inQueue) return <SearchPanel />;
-
   const range = openingRange(elo);
 
   return (
