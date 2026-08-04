@@ -5,7 +5,8 @@ import { SignedIn, SignedOut } from "./auth-gate";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
@@ -13,7 +14,6 @@ import { RankEmblem } from "@/ui/RankEmblem";
 import { ButtonLink } from "@/ui/Button";
 import { Glyph, type GlyphName } from "@/ui/Glyph";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
-import { Dialog } from "@/ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
 import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
@@ -27,6 +27,7 @@ import {
   subscribeMute,
 } from "@/audio/sfx";
 import { MuteToggle } from "@/ui/MuteToggle";
+import { snap } from "@/ui/motion";
 import {
   getSidebarCollapsedServerSnapshot,
   getSidebarCollapsedSnapshot,
@@ -727,12 +728,42 @@ function UserMenu({
 function TabBar() {
   const pathname = usePathname();
   const { isSignedIn } = useUser();
+  const [choosing, setChoosing] = useState(false);
 
   return (
     <nav
       aria-label="Main"
       className="bg-ink-900 border-line fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
+      {/**
+       * The dismiss layer, and it is deliberately invisible.
+       *
+       * This was a modal with a blurred backdrop, which is the wrong instrument: choosing a
+       * mode is a menu, not a decision that needs the rest of the app taken away. Nothing
+       * is dimmed — the page stays exactly as it was — but a tap anywhere outside still
+       * closes, which is the behaviour that makes it feel like a menu rather than a screen.
+       *
+       * Rendered FIRST so it paints behind the tabs: a tap on the page closes the menu, and
+       * a tap on another tab navigates, which is what someone reaching for Daily meant.
+       */}
+      {choosing && (
+        <button
+          type="button"
+          /**
+           * Out of the accessibility tree entirely, and not focusable.
+           *
+           * It is a pointer convenience, not a control: Escape closes the menu and the
+           * trigger toggles it, so announcing a second unlabelled "close" button would be
+           * noise. Safe to hide precisely because `tabIndex={-1}` means nothing can land
+           * on it — hiding something focusable is the version of this that is a bug.
+           */
+          aria-hidden
+          tabIndex={-1}
+          onClick={() => setChoosing(false)}
+          className="fixed inset-0 cursor-default"
+        />
+      )}
+
       {TABS_LEFT.map((item) => (
         <Tab key={item.href} item={item} pathname={pathname} />
       ))}
@@ -742,8 +773,12 @@ function TabBar() {
        * moving. Raised out of the bar rather than sitting in it, so it reads as a control
        * on top of the navigation instead of a fifth tab that happens to be yellow.
        */}
-      <div className="flex w-20 shrink-0 justify-center">
-        <MobilePlayButton signedIn={isSignedIn === true} />
+      <div className="relative flex w-20 shrink-0 justify-center">
+        <MobilePlayButton
+          signedIn={isSignedIn === true}
+          choosing={choosing}
+          setChoosing={setChoosing}
+        />
       </div>
 
       {TABS_RIGHT.map((item) => (
@@ -761,10 +796,43 @@ function TabBar() {
  * — on a bar your thumb rests against, a mis-tap that silently leaves the queue is the
  * worst outcome available. Tapping it goes to /ranked, where Cancel is a full-size button.
  */
-function MobilePlayButton({ signedIn }: { signedIn: boolean }) {
+function MobilePlayButton({
+  signedIn,
+  choosing,
+  setChoosing,
+}: {
+  signedIn: boolean;
+  choosing: boolean;
+  setChoosing: (open: boolean) => void;
+}) {
   const queue = useQueue();
-  const [choosing, setChoosing] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const seconds = Math.floor(queue.waitingMs / 1000);
+
+  /**
+   * The parts a Dialog used to provide for free, kept because they are the parts nobody
+   * notices until they are gone: Escape closes, focus moves into the menu on open, and
+   * comes back to the button that opened it on close.
+   */
+  useEffect(() => {
+    if (!choosing) return;
+
+    // Captured now rather than read in the cleanup: by the time this unwinds the ref may
+    // point somewhere else, and focus would be restored to the wrong element or nowhere.
+    const opener = trigger.current;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setChoosing(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    panel.current?.querySelector<HTMLElement>("a")?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      opener?.focus();
+    };
+  }, [choosing, setChoosing]);
 
   /**
    * Two carve-outs where the sheet must not appear, both for the same reason: it would
@@ -810,44 +878,82 @@ function MobilePlayButton({ signedIn }: { signedIn: boolean }) {
   return (
     <>
       <button
-        onClick={() => setChoosing(true)}
+        ref={trigger}
+        onClick={() => setChoosing(!choosing)}
+        // The name stays put and the STATE moves — that is what aria-expanded is for.
+        // Renaming the control to "Close…" on open makes it a different thing to anyone
+        // listening, and breaks every locator that refers to it by name.
         aria-label="Play"
-        aria-haspopup="dialog"
-        className={shape}
+        aria-haspopup="menu"
+        aria-expanded={choosing}
+        // Above the dismiss layer, so pressing it again closes rather than being swallowed.
+        className={`${shape} relative z-10`}
         style={edge}
       >
         {face}
       </button>
 
-      {/*
-        A Dialog rather than a purpose-built bottom sheet. It already handles Escape, the
-        backdrop click, focus moving in and back out, and the scroll lock — none of which
-        a new component would get right for free, and all of which are noticed when absent.
-      */}
-      <Dialog
-        open={choosing}
-        onClose={() => setChoosing(false)}
-        title="What are you playing?"
-      >
-        <div className="mt-5 flex flex-col gap-2">
-          <ButtonLink href="/ranked" size="lg" block onClick={() => setChoosing(false)}>
-            <Glyph name="rank" filled />
-            Ranked duel
-          </ButtonLink>
-          {/* Quieter on purpose. Practice lost its tab to make room for Me, and this is
-              where it went — but it is still the un-rated mode, and it does not get equal
-              billing with the ladder. Same call the /ranked page already makes. */}
-          <ButtonLink
-            href="/practice"
-            variant="secondary"
-            block
-            onClick={() => setChoosing(false)}
+      <AnimatePresence>
+        {choosing && (
+          /**
+           * Anchored to the button, and grown from it.
+           *
+           * `bottom-full` puts it directly above the control, and the transform origin is
+           * the bottom centre — the point the button occupies — so it visibly expands OUT
+           * of the thing that was pressed rather than arriving from somewhere else. That
+           * was the whole complaint about the centred modal this replaces.
+           *
+           * Width is capped to the viewport rather than the 80px column it is centred in,
+           * which is why it needs the translate.
+           */
+          <motion.div
+            ref={panel}
+            role="menu"
+            aria-label="What are you playing?"
+            initial={{ opacity: 0, scale: 0.6, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.7, y: 6, transition: { duration: 0.12 } }}
+            transition={snap}
+            style={{ originY: 1, originX: 0.5 }}
+            /**
+             * `mb-7`, and the number is load-bearing.
+             *
+             * `bottom-full` anchors to the wrapper, but the button is raised out of the bar
+             * by `-mt-5` — so its top edge sits 20px ABOVE that anchor. Anything under 20px
+             * of margin puts the menu on top of the control it came from. This clears it
+             * by eight.
+             */
+            className="border-line bg-ink-800 absolute bottom-full left-1/2 z-10 mb-7 flex
+                       w-[min(20rem,calc(100vw-1.5rem))] -translate-x-1/2 flex-col gap-2
+                       rounded-lg border p-2 shadow-2xl shadow-black/50"
           >
-            <Glyph name="bot" />
-            Practice against a bot
-          </ButtonLink>
-        </div>
-      </Dialog>
+            <ButtonLink
+              href="/ranked"
+              size="lg"
+              block
+              onClick={() => setChoosing(false)}
+              className="justify-start"
+            >
+              <Glyph name="rank" filled />
+              Ranked duel
+            </ButtonLink>
+
+            {/* Quieter on purpose. Practice lost its tab to make room for Me, and this is
+                where it went — but it is still the un-rated mode, and it does not get equal
+                billing with the ladder. Same call the /ranked page already makes. */}
+            <ButtonLink
+              href="/practice"
+              variant="ghost"
+              block
+              onClick={() => setChoosing(false)}
+              className="justify-start"
+            >
+              <Glyph name="bot" />
+              Practice against a bot
+            </ButtonLink>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

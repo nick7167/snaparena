@@ -289,9 +289,9 @@ test.describe("mobile", () => {
     const dailyBox = (await bar.getByRole("link", { name: "Daily" }).boundingBox())!;
     expect(meBox.x).toBeLessThan(dailyBox.x);
 
-    // The sheet reaches both modes it is responsible for.
+    // The menu reaches both modes it is responsible for.
     await play.click();
-    const sheet = page.getByRole("dialog");
+    const sheet = page.getByRole("menu", { name: /What are you playing/ });
     await expect(sheet.getByRole("link", { name: /Ranked duel/ })).toHaveAttribute(
       "href",
       "/ranked",
@@ -300,6 +300,21 @@ test.describe("mobile", () => {
       "href",
       "/practice",
     );
+
+    /**
+     * It comes out of the button, not out of the middle of the screen.
+     *
+     * This was a centred modal with a blurred backdrop; it is anchored above the control
+     * now. Asserted positionally because that is the entire change — every element was
+     * already present and correct, just in the wrong place.
+     */
+    const menuBox = (await sheet.boundingBox())!;
+    const anchorBox = (await play.boundingBox())!;
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(anchorBox.y + 1);
+    // Centred on the button it grew from.
+    const menuMid = menuBox.x + menuBox.width / 2;
+    const anchorMid = anchorBox.x + anchorBox.width / 2;
+    expect(Math.abs(menuMid - anchorMid)).toBeLessThanOrEqual(2);
     // Screenshotted because the sheet renders INSIDE the tab bar's own stacking context,
     // which is the one thing a role query cannot tell you is wrong.
     await page.screenshot({ path: path.join(SCREENSHOTS, "shell-mobile-play-sheet.png") });
