@@ -1028,6 +1028,31 @@ export function SoloRevealStage({
  * a thumb never travels and the field does not move when the keyboard opens. Every
  * millisecond spent reaching for the input is points lost.
  */
+/**
+ * Hear the whole song once your round is over.
+ *
+ * Solving or passing used to kill the audio and leave you on a silent screen until the
+ * round closed — the reward for naming a song was to stop hearing it. Deliberately a
+ * button rather than autoplay, since the player may not be somewhere sound is welcome,
+ * but a big one: a quiet icon would leave the screen just as dead for anyone who missed it.
+ */
+function FullClipButton({ audio }: { audio: ReturnType<typeof useRoundAudio> }) {
+  const playing = audio.phase === "freeplay";
+
+  return (
+    <Button
+      variant="primary"
+      size="lg"
+      block
+      onClick={audio.playFull}
+      disabled={playing || !audio.ready}
+    >
+      <Glyph name="sound" />
+      {playing ? "Playing…" : "Hear the full song"}
+    </Button>
+  );
+}
+
 export function GuessingStage({
   audio,
   solved,
@@ -1074,6 +1099,7 @@ export function GuessingStage({
     ? Math.max(0, Math.ceil((nextBeat.atRoundMs - audio.displayMs) / 1000))
     : null;
   const secondsLeft = Math.max(0, (ROUND_DURATION_MS - audio.displayMs) / 1000);
+  const freePlaying = audio.phase === "freeplay";
 
   return (
     <Stage
@@ -1083,9 +1109,16 @@ export function GuessingStage({
       <div className="flex flex-1 flex-col justify-center gap-4">
         <Waveform
           analyser={audio.analyser}
-          active={audio.phase === "playing"}
+          active={audio.phase === "playing" || freePlaying}
+          // The score clock is correctly stopped during free play, and `displayMs` is that
+          // clock — animating it would imply the round is still running for you.
           displayMs={audio.displayMs}
-          revealStage={audio.revealStage}
+          /**
+           * Free play is the whole song, so it renders as fully unlocked. Leaving the stage
+           * frozen would draw most of the bar field as locked ghost while the track audibly
+           * plays through it.
+           */
+          revealStage={freePlaying ? REVEAL_BEATS.length - 1 : audio.revealStage}
           beats={REVEAL_BEATS}
           roundDurationMs={ROUND_DURATION_MS}
         />
@@ -1147,7 +1180,7 @@ export function GuessingStage({
           <motion.div
             initial={reduced ? false : { scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="flex flex-col items-center gap-2 py-4"
+            className="flex flex-col items-center gap-3 py-4"
             role="status"
           >
             {tierThisRound && <TierChip tierId={tierThisRound} />}
@@ -1155,18 +1188,21 @@ export function GuessingStage({
               +{pointsThisRound}
             </p>
             <p className="text-body-sm text-muted">Waiting for the round to end…</p>
+            <FullClipButton audio={audio} />
           </motion.div>
         ) : passed ? (
-          <p className="text-body text-muted py-6 text-center" role="status">
-            Passed. Waiting for the round to end…
-          </p>
+          <div className="flex flex-col gap-3 py-4">
+            <p className="text-body text-muted text-center" role="status">
+              Passed. Waiting for the round to end…
+            </p>
+            <FullClipButton audio={audio} />
+          </div>
         ) : (
           <>
             <GuessInput
               onGuess={onGuess}
               disabled={!audio.ready || audio.phase === "ended"}
               lockedUntil={lockedUntil}
-              suppressSuggestions={audio.revealStage === 0}
             />
             <button
               onClick={onPass}

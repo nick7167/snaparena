@@ -29,9 +29,10 @@ import { useQueue } from "../queue-driver";
  * thing on this route and was deliberately left alone.
  *
  * It wears `variant="hero"` because it is now the SUBJECT of the searching screen rather
- * than a card at the foot of a stack. That does not spend a second licensed sheen:
- * `StakesCard` holds this screen's one exception in the idle state, and the two never
- * render together — the hero swaps compositions rather than swapping a slot.
+ * than a card at the foot of a stack. That does not spend a second licensed sheen: this is
+ * the searching composition's only hero surface, and the idle composition has none at all
+ * since the stakes card became a track (see rank-progress.tsx) — the two never render
+ * together anyway, because the hero swaps compositions rather than swapping a slot.
  */
 export function SearchPanel() {
   const queue = useQueue();

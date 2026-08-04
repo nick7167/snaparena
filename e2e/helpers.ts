@@ -165,6 +165,41 @@ export async function guessLikeAHuman(page: Page, text: string): Promise<void> {
   await field.press("Enter");
 }
 
+/**
+ * Types a title one character at a time, asserting the suggestion list never blanks.
+ *
+ * Deliberately separate from `guessLikeAHuman`, which uses `fill()` and therefore fires a
+ * single change event. That is why the bug this guards was invisible to the suite for so
+ * long: the list opened once and the race that closed it never ran.
+ *
+ * The real failure was that every keystroke restarted a server query, and the loading state
+ * emptied the list — so anyone typing faster than their round-trip saw nothing at all, and
+ * had to delete and retype slowly to get a suggestion.
+ *
+ * Does not press Enter: a partial title submits as a wrong guess and costs the caller a
+ * five-second input lockout.
+ */
+export async function typeAndKeepSuggestionsOpen(page: Page, text: string): Promise<void> {
+  const field = page.getByRole("combobox", { name: "Your guess" });
+  const list = page.getByRole("listbox", { name: "Track suggestions" });
+
+  await expect(field).toBeEnabled({ timeout: 45_000 });
+  await field.click();
+
+  for (const character of text) {
+    await field.pressSequentially(character, { delay: 30 });
+  }
+
+  /**
+   * Zero timeout, and that is the entire point of this assertion.
+   *
+   * At the default 15s expect timeout this test passes against the BROKEN code, because a
+   * Convex round-trip resolves long inside it. The claim being made is that the suggestion
+   * is already on screen — not that it arrives eventually.
+   */
+  await expect(list).toBeVisible({ timeout: 0 });
+}
+
 export interface DailyAnswers {
   date: string;
   titles: string[];

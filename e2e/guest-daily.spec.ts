@@ -1,6 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { SCREENSHOTS, guessLikeAHuman, loadDailyAnswers } from "./helpers";
+import {
+  SCREENSHOTS,
+  guessLikeAHuman,
+  loadDailyAnswers,
+  typeAndKeepSuggestionsOpen,
+} from "./helpers";
 
 /**
  * A complete daily run, signed out.
@@ -77,6 +82,22 @@ test("a guest can play the daily start to finish and leave", async ({ page }) =>
   const guess = page.getByRole("combobox", { name: "Your guess" });
   await expect(guess).toBeEnabled({ timeout: 45_000 });
   await page.screenshot({ path: path.join(SCREENSHOTS, "daily-02-guessing.png") });
+
+  /**
+   * Autocomplete has to keep up with someone typing at speed.
+   *
+   * Uses a real title so the assertion is about the timing rather than about whether
+   * anything matches. Cleared afterwards so the deliberate miss below is unaffected.
+   */
+  if (answers?.titles[0]) {
+    await typeAndKeepSuggestionsOpen(page, answers.titles[0].slice(0, 6));
+    await page.screenshot({ path: path.join(SCREENSHOTS, "daily-02b-suggestions.png") });
+    await guess.clear();
+  }
+
+  // The way out. The run hides the app navigation, so this control is the only exit —
+  // it used to not exist at all, and the browser's back button was the whole escape plan.
+  await expect(page.getByRole("button", { name: /Leave today.s run/ })).toBeVisible();
 
   // A deliberate miss first: the wrong-guess path has its own feedback and a lockout,
   // and passing exercises neither.

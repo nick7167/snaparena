@@ -25,6 +25,7 @@ import {
   setMuted,
   subscribeMute,
 } from "@/audio/sfx";
+import { MuteToggle } from "@/ui/MuteToggle";
 
 /**
  * The application shell.
@@ -785,20 +786,3 @@ export function UserProvisioner() {
   );
 }
 
-/** Persisted mute toggle. A music game that can't be silenced is one nobody keeps open. */
-function MuteToggle() {
-  // Subscribed rather than copied into state: the preference lives in the sfx
-  // module and is shared by every surface that plays a sound.
-  const muted = useSyncExternalStore(subscribeMute, getMuteSnapshot, getMuteServerSnapshot);
-
-  return (
-    <button
-      onClick={() => setMuted(!muted)}
-      aria-label={muted ? "Unmute sound effects" : "Mute sound effects"}
-      aria-pressed={muted}
-      className="text-muted hover:text-paper rounded-xs p-1 text-xl transition-colors"
-    >
-      <Glyph name={muted ? "mute" : "sound"} />
-    </button>
-  );
-}

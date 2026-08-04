@@ -13,6 +13,8 @@ import { Stage } from "./ui";
 import { GuessingStage, SoloRevealStage } from "./stages";
 import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { useImmersive } from "@/app/immersive";
+import { usePrefetchTrackIndex } from "./track-index";
+import { LeaveMatch } from "./LeaveMatch";
 import { getGuestToken } from "@/app/guest";
 import { Meter } from "@/ui/Surface";
 import { snap } from "@/ui/motion";
@@ -38,6 +40,8 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
   // navigating away always restores the navigation — the daily used to have no way out
   // at all because nothing ever unmounted this.
   useImmersive();
+  // Safety net for the resume-an-active-run path; the daily page warms this earlier.
+  usePrefetchTrackIndex();
 
   const guestToken = getGuestToken();
 
@@ -104,6 +108,10 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
 
   return (
     <div className="relative">
+      {/* The run hides the app navigation, and until now offered nothing in its place —
+          the only way out of a daily was the browser's back button. */}
+      <LeaveMatch mode="daily" live={phase !== "match_end"} />
+
       <RunHeader
         roundNumber={match.currentRound + 1}
         totalRounds={match.totalRounds}

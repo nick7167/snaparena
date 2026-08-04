@@ -19,7 +19,13 @@ import { createAnalyser, type Analyser } from "@/audio/visualizer";
  * before allowing it to score (see validateClientClock).
  */
 
-export type RoundPhase = "idle" | "loading" | "ready" | "playing" | "ended";
+/**
+ * `playing` means the scored round is running and the reveal-beat loop owns the element.
+ * `freeplay` means the round is decided for this player and they are listening to the clip
+ * end to end — audible, but with the score clock stopped and no beat loop. The two are kept
+ * distinct so nothing can mistake "there is sound" for "the round is still scoring".
+ */
+export type RoundPhase = "idle" | "loading" | "ready" | "playing" | "freeplay" | "ended";
 
 /** How long to wait for a clip before declaring it unplayable. */
 const LOAD_TIMEOUT_MS = 8_000;
@@ -41,6 +47,13 @@ export interface UseRoundAudioResult {
   stop: () => void;
   /** Re-plays the currently unlocked snippet from 0:00 without touching the clock. */
   replay: () => void;
+  /**
+   * Plays the whole clip, once the round is decided for this player.
+   *
+   * Unlike `replay`, this is not bounded by the current reveal beat and cannot be re-cut by
+   * the beat loop. Like `replay`, it does not touch the score clock.
+   */
+  playFull: () => void;
   /**
    * Frequency analyser for the visualiser, or null when Web Audio is unavailable
    * or the track is CORS-tainted. Callers must degrade rather than fail.
@@ -162,7 +175,11 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
     audioRef.current?.pause();
-    setPhase((current) => (current === "playing" ? "ended" : current));
+    // `freeplay` has to end here too. Pausing the element while leaving the phase claiming
+    // it has signal would leave the visualiser animating against silence.
+    setPhase((current) =>
+      current === "playing" || current === "freeplay" ? "ended" : current,
+    );
   }, []);
 
   /**
@@ -177,6 +194,45 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     if (!audio || startedAtRef.current === null) return;
     audio.currentTime = 0;
     void audio.play().catch(() => setError("playback-blocked"));
+  }, []);
+
+  /**
+   * Plays the clip end to end for a player whose round is already decided.
+   *
+   * Solving or passing used to cut the audio dead and leave the player watching a silent
+   * screen until the round closed — the reward for naming the song was to stop hearing it.
+   * This makes the wait optional listening instead.
+   *
+   * The score clock is deliberately untouched: `startedAtRef` is never reassigned, so
+   * nothing reported to the server changes. Guarded on the round having actually begun, so
+   * there is no path to hearing the clip before the clock starts.
+   */
+  const playFull = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || startedAtRef.current === null) return;
+
+    /**
+     * Cancelled here rather than relying on the caller having stopped first.
+     *
+     * The normal path already stopped the audio, but a reload mid-round after solving
+     * restores `solved` from the server AND restarts the beat loop (see useRoundLifecycle),
+     * so without this the playback would be chopped at the current beat's boundary.
+     */
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+
+    // Without this the control would sit on "Playing…" forever once the clip runs out, and
+    // the visualiser would keep animating against a finished element.
+    const onEnded = () => setPhase("ended");
+    audio.addEventListener("ended", onEnded, { once: true });
+
+    audio.currentTime = 0;
+    setPhase("freeplay");
+    void audio.play().catch(() => {
+      audio.removeEventListener("ended", onEnded);
+      setPhase("ended");
+      setError("playback-blocked");
+    });
   }, []);
 
   const start = useCallback(async () => {
@@ -256,6 +312,7 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     start,
     stop,
     replay,
+    playFull,
     analyser,
   };
 }

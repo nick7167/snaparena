@@ -9,6 +9,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DailyRunner } from "@/game/DailyRunner";
 import { DailyResult } from "@/game/DailyResult";
+import { usePrefetchTrackIndex } from "@/game/track-index";
 import { DAILY_SONGS } from "@/engine/config";
 import { rankForElo } from "@/engine/ranks";
 import { Avatar } from "@/game/ui";
@@ -48,6 +49,10 @@ function Daily() {
   // Read rather than created: visiting the page must not mint an identity, only starting
   // a run does.
   const guestToken = getGuestToken();
+
+  // Warm the local suggestion catalogue while the player reads the intro. The run itself
+  // opens on a 3-second countdown, which is not long enough to fetch it from scratch.
+  usePrefetchTrackIndex();
 
   const myRun = useQuery(api.daily.myRun, { guestToken });
   // A run left in progress — from a refresh, a closed tab, or a second visit today.

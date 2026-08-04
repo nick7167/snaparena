@@ -4,41 +4,73 @@ import { useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import { AUTOCOMPLETE_MIN_CHARS } from "@/engine/config";
+import { isSearchableTerm, searchTitles } from "@/engine/autocomplete";
+import { useTrackIndex } from "./track-index";
 import { Glyph } from "@/ui/Glyph";
+
+/** Stable identity so an empty result never counts as a change. */
+const NO_OPTIONS: readonly string[] = Object.freeze([]);
+
+/** How many suggestions fit in the time a player has to read them. */
+const MAX_SUGGESTIONS = 6;
 
 interface GuessInputProps {
   onGuess: (text: string) => Promise<{ status: string }>;
   disabled: boolean;
   /** Server-provided timestamp; input stays locked until it passes. */
   lockedUntil: number;
-  /**
-   * Hides suggestions during the first reveal beat. Autocomplete is the largest
-   * remaining cheat surface, so it is withheld while the clip is shortest and
-   * the points are highest.
-   */
-  suppressSuggestions: boolean;
 }
 
-export function GuessInput({
-  onGuess,
-  disabled,
-  lockedUntil,
-  suppressSuggestions,
-}: GuessInputProps) {
+export function GuessInput({ onGuess, disabled, lockedUntil }: GuessInputProps) {
   const [text, setText] = useState("");
   const [lockRemaining, setLockRemaining] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
   // -1 means "no suggestion highlighted" — the raw typed text is what submits.
   const [active, setActive] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  /**
+   * A ref, not state, deliberately.
+   *
+   * This used to be state that fed the input's `disabled` attribute while a guess was in
+   * flight — which blurred the field, dropped whatever was typed during the round-trip, and
+   * left the player having to click back in mid-race. Tracking it in a ref keeps the guard
+   * without re-rendering, so the attribute never flips and focus is never lost.
+   */
+  const inFlight = useRef(false);
 
-  const showSuggestions = !suppressSuggestions && text.trim().length >= AUTOCOMPLETE_MIN_CHARS;
+  /**
+   * Suggestions come from a locally prefetched copy of the catalogue, so they are computed
+   * in the same render as the keystroke. That is the whole point: this is a typing race,
+   * and a list that arrives a round-trip late has already cost the player the round.
+   *
+   * The catalogue is the FULL one, not the tracks in this match — see convex/tracks.ts for
+   * why that is load-bearing rather than incidental.
+   */
+  const index = useTrackIndex();
+  const local = index ? searchTitles(index, text, MAX_SUGGESTIONS) : null;
 
-  // Searches the FULL catalogue, not the tracks in this match — see convex/tracks.ts.
-  const suggestions = useQuery(
+  /**
+   * Server fallback, live only in the moment before the index lands — and permanently if it
+   * never does. `local === null` is the only condition that arms it, so once the index is
+   * loaded this query is skipped for the rest of the session.
+   */
+  const remote = useQuery(
     api.tracks.autocomplete,
-    showSuggestions ? { term: text, limit: 6 } : "skip",
+    local === null && isSearchableTerm(text) ? { term: text, limit: MAX_SUGGESTIONS } : "skip",
   );
+
+  /**
+   * The bug this component existed to cause.
+   *
+   * `useQuery` returns undefined while a query is in flight, and every keystroke changes the
+   * args — so collapsing undefined into [] closed the list on every single character, and a
+   * player typing faster than the round-trip never saw it at all. Holding the last resolved
+   * result means loading can no longer empty the list.
+   *
+   * State adjusted during render rather than in an effect: the codebase's own pattern (see
+   * useRoundAudio), and unlike a ref it is safe under concurrent rendering.
+   */
+  const [heldRemote, setHeldRemote] = useState<readonly string[]>(NO_OPTIONS);
+  if (remote !== undefined && remote !== heldRemote) setHeldRemote(remote);
 
   useEffect(() => {
     const update = () => setLockRemaining(Math.max(0, lockedUntil - Date.now()));
@@ -47,27 +79,38 @@ export function GuessInput({
     return () => clearInterval(id);
   }, [lockedUntil]);
 
+  const locked = lockRemaining > 0;
+  const inputDisabled = disabled || locked;
+
   // Keep focus on the box: every millisecond spent clicking is points lost.
   useEffect(() => {
-    if (!disabled && lockRemaining === 0) inputRef.current?.focus();
-  }, [disabled, lockRemaining]);
+    if (!inputDisabled) inputRef.current?.focus();
+  }, [inputDisabled]);
 
-  const locked = lockRemaining > 0;
-  const inputDisabled = disabled || locked || submitting;
-  const options = showSuggestions ? (suggestions ?? []) : [];
+  const gateOpen = text.trim().length >= AUTOCOMPLETE_MIN_CHARS;
+  const options = gateOpen ? (local ?? remote ?? heldRemote) : NO_OPTIONS;
   const open = options.length > 0;
+
+  /**
+   * Clamped rather than synced.
+   *
+   * The list can shrink between renders — a later keystroke returns fewer matches — and a
+   * highlight left pointing past the end would submit `undefined`. Deriving it costs nothing
+   * and cannot fall out of step the way an effect could.
+   */
+  const activeIndex = active >= 0 && active < options.length ? active : -1;
 
   async function submit(value: string) {
     const trimmed = value.trim();
-    if (!trimmed || inputDisabled) return;
+    if (!trimmed || inputDisabled || inFlight.current) return;
 
-    setSubmitting(true);
+    inFlight.current = true;
     try {
       const result = await onGuess(trimmed);
       if (result.status !== "correct") setText("");
       setActive(-1);
     } finally {
-      setSubmitting(false);
+      inFlight.current = false;
     }
   }
 
@@ -101,12 +144,15 @@ export function GuessInput({
           aria-label="Track suggestions"
           className="border-line bg-ink-700 flex flex-col overflow-hidden rounded-md border"
         >
+          {/* Titles are unique — the index keeps one recording per normalized title — so
+              the title itself is a safe key. */}
           {options.map((title, index) => (
             <li key={title} role="presentation">
               <button
                 type="button"
                 role="option"
-                aria-selected={index === active}
+                id={`guess-suggestion-${index}`}
+                aria-selected={index === activeIndex}
                 // Prevents the field losing focus before the click registers, which
                 // would otherwise blur mid-race.
                 onMouseDown={(event) => event.preventDefault()}
@@ -114,7 +160,7 @@ export function GuessInput({
                 disabled={inputDisabled}
                 className={`text-body block w-full min-h-11 px-4 py-2 text-left transition-colors
                             disabled:opacity-50 ${
-                              index === active
+                              index === activeIndex
                                 ? "bg-ink-500 text-paper"
                                 : "text-secondary hover:bg-ink-600 hover:text-paper"
                             }`}
@@ -131,7 +177,7 @@ export function GuessInput({
           event.preventDefault();
           // A highlighted suggestion wins over the raw text — that is what the
           // highlight promises.
-          void submit(active >= 0 && options[active] ? options[active] : text);
+          void submit(activeIndex >= 0 ? options[activeIndex] : text);
         }}
       >
         <div
@@ -160,6 +206,9 @@ export function GuessInput({
             role="combobox"
             aria-expanded={open}
             aria-controls={open ? "guess-suggestions" : undefined}
+            aria-activedescendant={
+              activeIndex >= 0 ? `guess-suggestion-${activeIndex}` : undefined
+            }
             aria-autocomplete="list"
             className="text-body-lg placeholder:text-muted min-h-13 w-full min-w-0 bg-transparent
                        outline-none"

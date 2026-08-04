@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { AUTOCOMPLETE_MIN_CHARS, MAX_DUEL_ROUNDS } from "../src/engine/config";
+import {
+  AUTOCOMPLETE_MIN_CHARS,
+  MAX_DUEL_ROUNDS,
+  TITLE_INDEX_MAX,
+} from "../src/engine/config";
 import { normalizeTitle } from "../src/engine/normalize";
 
 /**
@@ -14,12 +18,22 @@ import { normalizeTitle } from "../src/engine/normalize";
  *
  * Returns titles only — never artwork or artist — so a suggestion cannot confirm
  * a guess before it is submitted.
+ *
+ * This is now the FALLBACK path. The guess box matches against a locally prefetched
+ * copy of the catalogue (see `titleIndex` below and `src/game/track-index.ts`), because
+ * a round-trip per keystroke cannot keep up with someone typing at speed. This query
+ * still serves the window before that index lands, and forever if it fails to.
  */
 export const autocomplete = query({
   args: { term: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
+    // Gate on the RAW length, matching the client. Gating on the normalized length
+    // meant "The S" measured as one character — `normalizeTitle` strips the leading
+    // article — so the query returned nothing and the dropdown never opened.
+    if (args.term.trim().length < AUTOCOMPLETE_MIN_CHARS) return [];
+
     const normalized = normalizeTitle(args.term);
-    if (normalized.length < AUTOCOMPLETE_MIN_CHARS) return [];
+    if (normalized.length === 0) return [];
 
     const results = await ctx.db
       .query("tracks")
@@ -36,6 +50,60 @@ export const autocomplete = query({
       suggestions.push(track.title);
     }
     return suggestions;
+  },
+});
+
+/**
+ * The whole catalogue's titles, for the client to search locally.
+ *
+ * Autocomplete used to cost a server round-trip per keystroke, which is a race the
+ * server cannot win: type faster than the round-trip and the list never opens. The
+ * catalogue is small enough (~2k titles, ~18 KB gzipped) that shipping it once and
+ * matching in-process is both faster and cheaper than asking repeatedly.
+ *
+ * DO NOT filter by `playable`, and DO NOT add any field beyond the title. Both are the
+ * same anti-cheat rule that governs `autocomplete` above: the suggestion set has to be
+ * the entire catalogue, and it has to be titles only. Scoping it to the answerable pool
+ * would let a player read the answer off the dropdown, and shipping artwork, artist or
+ * preview URLs would let a suggestion confirm a guess before it is submitted. Knowing
+ * every title in the catalogue reveals nothing about the current round, which only ever
+ * exposes an opaque preview URL.
+ */
+export const titleIndex = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("tracks").take(TITLE_INDEX_MAX);
+
+    // Several recordings share one title. Keep the most popular of each so the client's
+    // tie-breaking has something meaningful to order by.
+    const best = new Map<string, Doc<"tracks">>();
+    for (const track of rows) {
+      const held = best.get(track.titleNormalized);
+      if (
+        !held ||
+        track.popularity > held.popularity ||
+        (track.popularity === held.popularity && track.title.length < held.title.length)
+      ) {
+        best.set(track.titleNormalized, track);
+      }
+    }
+
+    // Popularity order is the payload's second channel: the client ranks ties by array
+    // position, so this buys better suggestions for zero extra bytes. Title breaks
+    // remaining ties so the ordering is stable between deployments.
+    const ordered = [...best.values()].sort(
+      (a, b) => b.popularity - a.popularity || a.title.localeCompare(b.title),
+    );
+
+    return {
+      titles: ordered.map((track) => track.title),
+      /**
+       * True when the read hit its ceiling and the tail of the catalogue is missing.
+       * The client keeps the server-side search armed when this is set, so growing past
+       * the cap degrades to slower suggestions rather than to absent ones.
+       */
+      truncated: rows.length === TITLE_INDEX_MAX,
+    };
   },
 });
 

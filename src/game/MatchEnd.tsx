@@ -11,7 +11,8 @@ import { rankChange } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
 import { BadgeRow, BotBadge, RankBadge, Stage, hpTone, nameFor } from "./ui";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
-import { Button } from "@/ui/Button";
+import { useImmersiveState } from "@/app/immersive";
+import { Button, ButtonLink } from "@/ui/Button";
 import { Card, Chip, Meter, SectionLabel } from "@/ui/Surface";
 import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
@@ -80,6 +81,9 @@ export function MatchEnd({
   const subject =
     me ?? players.find((player) => player.userId === perspectiveUserId) ?? null;
   const spectating = me === undefined;
+  // True inside a live match, false on the recap route — which decides whether this screen
+  // has to supply its own way out or already has a header offering one.
+  const immersive = useImmersiveState();
 
   const promotion = useMemo(() => {
     if (!subject || subject.ratingAfter === null) return null;
@@ -199,10 +203,37 @@ export function MatchEnd({
 
       {subject && subject.badgesEarned.length > 0 && <NewBadges ids={subject.badgesEarned} />}
 
-      {onPlayAgain && (
-        <Button size="lg" onClick={onPlayAgain} className="mx-auto">
-          Play again
-        </Button>
+      {/*
+        The way out, and until now there was almost none.
+
+        This screen offered a single conditional button, on a screen where the app shell is
+        still hidden and the match header renders nothing — so a room match ended with no
+        controls at all, and a ranked one with exactly one. Same failure the daily result
+        screen was reported for and already fixed; this matches that solution.
+      */}
+      {!spectating && (
+        <div className="mx-auto flex flex-wrap justify-center gap-2">
+          {/* Named for what it does. It returns you to the lobby — it does not re-queue,
+              and calling it "Play again" meant the button lied about where it went. */}
+          {onPlayAgain && (
+            <Button size="lg" onClick={onPlayAgain}>
+              Back to lobby
+            </Button>
+          )}
+          {/* Only where the app chrome is hidden. The recap route renders this same
+              component with its own header and back link, and duplicating them there
+              would be clutter rather than a way out. */}
+          {immersive && (
+            <>
+              <ButtonLink href="/" variant="secondary">
+                Home
+              </ButtonLink>
+              <ButtonLink href="/leaderboard" variant="secondary">
+                Leaderboard
+              </ButtonLink>
+            </>
+          )}
+        </div>
       )}
     </Stage>
   );

@@ -5,11 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import {
-  DUEL_STARTING_HP,
-  ROOM_STARTING_HP,
-  SURRENDER_FROM_ROUND,
-} from "@/engine/config";
+import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { useRoundAudio } from "./useRoundAudio";
 import { useRoundLifecycle, rejectionMessage } from "./useRoundLifecycle";
@@ -25,7 +21,8 @@ import {
 } from "./stages";
 import { MatchEnd, type MatchEndPlayer } from "./MatchEnd";
 import { useImmersive } from "@/app/immersive";
-import { Button } from "@/ui/Button";
+import { usePrefetchTrackIndex } from "./track-index";
+import { LeaveMatch } from "./LeaveMatch";
 import { Chip, Meter } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 
@@ -54,6 +51,9 @@ export function RoundRunner({
   // Hides the app chrome for the duration. Presentation only — clears on unmount, so
   // finishing, forfeiting or navigating all restore the navigation.
   useImmersive();
+  // Warm the local suggestion catalogue while the VS reveal is on screen, so the first
+  // keystroke of round one already has something to match against.
+  usePrefetchTrackIndex();
 
   const match = useQuery(api.matches.state, { matchId });
   const myStatus = useQuery(api.matches.myRoundStatus, { matchId });
@@ -143,7 +143,16 @@ export function RoundRunner({
 
   return (
     <div className="relative">
-      <MatchHeader match={match} opponent={opponent} maxHp={maxHp} matchId={matchId} />
+      {/* Outside the phase switch on purpose — every beat needs a way out, including the
+          VS reveal and the results screen, where the header below renders nothing. */}
+      <LeaveMatch
+        mode={match.mode === "room" ? "room" : match.mode === "practice" ? "practice" : "ranked"}
+        matchId={matchId}
+        currentRound={match.currentRound}
+        live={phase !== "match_end"}
+      />
+
+      <MatchHeader match={match} opponent={opponent} maxHp={maxHp} />
 
       <AnimatePresence mode="wait">
         {phase === "vs_reveal" && me && opponent && (
@@ -264,26 +273,23 @@ function hasPassed(match: MatchState, userId: string): boolean {
   return entry?.passedRound === match.currentRound;
 }
 
-/** Live HP, the opponent, and the surrender control. */
+/**
+ * Live HP and the opponent.
+ *
+ * No longer carries the surrender control: leaving is now a persistent affordance that
+ * outlives every phase (see LeaveMatch), rather than a quiet link that vanished during
+ * the VS reveal and the results screen — the two places it was needed most.
+ */
 function MatchHeader({
   match,
   opponent,
   maxHp,
-  matchId,
 }: {
   match: MatchState;
   opponent: PlayerCardData | undefined;
   maxHp: number;
-  matchId: Id<"matches">;
 }) {
-  const surrender = useMutation(api.ranked.surrender);
-  const [confirming, setConfirming] = useState(false);
-
   if (match.phase === "vs_reveal" || match.phase === "match_end") return null;
-
-  const canSurrender =
-    (match.mode === "ranked" || match.mode === "practice") &&
-    match.currentRound >= SURRENDER_FROM_ROUND;
 
   return (
     <div className="border-line mx-auto flex w-full max-w-2xl flex-col gap-2.5 border-b px-4 py-3">
@@ -349,32 +355,6 @@ function MatchHeader({
         })}
       </div>
 
-      {canSurrender && (
-        <div className="flex justify-end">
-          {confirming ? (
-            <span className="flex flex-wrap items-center justify-end gap-2">
-              <span className="text-body-sm text-secondary">Concede the duel?</span>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => void surrender({ matchId })}
-              >
-                Yes, I resign
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-                Keep playing
-              </Button>
-            </span>
-          ) : (
-            <button
-              onClick={() => setConfirming(true)}
-              className="text-body-sm text-muted hover:text-paper rounded-xs px-2 py-1 transition-colors"
-            >
-              Surrender
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

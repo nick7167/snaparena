@@ -20,7 +20,7 @@ import { usePrefersReducedMotion } from "@/game/usePrefersReducedMotion";
 import { useQueue } from "../queue-driver";
 import { GlobalRank } from "../dashboard/global-rank";
 import { Beat, CountUp } from "../dashboard/motion";
-import { StakesCard } from "./stakes-card";
+import { RankProgress } from "./rank-progress";
 import { SearchPanel } from "./search-panel";
 
 /**
@@ -65,8 +65,9 @@ export function RankedHero() {
       <HeroViewport>
         <div className="flex min-h-0 flex-1 flex-col gap-6">
           <Skeleton className="min-h-0 w-full flex-1" />
+          {/* The rank track, which now sits with the emblem rather than in a card. */}
+          <Skeleton className="h-8 w-full" />
           <Skeleton className="h-14 w-48 self-center" />
-          <Skeleton className="h-24 w-full" />
           <Skeleton className="h-16 w-full" />
         </div>
       </HeroViewport>
@@ -121,6 +122,9 @@ export function RankedHero() {
              */}
             <Beat index={0} className="flex min-h-0 flex-1 flex-col gap-3">
               {placing ? <PlacementMark /> : <RankMark elo={me.elo} />}
+              {/* Attached to the emblem rather than given a beat of its own: this is a
+                  property of the rank above it, and the artwork is what it measures. */}
+              {!placing && <RankProgress elo={me.elo} stakes={stakes} />}
             </Beat>
 
             <Beat index={1} className="flex flex-col items-center gap-2 text-center">
@@ -131,16 +135,14 @@ export function RankedHero() {
               )}
             </Beat>
 
-            <Beat index={2}>
-              {placing ? (
+            {placing && (
+              <Beat index={2}>
                 <PlacementStakes
                   remaining={me.placementsRemaining}
                   evenSwing={stakes.evenSwing}
                 />
-              ) : (
-                <StakesCard stakes={stakes} />
-              )}
-            </Beat>
+              </Beat>
+            )}
 
             <Beat index={3}>
               <QueueControl elo={me.elo} placing={placing} />

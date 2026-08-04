@@ -219,11 +219,28 @@ export const FUZZY_EXACT_MAX_LEN = 4;
 export const MIN_GUESS_LENGTH = 2;
 
 /**
- * Autocomplete stays hidden until the player has typed this many characters, and
- * is suppressed entirely during the first reveal beat. Suggestions are the largest
- * remaining cheat surface, so they are deliberately slow to appear.
+ * Autocomplete stays hidden until the player has typed this many characters.
+ *
+ * This is a usefulness floor, not an anti-cheat one. Suggestions search the ENTIRE
+ * catalogue rather than the tracks in play (see `convex/tracks.ts`), so they cannot
+ * narrow the answer no matter how early they appear — a single character just matches
+ * a thousand titles and shows you nothing worth reading.
+ *
+ * Counted on the RAW trimmed string on both sides. Counting normalized characters on
+ * the server was a real bug: `normalizeTitle` strips a leading "the ", so typing "The S"
+ * measured as one character and silently returned nothing.
  */
 export const AUTOCOMPLETE_MIN_CHARS = 2;
+
+/**
+ * Ceiling on the rows `tracks.titleIndex` will read to build the client-side index.
+ *
+ * The catalogue is ~2.2k tracks against Convex's 16,384-document read limit, so this is
+ * headroom rather than a real constraint — but the query reports when it hits the cap so
+ * the client can keep the server-side search armed instead of silently losing the tail of
+ * the catalogue.
+ */
+export const TITLE_INDEX_MAX = 6_000;
 
 // ---------------------------------------------------------------------------
 // Rating

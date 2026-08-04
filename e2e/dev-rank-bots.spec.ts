@@ -72,6 +72,16 @@ test.describe("ranked against a dev rank bot", () => {
      */
     const ready = page.getByRole("button", { name: /I'm ready/ });
     await expect(ready).toBeVisible({ timeout: 30_000 });
+
+    /**
+     * There is a way out of the reveal.
+     *
+     * This phase holds for up to thirty seconds and used to render no exit whatsoever:
+     * the match header returns null here, and the app shell is hidden, so the browser's
+     * back button was the only escape — and it silently forfeited the duel.
+     */
+    await expect(page.getByRole("button", { name: /Leave this duel/ })).toBeInViewport();
+
     await ready.click();
 
     // Proof it is a rated match and not the practice fallback: the practice path never
@@ -93,6 +103,19 @@ test.describe("ranked against a dev rank bot", () => {
     // failing means the bot match was created as practice.
     await expect(page.getByText(/^[+-]\d+$/).first()).toBeVisible({ timeout: 30_000 });
 
-    await expect(page.getByRole("button", { name: "Play again" })).toBeVisible();
+    /**
+     * The way out, and there has to be more than one.
+     *
+     * This screen used to offer a single button — labelled "Play again" while actually
+     * returning to the lobby — on a screen where the app shell is still hidden and the
+     * match header renders nothing. A room match ended with no controls at all.
+     */
+    await expect(page.getByRole("button", { name: "Back to lobby" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Home" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Leaderboard" })).toBeVisible();
+
+    // Leaving is reachable from the results screen too, and needs no confirm there —
+    // the match is over, so nothing is at stake.
+    await expect(page.getByRole("button", { name: "Leave match" })).toBeVisible();
   });
 });

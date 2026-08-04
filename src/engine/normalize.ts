@@ -90,17 +90,38 @@ function collapse(input: string): string {
   return input.replace(/\s+/g, " ").trim();
 }
 
-/** Applies the shared tail of the pipeline: symbols, punctuation, whitespace, leading article. */
-function finalize(input: string): string {
+/** Symbols, punctuation and whitespace. Everything except the leading article. */
+function finalizeKeepingArticle(input: string): string {
   let out = stripDiacritics(input.toLowerCase());
   out = out.replace(/&/g, " and ");
   out = out.replace(/[‘’‛]/g, "'");
   // Contractions collapse rather than split: "can't" -> "cant", not "can t".
   out = out.replace(/'/g, "");
   out = out.replace(/[^a-z0-9\s]/g, " ");
-  out = collapse(out);
-  out = out.replace(/^the\s+/, "");
   return collapse(out);
+}
+
+/** Applies the shared tail of the pipeline: symbols, punctuation, whitespace, leading article. */
+function finalize(input: string): string {
+  return collapse(finalizeKeepingArticle(input).replace(/^the\s+/, ""));
+}
+
+/**
+ * Search fold: the character normalization of `finalize`, without the article strip.
+ *
+ * `normalizeTitle` is the right key for COMPARING a finished guess and the wrong key for
+ * RANKING a partial one, and the difference is the leading article. Normalizing turns
+ * "The S" into "s", which prefix-matches every title starting with "s" and ranks "The
+ * Sound of Silence" no better than "Sicko Mode" — so a player typing the first two words
+ * of a title gets noise back.
+ *
+ * This keeps the article, and also keeps bracketed segments and version suffixes, because
+ * a player may well type them. Callers derive the article-stripped variant by slicing this
+ * result, which is why titles are still findable both ways.
+ */
+export function foldForSearch(raw: string): string {
+  if (!raw) return "";
+  return finalizeKeepingArticle(raw);
 }
 
 /**
