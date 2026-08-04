@@ -186,6 +186,10 @@ export const advance = internalMutation({
         await leaveVsReveal(ctx, match);
         return;
 
+      case "veto_reveal":
+        await startCountdown(ctx, match._id, match.currentRound);
+        return;
+
       case "countdown":
         // Handled by waitForReady, which owns the transition into guessing.
         return;

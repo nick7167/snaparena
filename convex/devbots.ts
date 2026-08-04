@@ -261,7 +261,15 @@ export const refillQueue = internalMutation({
       if (queued) {
         // Re-read the bot's live rating rather than trusting the snapshot: these ratings
         // drift, and band matching reads the queue row, not the user.
-        if (queued.elo !== bot.elo) await ctx.db.patch(queued._id, { elo: bot.elo });
+        //
+        // `isBot` is backfilled here too. A row is only re-inserted when a match consumes
+        // it, so a bot sitting in the queue since before that field existed would keep
+        // counting as a human in the "players waiting" readout indefinitely — which is the
+        // exact number this was added to fix.
+        const patch: { elo?: number; isBot?: boolean } = {};
+        if (queued.elo !== bot.elo) patch.elo = bot.elo;
+        if (queued.isBot !== true) patch.isBot = true;
+        if (Object.keys(patch).length > 0) await ctx.db.patch(queued._id, patch);
         continue;
       }
 
@@ -271,6 +279,9 @@ export const refillQueue = internalMutation({
         userId: bot._id,
         elo: bot.elo,
         enqueuedAt: Date.now(),
+        // Keeps the roster out of the "players in queue" count. They are still genuinely
+        // matchable — they just should not read as company.
+        isBot: true,
       });
       added++;
     }

@@ -151,6 +151,15 @@ export const PHASE_DURATIONS_MS = {
    * someone who walked away from the keyboard.
    */
   vs_reveal: 30_000,
+  /**
+   * The draft's payoff: the bans fall away and the surviving categories land as a set.
+   *
+   * Four of the eight are banned and nothing used to show you which four survived — the
+   * draft simply cut to a countdown, so the one decision both players made together had
+   * no visible result. Long enough to read four names and register them as the shape of
+   * the match; short enough that nobody waiting to play resents it.
+   */
+  veto_reveal: 3_500,
   countdown: 3_000,
   guessing: ROUND_DURATION_MS,
   reveal: 6_000,

@@ -55,7 +55,9 @@ export function PageHeader({
   );
   const target = backTarget(previous, parent);
 
-  // A match owns the whole screen. Same guard the tab bar and MobileTopBar use.
+  // A match carries its own chrome row, with its own way out — a second back control
+  // above it would be two answers to one question. Same guard the tab bar and
+  // MobileTopBar use; the desktop sidebar deliberately no longer uses it.
   if (immersive) return null;
 
   return (

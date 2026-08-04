@@ -27,15 +27,25 @@ import {
   subscribeMute,
 } from "@/audio/sfx";
 import { MuteToggle } from "@/ui/MuteToggle";
+import {
+  getSidebarCollapsedServerSnapshot,
+  getSidebarCollapsedSnapshot,
+  setSidebarCollapsed,
+  subscribeSidebarCollapsed,
+} from "@/ui/sidebar-collapsed";
 
 /**
  * The application shell.
  *
- * Sidebar from `lg` up, bottom tab bar below it. Same four destinations and the same
- * four routes as the header it replaces — this is chrome, not information architecture.
+ * Sidebar from `lg` up, bottom tab bar below it. This is chrome, not information
+ * architecture.
  *
- * Both disappear during a match: the arena wants the whole screen, and a navigation bar
- * within thumb reach of the guess field is a way to lose a round by accident.
+ * They behave differently during a match, and the asymmetry is the point. The tab bar goes:
+ * it sits within thumb reach of the guess field, so leaving it up is a way to walk out of a
+ * rated duel by accident. The sidebar stays: it is nowhere near anything you tap mid-round,
+ * and taking it away only cost people their way around — most visibly on the ban draft,
+ * which never opted into immersive mode and so flashed the whole chrome back mid-match.
+ * The sidebar collapses to a rail on request instead, and remembers.
  */
 
 type NavItem = {
@@ -108,7 +118,16 @@ export function AppShell({ children }: { children: ReactNode }) {
     <QueueProvider>
       <div className="flex min-h-full flex-col lg:flex-row">
         <NavRecorder />
-        {!immersive && <Sidebar />}
+        {/*
+         * Unconditional, unlike the two mobile bars below.
+         *
+         * Immersive mode used to take this away for the duration of a match, which made
+         * the ban draft — the one match screen that never opted in — flicker the whole
+         * chrome back for fifteen seconds and then lose it again. On a desktop there is
+         * nothing to protect: the sidebar is nowhere near the guess field, and hiding it
+         * only cost people their way around. It collapses to a rail on request instead.
+         */}
+        <Sidebar />
 
         <main
           className={`min-w-0 flex-1 ${
@@ -119,6 +138,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
 
+        {/* The tab bar still goes. It sits directly under the guess field on a phone, so
+            leaving it up means a mis-tap mid-round walks out of a rated duel. */}
         {!immersive && <TabBar />}
       </div>
     </QueueProvider>
@@ -148,18 +169,52 @@ function NavRecorder() {
 /* Desktop                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The desktop navigation.
+ *
+ * Present on every screen, matches included. It used to unmount for the duration of a
+ * duel, which made the ban draft — the one match screen that never opted into that —
+ * flicker the chrome back for fifteen seconds and then lose it again.
+ *
+ * Getting out of the way is the player's call rather than the app's, so it collapses to a
+ * rail of glyphs and stays however it was left. The mobile tab bar still hides itself
+ * during a match, and that asymmetry is deliberate: it sits directly under the guess
+ * field, where a mis-tap costs a rated duel. A sidebar has no thumb zone to intrude on.
+ */
 function Sidebar() {
   const pathname = usePathname();
+  const collapsed = useSyncExternalStore(
+    subscribeSidebarCollapsed,
+    getSidebarCollapsedSnapshot,
+    getSidebarCollapsedServerSnapshot,
+  );
 
   return (
-    <aside className="bg-ink-900 border-line sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r lg:flex">
-      <div className="px-5 pt-6 pb-5">
-        <Wordmark size="brand" />
+    <aside
+      className={`bg-ink-900 border-line sticky top-0 hidden h-dvh shrink-0 flex-col border-r
+                  transition-[width] lg:flex ${collapsed ? "w-16" : "w-60"}`}
+    >
+      <div
+        className={`flex items-center pt-6 pb-5 ${
+          collapsed ? "justify-center px-2" : "justify-between px-5"
+        }`}
+      >
+        {collapsed ? <Wordmark size="mark" /> : <Wordmark size="brand" />}
+        {!collapsed && <CollapseToggle collapsed={collapsed} />}
       </div>
 
-      <nav aria-label="Main" className="flex flex-col gap-1 px-3">
+      {collapsed && (
+        <div className="flex justify-center pb-2">
+          <CollapseToggle collapsed={collapsed} />
+        </div>
+      )}
+
+      <nav
+        aria-label="Main"
+        className={`flex flex-col gap-1 ${collapsed ? "px-2" : "px-3"}`}
+      >
         {NAV_MODES.map((item) => (
-          <NavLink key={item.href} item={item} pathname={pathname} />
+          <NavLink key={item.href} item={item} pathname={pathname} collapsed={collapsed} />
         ))}
 
         {/* Same hairline as MenuSeparator. Decorative, so `line` rather than
@@ -167,7 +222,7 @@ function Sidebar() {
         <div role="separator" className="bg-line my-2 h-px" />
 
         {NAV_MORE.map((item) => (
-          <NavLink key={item.href} item={item} pathname={pathname} />
+          <NavLink key={item.href} item={item} pathname={pathname} collapsed={collapsed} />
         ))}
       </nav>
 
@@ -179,32 +234,94 @@ function Sidebar() {
        * came to do, and it belongs in the corner your hand already rests in — next to the
        * account menu, above the level bar it fills.
        */}
-      <div className="flex flex-col gap-3 p-4 pb-0">
-        <SignedIn>
-          <PlayButton href="/ranked" caption="Ranked duel" />
-        </SignedIn>
-        <SignedOut>
-          {/* The daily is the only mode a guest can actually play, so that is where the
-              button goes. Sending them at ranked would be a wall wearing the costume of
-              a game. */}
-          <PlayButton href="/daily" caption="Today's challenge" />
-        </SignedOut>
+      <div className={`flex flex-col gap-3 pb-0 ${collapsed ? "items-center p-2" : "p-4"}`}>
+        {collapsed ? (
+          // The rail keeps Play. It is the primary action, and a collapse that costs you
+          // the thing you came for is a collapse nobody uses twice.
+          <>
+            <SignedIn>
+              <RailPlayButton href="/ranked" />
+            </SignedIn>
+            <SignedOut>
+              <RailPlayButton href="/daily" />
+            </SignedOut>
+          </>
+        ) : (
+          <>
+            <SignedIn>
+              <PlayButton href="/ranked" caption="Ranked duel" />
+            </SignedIn>
+            <SignedOut>
+              {/* The daily is the only mode a guest can actually play, so that is where the
+                  button goes. Sending them at ranked would be a wall wearing the costume of
+                  a game. */}
+              <PlayButton href="/daily" caption="Today's challenge" />
+            </SignedOut>
+          </>
+        )}
       </div>
 
-      <div className="border-line mt-4 flex flex-col gap-3 border-t p-4">
+      <div
+        className={`border-line mt-4 flex flex-col gap-3 border-t ${
+          collapsed ? "items-center p-2" : "p-4"
+        }`}
+      >
         <SignedIn>
-          <LevelBlock />
-          <UserMenu side="top" align="start" />
+          {/* The level bar needs its numbers to mean anything, and there is no room for
+              them on a rail. It is still in the account menu. */}
+          {!collapsed && <LevelBlock />}
+          <UserMenu side="top" align="start" compact={collapsed} includeLevel={collapsed} />
         </SignedIn>
 
         <SignedOut>
           <MuteToggle />
-          <AuthDialogButton mode="sign-in" variant="secondary" block>
-            Sign in
-          </AuthDialogButton>
+          {!collapsed && (
+            <AuthDialogButton mode="sign-in" variant="secondary" block>
+              Sign in
+            </AuthDialogButton>
+          )}
         </SignedOut>
       </div>
     </aside>
+  );
+}
+
+/** Expands or collapses the sidebar. The preference outlives the session. */
+function CollapseToggle({ collapsed }: { collapsed: boolean }) {
+  return (
+    <button
+      onClick={() => setSidebarCollapsed(!collapsed)}
+      aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+      aria-expanded={!collapsed}
+      className="text-muted hover:text-paper hover:bg-ink-700 rounded-sm p-1.5 text-lg transition-colors"
+    >
+      {/* One glyph, rotated, so the control reads as the same object in both states — and
+          rotated onto the HORIZONTAL axis, because that is the direction the sidebar
+          actually moves. Pointing it up and down read as a dropdown. */}
+      <span
+        className={`inline-block transition-transform ${collapsed ? "-rotate-90" : "rotate-90"}`}
+      >
+        <Glyph name="chevron" />
+      </span>
+    </button>
+  );
+}
+
+/** Play, as a glyph. The rail's one gold thing, so it stays findable at 64px. */
+function RailPlayButton({ href }: { href: string }) {
+  const queue = useQueue();
+
+  return (
+    <Link
+      href={href}
+      aria-label={queue.inQueue ? "Searching for a match" : "Play"}
+      style={{ ["--press-edge" as string]: "#9E7414" }}
+      className="press bg-gold text-ink-900 flex size-11 items-center justify-center rounded-md text-xl"
+    >
+      <span className={queue.inQueue ? "animate-pulse" : ""}>
+        <Glyph name={queue.inQueue ? "timer" : "tier"} filled />
+      </span>
+    </Link>
   );
 }
 
@@ -213,21 +330,36 @@ function Sidebar() {
  * render exactly the same thing — the active treatment is the kind of detail that
  * drifts the moment it is written twice.
  */
-function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+function NavLink({
+  item,
+  pathname,
+  collapsed = false,
+}: {
+  item: NavItem;
+  pathname: string;
+  collapsed?: boolean;
+}) {
   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
-      className={`text-body flex items-center gap-3 rounded-sm px-3 py-2.5 font-medium transition-colors ${
-        active ? "bg-ink-600 text-paper" : "text-secondary hover:bg-ink-700 hover:text-paper"
-      }`}
+      /**
+       * The label moves into the accessible name when it is not on screen, rather than
+       * simply vanishing. A rail of unlabelled glyphs is not navigation to anyone using a
+       * screen reader, and `title` gives sighted users the same word on hover.
+       */
+      aria-label={collapsed ? item.label : undefined}
+      title={collapsed ? item.label : undefined}
+      className={`text-body flex items-center rounded-sm py-2.5 font-medium transition-colors ${
+        collapsed ? "justify-center px-2" : "gap-3 px-3"
+      } ${active ? "bg-ink-600 text-paper" : "text-secondary hover:bg-ink-700 hover:text-paper"}`}
     >
       <span className="text-lg">
         <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
       </span>
-      {item.label}
+      {!collapsed && item.label}
     </Link>
   );
 }
@@ -477,11 +609,14 @@ function UserMenu({
   side,
   align,
   includeLevel = false,
+  compact = false,
 }: {
   side: "top" | "bottom";
   align: "start" | "end";
   /** Mobile has no sidebar, so the level bar rides inside the menu instead. */
   includeLevel?: boolean;
+  /** The collapsed rail: emblem only, since 64px has no room for a handle or a rank. */
+  compact?: boolean;
 }) {
   const me = useQuery(api.users.me, {});
   const { openUserProfile, signOut } = useClerk();
@@ -497,7 +632,9 @@ function UserMenu({
       label="Account menu"
       side={side}
       align={align}
-      triggerClassName="hover:bg-ink-700 flex w-full items-center gap-2 rounded-sm px-2 py-1.5 transition-colors"
+      triggerClassName={`hover:bg-ink-700 flex items-center rounded-sm transition-colors ${
+        compact ? "justify-center p-1.5" : "w-full gap-2 px-2 py-1.5"
+      }`}
       trigger={
         <>
           {/**
@@ -512,6 +649,10 @@ function UserMenu({
             unranked={placing}
             size="sm"
           />
+          {/* The rail shows the emblem alone. Everything below is the same information the
+              menu itself opens with, so nothing is lost by collapsing — only repeated. */}
+          {!compact && (
+            <>
           <span className="flex min-w-0 flex-1 flex-col text-left">
             <span className="text-body text-paper truncate font-semibold">
               @{me.handle}
@@ -537,6 +678,8 @@ function UserMenu({
           >
             <Glyph name="chevron" />
           </span>
+            </>
+          )}
         </>
       }
     >
@@ -780,12 +923,16 @@ export function MobileTopBar() {
  * No bloom behind the mark: globals.css licenses exactly three exceptions to the no-glow
  * rule and that one belongs to rank emblems. Prominence here is size and space.
  */
-function Wordmark({ size = "bar" }: { size?: "bar" | "brand" }) {
+function Wordmark({ size = "bar" }: { size?: "bar" | "brand" | "mark" }) {
   const brand = size === "brand";
+  // `mark` is the collapsed rail: 64px has no room for the name, and the mark alone is
+  // still the same object people recognise from the favicon and the home-screen icon.
+  const markOnly = size === "mark";
 
   return (
     <Link
       href="/"
+      aria-label={markOnly ? "SNAP — home" : undefined}
       className={`inline-flex items-center transition-[filter] hover:brightness-110 ${
         brand ? "gap-2.5" : "gap-2"
       }`}
@@ -802,15 +949,19 @@ function Wordmark({ size = "bar" }: { size?: "bar" | "brand" }) {
         src="/mark.png"
         alt=""
         aria-hidden="true"
-        className={`inline-block shrink-0 select-none ${brand ? "size-10" : "size-5"}`}
-      />
-      <span
-        className={`font-display text-paper font-extrabold tracking-tight ${
-          brand ? "text-display-2 leading-none" : "text-xl"
+        className={`inline-block shrink-0 select-none ${
+          brand ? "size-10" : markOnly ? "size-8" : "size-5"
         }`}
-      >
-        SNAP
-      </span>
+      />
+      {!markOnly && (
+        <span
+          className={`font-display text-paper font-extrabold tracking-tight ${
+            brand ? "text-display-2 leading-none" : "text-xl"
+          }`}
+        >
+          SNAP
+        </span>
+      )}
     </Link>
   );
 }

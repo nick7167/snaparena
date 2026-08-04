@@ -148,9 +148,16 @@ export function MatchEnd({
       {levelUp !== null && <LevelUpBanner level={levelUp} />}
 
       {/* Final health. A knockout must LOOK like a knockout — an empty bar says
-          "you were finished off" in a way a bare number never does. */}
+          "you were finished off" in a way a bare number never does.
+
+          Ranked here, unlike the live header. `matches.state` returns the viewer first so
+          the in-match bars hold still, which is right while you are playing and wrong on a
+          results screen, where the winner belongs at the top. Sorted locally, the same way
+          `StandingsStage` does it. */}
       <ul className="flex flex-col gap-3">
-        {players.map((player) => {
+        {[...players]
+          .sort((a, b) => (b.hp ?? 0) - (a.hp ?? 0) || b.totalPoints - a.totalPoints)
+          .map((player) => {
           // Meter derives its own percentage from value/max, so there is no local pct.
           const hp = player.hp ?? 0;
 

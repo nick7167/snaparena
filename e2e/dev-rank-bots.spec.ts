@@ -91,6 +91,67 @@ test.describe("ranked against a dev rank bot", () => {
       page.getByText(/Ban a category|is banning…/).first(),
     ).toBeVisible({ timeout: 30_000 });
 
+    /**
+     * Actually place the bans.
+     *
+     * Waiting the draft out instead lets the fifteen-second clock expire with nothing
+     * banned, which reaches the reveal by a different route and shows all eight
+     * categories surviving — a real edge case, but not the one worth covering here.
+     */
+    const pool = page.getByRole("group", { name: "Category pool" });
+
+    for (let ban = 0; ban < 2; ban++) {
+      await expect(page.getByRole("heading", { name: "Ban a category" })).toBeVisible({
+        timeout: 30_000,
+      });
+      /**
+       * Scoped to the pool, and that is load-bearing rather than tidy.
+       *
+       * A bare `button:not([disabled])` also matches the dev resolve bar, which renders
+       * first in the DOM — so `.first()` clicked "Win" and ended the match outright,
+       * three assertions before anything noticed.
+       */
+      await pool.getByRole("button").and(page.locator(":not([disabled])")).first().click();
+    }
+
+    /**
+     * The draft's payoff.
+     *
+     * Half the pool survives the bans and nothing ever showed which — the draft cut
+     * straight to a countdown, so the one decision both players made together had no
+     * visible result.
+     */
+    const set = page.getByRole("heading", { name: /You.re playing these \d/ });
+    await expect(set).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: path.join(SCREENSHOTS, "duel-veto-result.png") });
+    // The bans actually removed something: fewer cards than the pool started with.
+    await expect(page.getByText(/^Banned:/)).toBeVisible();
+
+    /**
+     * The duel header, which is where two bugs lived at once.
+     *
+     * `matches.state` used to sort the scoreboard by HP descending, so the columns
+     * physically swapped sides the moment the lead changed — your bar was on the left
+     * while you were ahead and jumped right when you fell behind. And a rank chip on the
+     * opponent's column only made that column taller, which pushed its meter down.
+     *
+     * Both assertions are positional because both bugs were: every element was present
+     * and correct, just not where it needed to be.
+     */
+    const hpBars = page.getByRole("progressbar", { name: /health/ });
+    await expect(hpBars.first()).toBeVisible({ timeout: 60_000 });
+    await expect(hpBars).toHaveCount(2);
+
+    await expect(hpBars.first()).toHaveAttribute("aria-label", /^Your health/);
+
+    const [mine, theirs] = await Promise.all([
+      hpBars.nth(0).boundingBox(),
+      hpBars.nth(1).boundingBox(),
+    ]);
+    expect(mine!.x).toBeLessThan(theirs!.x);
+    // Same row, so the two bars read as one comparison rather than two readouts.
+    expect(Math.abs(mine!.y - theirs!.y)).toBeLessThanOrEqual(1);
+
     // Skip the songs. This runs the real `finishMatch` → `finalizeMatch` → `applyRanked`
     // path; only the nine-to-twelve songs are elided.
     await devBar.click();
@@ -112,8 +173,13 @@ test.describe("ranked against a dev rank bot", () => {
      * match header renders nothing. A room match ended with no controls at all.
      */
     await expect(page.getByRole("button", { name: "Back to lobby" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Home" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Leaderboard" })).toBeVisible();
+
+    // Scoped to `main`: the sidebar now stays up during a match and carries its own Home
+    // row, so an unscoped lookup matches two links. The claim here is about what the
+    // RESULTS screen offers, which is what matters on a phone where the nav is hidden.
+    const resultExits = page.getByRole("main");
+    await expect(resultExits.getByRole("link", { name: "Home" })).toBeVisible();
+    await expect(resultExits.getByRole("link", { name: "Leaderboard" })).toBeVisible();
 
     // Leaving is reachable from the results screen too, and needs no confirm there —
     // the match is over, so nothing is at stake.

@@ -8,7 +8,7 @@ import {
   VETO_PHASE_MS,
   VETO_POOL_SIZE,
 } from "../src/engine/config";
-import { startCountdown } from "./phases";
+import { enterPhase } from "./phases";
 
 /**
  * The ban draft, shared by every duel mode.
@@ -116,5 +116,13 @@ export async function startDuelIfDraftDone(
     currentRound: 0,
   });
 
-  await startCountdown(ctx, matchId, 0);
+  /**
+   * A beat to show what the draft produced, before the countdown takes over.
+   *
+   * This used to call `startCountdown` directly, so the four surviving categories — the
+   * one thing both players just decided together — were never shown. The tracks are
+   * already picked by the time we get here, so the reveal is showing a settled fact
+   * rather than holding anything up.
+   */
+  await enterPhase(ctx, matchId, "veto_reveal", { currentRound: 0 });
 }

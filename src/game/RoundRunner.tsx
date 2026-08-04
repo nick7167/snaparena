@@ -9,7 +9,7 @@ import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { useRoundAudio } from "./useRoundAudio";
 import { useRoundLifecycle, rejectionMessage } from "./useRoundLifecycle";
-import { BotBadge, RankBadge, hpTone, nameFor } from "./ui";
+import { hpTone, nameFor } from "./ui";
 import {
   Countdown,
   GuessingStage,
@@ -318,9 +318,17 @@ function MatchHeader({ match, maxHp }: { match: MatchState; maxHp: number }) {
   return (
     <div className="border-line mx-auto flex w-full max-w-2xl flex-col gap-2.5 border-b px-4 pb-3">
       {/* The round number, the multiplier and the sudden-death chip all moved up into
-          `MatchChrome`, and "vs {name}" is gone entirely — the bars below already label
-          both players, so it was printing the opponent's name twice. What is left is the
-          opponent's rank, which the bars did NOT carry. */}
+          `MatchChrome`, and "vs {name}" is gone — the bars below already label both
+          players, so it was printing the opponent's name twice.
+
+          The two columns render EXACTLY the same elements, and that is the requirement
+          rather than a tidiness preference: a rank chip on one side only made that column
+          taller, which pushed its meter down and left the two bars visibly out of line.
+          Ranks belong to the VS reveal immediately before this, where they are the subject
+          and have room to be read.
+
+          `matches.state` now returns the viewer first, so your bar is always the left one.
+          It used to sort by HP, which swapped the sides mid-match as the lead changed. */}
 
       {/* Both bars use the same ramp — brightness is how much health is left, not who
           you are. Whose row is whose is carried by the label, not by hue. */}
@@ -330,9 +338,6 @@ function MatchHeader({ match, maxHp }: { match: MatchState; maxHp: number }) {
           return (
             <div key={String(entry.userId)} className="flex flex-1 flex-col gap-1">
               <div className="text-label flex items-center justify-between gap-1.5">
-                {/* The name truncates and the badges do not: on a 390px screen these two
-                    columns are ~170px each, and a long handle must not push the opponent's
-                    rank off the row it was moved here to show. */}
                 <span
                   className={`min-w-0 truncate ${
                     entry.isMe ? "text-paper font-semibold" : "text-muted"
@@ -340,18 +345,7 @@ function MatchHeader({ match, maxHp }: { match: MatchState; maxHp: number }) {
                 >
                   {name}
                 </span>
-                {!entry.isMe && entry.isBot && <BotBadge />}
-                {!entry.isMe && (
-                  <RankBadge
-                    label={entry.rankLabel ?? ""}
-                    tierId={entry.rankTierId ?? "bronze"}
-                    division={entry.rankDivision ?? 1}
-                    accent={entry.rankAccent ?? "#888"}
-                    placements={entry.placementsRemaining ?? 0}
-                    size="sm"
-                  />
-                )}
-                <span className="font-display text-secondary ml-auto font-bold tabular-nums">
+                <span className="font-display text-secondary shrink-0 font-bold tabular-nums">
                   {entry.hp}
                 </span>
               </div>

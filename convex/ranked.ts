@@ -32,7 +32,17 @@ export const queueStatus = query({
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
 
-    const queueSize = (await ctx.db.query("queue").take(100)).length;
+    /**
+     * Humans only.
+     *
+     * This counted every row, and the dev rank-bot cron keeps sixteen of them stocked — so
+     * it read "17 players" permanently, to everyone, on a shared deployment. A number that
+     * never moves answers no question. Bots remain matchable; they just do not count as
+     * company, which is what this line is actually reporting.
+     */
+    const queueSize = (await ctx.db.query("queue").take(100)).filter(
+      (entry) => entry.isBot !== true,
+    ).length;
 
     return {
       inQueue: entry !== null,
@@ -68,6 +78,7 @@ export const enqueue = mutation({
       userId: user._id,
       elo: user.elo,
       enqueuedAt: Date.now(),
+      isBot: user.isBot === true ? true : undefined,
     });
 
     return { queued: true as const };

@@ -10,6 +10,9 @@ import { play } from "@/audio/sfx";
 import { Avatar, BotBadge, PhaseTimer, nameFor } from "./ui";
 import { Button } from "@/ui/Button";
 import { RoundRunner } from "./RoundRunner";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
+import { useImmersive } from "@/app/immersive";
+import { snap } from "@/ui/motion";
 
 /**
  * A duel, from the ban draft to the final round.
@@ -41,6 +44,8 @@ export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeav
       <DevResolveBar matchId={matchId} />
       {match.phase === "veto" ? (
         <VetoPhase matchId={matchId} />
+      ) : match.phase === "veto_reveal" ? (
+        <VetoResult matchId={matchId} />
       ) : (
         <RoundRunner matchId={matchId} onPlayAgain={onLeave} />
       )}
@@ -92,6 +97,10 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
  * The lower-rated player bans first.
  */
 function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
+  // The draft is part of the match, and used to be the one screen that did not say so —
+  // the mobile tab bar reappeared for its fifteen seconds and then vanished again.
+  useImmersive();
+
   const draft = useQuery(api.ranked.draftState, { matchId });
   const submitBan = useMutation(api.ranked.submitBan);
   const expireVeto = useMutation(api.ranked.expireVeto);
@@ -152,7 +161,13 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
           : "Watch what they take — you ban next."}
       </p>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* Grouped and named: eight bare buttons with no container announce as eight
+          unrelated controls, and which pool they belong to is the whole context. */}
+      <div
+        role="group"
+        aria-label="Category pool"
+        className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+      >
         {draft.pool.map((category) => {
           const banned = category.banned;
           return (
@@ -194,6 +209,69 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
       {draft.opponent?.isBot && (
         <p className="text-body-sm text-muted">
           Bots draft too — they take away the categories they are worst at.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What the draft produced.
+ *
+ * Four of eight categories survive the bans, and until now nothing ever showed which —
+ * the draft cut straight to a countdown, so the one decision both players made together
+ * had no visible result. This is the payoff: the banned four strike through and fall
+ * away, and what is left settles into the set you are about to play.
+ *
+ * Reads the same `draftState` the draft does, so no new query and no new server data —
+ * the `banned` flags were already on the wire.
+ */
+function VetoResult({ matchId }: { matchId: Id<"matches"> }) {
+  useImmersive();
+
+  const draft = useQuery(api.ranked.draftState, { matchId });
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    play("reveal");
+  }, []);
+
+  if (!draft) return <p className="text-body text-muted px-4">Loading…</p>;
+
+  const surviving = draft.pool.filter((category) => !category.banned);
+  const banned = draft.pool.filter((category) => category.banned);
+
+  return (
+    <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 py-10">
+      <p className="text-label text-muted tracking-[0.14em]">THE SET</p>
+      <h1 className="font-display text-display-2 text-center font-extrabold tracking-tight">
+        You&rsquo;re playing these {surviving.length}
+      </h1>
+
+      <ul className="grid w-full grid-cols-2 gap-2">
+        {surviving.map((category, index) => (
+          <motion.li
+            key={category.id}
+            initial={reduced ? false : { opacity: 0, y: 10, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            // Staggered, so four names arrive as a sequence you can read rather than a
+            // block that appears all at once and has to be re-scanned.
+            transition={{ ...snap, delay: reduced ? 0 : index * 0.07 }}
+            className="border-line-strong bg-ink-700 text-paper text-body flex min-h-16
+                       items-center justify-center rounded-md border px-3 py-4 text-center
+                       font-medium"
+          >
+            {category.name}
+          </motion.li>
+        ))}
+      </ul>
+
+      {banned.length > 0 && (
+        <p className="text-body-sm text-muted text-center">
+          Banned:{" "}
+          <span className="line-through">
+            {banned.map((category) => category.name).join(" · ")}
+          </span>
         </p>
       )}
     </div>

@@ -195,9 +195,16 @@ test.describe("sidebar", () => {
     ).toHaveCount(0);
   });
 
-  test("hands the whole screen to a live match", async ({ page }) => {
-    // Immersive mode: a navigation bar within thumb reach of the guess field is a way to
-    // lose a round by accident, so the chrome unmounts for the duration.
+  /**
+   * The sidebar stays up during a match; the mobile tab bar does not.
+   *
+   * This asserted the opposite, and the old behaviour is what made the ban draft flash the
+   * whole chrome back for fifteen seconds and then lose it again — the draft was the one
+   * match screen that never opted into hiding it. On a desktop there is nothing to protect:
+   * the sidebar is nowhere near the guess field. On a phone the tab bar sits directly under
+   * it, so a mis-tap mid-round leaves a rated duel, and that one still goes.
+   */
+  test("keeps the sidebar up during a live match", async ({ page }) => {
     await page.goto("/daily");
     const start = page.getByRole("button", { name: "Start" });
     if (!(await start.isVisible().catch(() => false))) test.skip();
@@ -205,8 +212,42 @@ test.describe("sidebar", () => {
     await start.click();
     // `.first()`: the run header and the countdown both say "Song 1 of 5".
     await expect(page.getByText("Song 1 of 5").first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator("aside")).toBeHidden();
-    await expect(page.getByRole("navigation", { name: "Main" })).toHaveCount(0);
+    await expect(page.locator("aside")).toBeVisible();
+    await expect(
+      page.locator("aside").getByRole("link", { name: "Ranked" }),
+    ).toBeVisible();
+  });
+
+  test("collapses to a rail and remembers it", async ({ page }) => {
+    await page.goto("/");
+
+    const sidebar = page.locator("aside");
+    const rankedLabel = sidebar.getByRole("link", { name: "Ranked" });
+    await expect(rankedLabel).toBeVisible();
+    const wide = (await sidebar.boundingBox())!.width;
+
+    /**
+     * Polled, not measured once.
+     *
+     * The sidebar animates its width, so a `boundingBox()` taken on the next tick catches
+     * it mid-transition — the first version of this read 186px of a 240px target and
+     * failed on a feature that was working.
+     */
+    await page.getByRole("button", { name: "Collapse navigation" }).click();
+    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(wide);
+
+    // Still navigation, not decoration: the label moves into the accessible name rather
+    // than disappearing, so the rail is operable without sight of the glyphs.
+    await expect(sidebar.getByRole("link", { name: "Ranked" })).toBeVisible();
+
+    // The preference outlives the page.
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Expand navigation" })).toBeVisible();
+    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(wide);
+
+    await page.getByRole("button", { name: "Expand navigation" }).click();
+    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(wide);
+    await expect(page.getByRole("button", { name: "Collapse navigation" })).toBeVisible();
   });
 });
 

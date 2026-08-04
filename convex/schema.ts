@@ -29,6 +29,8 @@ export const matchStatus = v.union(
 export const matchPhase = v.union(
   v.literal("vs_reveal"),
   v.literal("veto"),
+  /** The draft's result: which four categories survived the bans. */
+  v.literal("veto_reveal"),
   v.literal("countdown"),
   v.literal("guessing"),
   v.literal("reveal"),
@@ -420,6 +422,16 @@ export default defineSchema({
     userId: v.id("users"),
     elo: v.number(),
     enqueuedAt: v.number(),
+    /**
+     * Denormalised from the user row so the "players in queue" readout can exclude bots
+     * without a lookup per entry.
+     *
+     * That readout counted every row, and the dev rank-bot cron keeps sixteen of them
+     * stocked — so it displayed a frozen "17 players" to everyone, forever. Optional
+     * because rows written before this existed are humans by default, and the bot roster
+     * is re-queued every minute, so the count corrects itself without a migration.
+     */
+    isBot: v.optional(v.boolean()),
   })
     .index("by_elo", ["elo"])
     .index("by_user", ["userId"]),

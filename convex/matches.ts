@@ -274,6 +274,22 @@ export const state = query({
         return scored[0].userId;
       })(),
 
+      /**
+       * The viewer first, always.
+       *
+       * This used to sort by HP descending, which meant the duel header physically SWAPPED
+       * SIDES the moment the lead changed — your bar was on the left while you were ahead
+       * and jumped to the right when you fell behind, mid-match, with nothing explaining it.
+       * A health bar you have to re-find is worse than no health bar.
+       *
+       * Ordering by whose row it is makes the header a fixed frame: your side never moves,
+       * so a glance reads as "how am I doing" rather than "which one am I".
+       *
+       * Consumers that genuinely want a ranking sort locally — `StandingsStage` already
+       * does, and `MatchEnd` now does the same. A spectator has no `isMe`, so the
+       * comparison is a no-op and insertion order survives, which is the right answer when
+       * neither row is yours.
+       */
       scoreboard: players
         .map((player, index) => ({
           ...cards[index],
@@ -303,7 +319,7 @@ export const state = query({
           vsReady: player.vsReadyAt !== undefined,
           isMe: me?._id === player.userId,
         }))
-        .sort((a, b) => b.hp - a.hp || b.totalPoints - a.totalPoints),
+        .sort((a, b) => Number(b.isMe) - Number(a.isMe)),
 
       /**
        * Matchup framing for the VS screen. Qualitative only — the projected rating
