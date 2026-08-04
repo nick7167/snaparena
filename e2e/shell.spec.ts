@@ -96,6 +96,10 @@ test.describe("sidebar", () => {
     const nav = page.locator("aside").getByRole("navigation", { name: "Main" });
 
     for (const [label, href] of [
+      // Home leads. It used to be absent from the nav entirely — the dashboard was
+      // reachable only by clicking the wordmark, which is a convention rather than an
+      // affordance, and it was reported as impossible to find.
+      ["Home", "/"],
       ["Daily", "/daily"],
       ["Ranked", "/ranked"],
       ["Practice", "/practice"],
@@ -209,6 +213,14 @@ test.describe("sidebar", () => {
 test.describe("mobile", () => {
   test.use({ viewport: MOBILE });
 
+  /*
+   * The in-match chrome overlap check lives in guest-daily.spec.ts, not here.
+   *
+   * Anything in this file plays the daily as the shared signed-in account, which gets one
+   * run per day — so a second spec that needs a live match skips for the rest of the day
+   * and takes its assertion with it. A guest context mints a fresh identity every run.
+   */
+
   test("raises Play out of the tab bar", async ({ page }) => {
     await page.goto("/");
     await hideDevOverlay(page);
@@ -217,17 +229,42 @@ test.describe("mobile", () => {
     await expect(page.locator("aside")).toBeHidden();
 
     const bar = page.getByRole("navigation", { name: "Main" });
-    const play = bar.getByRole("link", { name: "Play" });
+    // A button rather than a link now: signed in it opens the mode sheet, because Practice
+    // gave up its tab so that Me could have one and this is where it went.
+    const play = bar.getByRole("button", { name: "Play" });
     await expect(play).toBeVisible();
-    await expect(play).toHaveAttribute("href", "/ranked");
 
-    // Two tabs either side, and Ranked is deliberately absent — Play IS ranked, and
-    // listing it twice would make the gold button look like a shortcut to something
-    // ordinary.
-    for (const label of ["Daily", "Board", "Rooms", "Practice"]) {
+    // Two tabs either side, with Me leftmost. Ranked and Practice are both deliberately
+    // absent — Play offers them, and listing a mode twice would make the gold button look
+    // like a shortcut to something ordinary.
+    for (const label of ["Me", "Daily", "Rooms", "Board"]) {
       await expect(bar.getByRole("link", { name: label })).toBeVisible();
     }
     await expect(bar.getByRole("link", { name: "Ranked", exact: true })).toHaveCount(0);
+    await expect(bar.getByRole("link", { name: "Practice", exact: true })).toHaveCount(0);
+
+    // Me is the first tab, left of everything else.
+    const meBox = (await bar.getByRole("link", { name: "Me" }).boundingBox())!;
+    const dailyBox = (await bar.getByRole("link", { name: "Daily" }).boundingBox())!;
+    expect(meBox.x).toBeLessThan(dailyBox.x);
+
+    // The sheet reaches both modes it is responsible for.
+    await play.click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet.getByRole("link", { name: /Ranked duel/ })).toHaveAttribute(
+      "href",
+      "/ranked",
+    );
+    await expect(sheet.getByRole("link", { name: /Practice against a bot/ })).toHaveAttribute(
+      "href",
+      "/practice",
+    );
+    // Screenshotted because the sheet renders INSIDE the tab bar's own stacking context,
+    // which is the one thing a role query cannot tell you is wrong.
+    await page.screenshot({ path: path.join(SCREENSHOTS, "shell-mobile-play-sheet.png") });
+
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
 
     // Raised, not merely coloured: its top edge sits above the bar's.
     const playBox = (await play.boundingBox())!;

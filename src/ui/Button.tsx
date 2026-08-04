@@ -115,6 +115,7 @@ export function ButtonLink({
   size = "md",
   block = false,
   className = "",
+  onClick,
   children,
 }: {
   href: string;
@@ -122,6 +123,12 @@ export function ButtonLink({
   size?: ButtonSize;
   block?: boolean;
   className?: string;
+  /**
+   * Fires alongside the navigation, not instead of it — for dismissing whatever surface
+   * the link sits on. A menu or dialog that stays open behind the page it just opened is
+   * the reason this exists.
+   */
+  onClick?: () => void;
   children?: ReactNode;
 }) {
   const tone = VARIANTS[variant];
@@ -129,6 +136,7 @@ export function ButtonLink({
   return (
     <Link
       href={href}
+      onClick={onClick}
       style={{ "--press-edge": tone.edge } as React.CSSProperties}
       className={shape(variant, size, block, className)}
     >

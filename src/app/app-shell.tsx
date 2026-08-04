@@ -5,7 +5,7 @@ import { SignedIn, SignedOut } from "./auth-gate";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
@@ -13,6 +13,7 @@ import { RankEmblem } from "@/ui/RankEmblem";
 import { ButtonLink } from "@/ui/Button";
 import { Glyph, type GlyphName } from "@/ui/Glyph";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
+import { Dialog } from "@/ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "@/ui/Menu";
 import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
@@ -37,7 +38,17 @@ import { MuteToggle } from "@/ui/MuteToggle";
  * within thumb reach of the guess field is a way to lose a round by accident.
  */
 
-type NavItem = { href: string; label: string; glyph: GlyphName };
+type NavItem = {
+  href: string;
+  label: string;
+  glyph: GlyphName;
+  /**
+   * Used by the tab bar in place of `label`, where a 59px column has to hold a word.
+   * "Home" is right for a sidebar row; on a phone the same destination reads better as
+   * "Me", because what is actually there is your rank, your streak and your last result.
+   */
+  shortLabel?: string;
+};
 
 /**
  * The nav, in two groups.
@@ -46,8 +57,13 @@ type NavItem = { href: string; label: string; glyph: GlyphName };
  * flat rows made Daily — a solo mode against a fixed puzzle — sit in the same list as
  * the three modes where you play a person, and nothing on screen said they were
  * different kinds of thing.
+ *
+ * Home leads, and used to be absent entirely: the dashboard was reachable only by
+ * clicking the wordmark, which is a convention people know but not one anything on the
+ * screen advertises. It sits above the rule because it is not a mode.
  */
 const NAV_MODES: NavItem[] = [
+  { href: "/", label: "Home", glyph: "user", shortLabel: "Me" },
   { href: "/ranked", label: "Ranked", glyph: "rank" },
   { href: "/rooms", label: "Rooms", glyph: "timer" },
   { href: "/practice", label: "Practice", glyph: "bot" },
@@ -64,9 +80,11 @@ const NAV: NavItem[] = [...NAV_MODES, ...NAV_MORE];
 /**
  * The mobile tab bar, with a hole in the middle for the Play button.
  *
- * Two either side of the raised centre control. Ranked is absent because Play IS ranked —
- * listing it twice would make the big gold button look like a shortcut to something
- * ordinary rather than the primary action.
+ * Two either side of the raised centre control. Ranked and Practice are both absent
+ * because Play now offers them — listing a mode twice would make the big gold button look
+ * like a shortcut to something ordinary rather than the primary action.
+ *
+ * Me leads, on the left, where a thumb reaches first.
  *
  * Written out rather than filtered from NAV: a filter takes its order from whatever order
  * NAV happens to be in, so regrouping the sidebar would silently reshuffle the tab bar.
@@ -77,8 +95,8 @@ const byHref = (href: string): NavItem => {
   return item;
 };
 
-const TABS_LEFT: NavItem[] = [byHref("/daily"), byHref("/leaderboard")];
-const TABS_RIGHT: NavItem[] = [byHref("/rooms"), byHref("/practice")];
+const TABS_LEFT: NavItem[] = [byHref("/"), byHref("/daily")];
+const TABS_RIGHT: NavItem[] = [byHref("/rooms"), byHref("/leaderboard")];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const immersive = useImmersiveState();
@@ -602,15 +620,22 @@ function TabBar() {
  */
 function MobilePlayButton({ signedIn }: { signedIn: boolean }) {
   const queue = useQueue();
+  const [choosing, setChoosing] = useState(false);
   const seconds = Math.floor(queue.waitingMs / 1000);
 
-  return (
-    <Link
-      href={signedIn ? "/ranked" : "/daily"}
-      aria-label={queue.inQueue ? "Searching for a match" : "Play"}
-      className="press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full"
-      style={{ ["--press-edge" as string]: "#9E7414" }}
-    >
+  /**
+   * Two carve-outs where the sheet must not appear, both for the same reason: it would
+   * put a choice in front of someone who has none.
+   *
+   * While SEARCHING the button is a live timer and the only route to Cancel — a sheet
+   * there would add a tap to backing out of a queue, which is the worst place to spend
+   * one. Signed OUT the daily is the only mode reachable at all, so offering Ranked would
+   * open a door onto a sign-in wall.
+   */
+  const direct = queue.inQueue || !signedIn;
+
+  const face = (
+    <>
       <span className={`text-xl leading-none ${queue.inQueue ? "animate-pulse" : ""}`}>
         <Glyph name={queue.inQueue ? "timer" : "tier"} filled />
       </span>
@@ -619,17 +644,72 @@ function MobilePlayButton({ signedIn }: { signedIn: boolean }) {
           ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
           : "PLAY"}
       </span>
-    </Link>
+    </>
+  );
+
+  const shape =
+    "press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full";
+  const edge = { ["--press-edge" as string]: "#9E7414" };
+
+  if (direct) {
+    return (
+      <Link
+        href={queue.inQueue || signedIn ? "/ranked" : "/daily"}
+        aria-label={queue.inQueue ? "Searching for a match" : "Play"}
+        className={shape}
+        style={edge}
+      >
+        {face}
+      </Link>
+    );
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setChoosing(true)}
+        aria-label="Play"
+        aria-haspopup="dialog"
+        className={shape}
+        style={edge}
+      >
+        {face}
+      </button>
+
+      {/*
+        A Dialog rather than a purpose-built bottom sheet. It already handles Escape, the
+        backdrop click, focus moving in and back out, and the scroll lock — none of which
+        a new component would get right for free, and all of which are noticed when absent.
+      */}
+      <Dialog
+        open={choosing}
+        onClose={() => setChoosing(false)}
+        title="What are you playing?"
+      >
+        <div className="mt-5 flex flex-col gap-2">
+          <ButtonLink href="/ranked" size="lg" block onClick={() => setChoosing(false)}>
+            <Glyph name="rank" filled />
+            Ranked duel
+          </ButtonLink>
+          {/* Quieter on purpose. Practice lost its tab to make room for Me, and this is
+              where it went — but it is still the un-rated mode, and it does not get equal
+              billing with the ladder. Same call the /ranked page already makes. */}
+          <ButtonLink
+            href="/practice"
+            variant="secondary"
+            block
+            onClick={() => setChoosing(false)}
+          >
+            <Glyph name="bot" />
+            Practice against a bot
+          </ButtonLink>
+        </div>
+      </Dialog>
+    </>
   );
 }
 
-function Tab({
-  item,
-  pathname,
-}: {
-  item: { href: string; label: string; glyph: GlyphName };
-  pathname: string;
-}) {
+function Tab({ item, pathname }: { item: NavItem; pathname: string }) {
   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
   return (
@@ -644,7 +724,7 @@ function Tab({
       <span className="text-xl">
         <Glyph name={item.glyph} filled={active && item.glyph === "win"} />
       </span>
-      <span className="text-label font-semibold">{item.label}</span>
+      <span className="text-label font-semibold">{item.shortLabel ?? item.label}</span>
     </Link>
   );
 }

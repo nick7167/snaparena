@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { assertOnboarded } from "./helpers";
+import path from "node:path";
+import { SCREENSHOTS, assertOnboarded } from "./helpers";
 
 /**
  * DEV ONLY — delete with convex/devbots.ts.
@@ -117,5 +118,72 @@ test.describe("ranked against a dev rank bot", () => {
     // Leaving is reachable from the results screen too, and needs no confirm there —
     // the match is over, so nothing is at stake.
     await expect(page.getByRole("button", { name: "Leave match" })).toBeVisible();
+
+    await page.screenshot({
+      path: path.join(SCREENSHOTS, "duel-match-end.png"),
+      fullPage: true,
+    });
+  });
+
+  /**
+   * The results screen runs long — verdict, both players, the round timeline, XP, badges —
+   * and on a phone the one thing you actually want next used to be several scrolls below
+   * the fold, on a screen where the tab bar is hidden and nothing else offers a way on.
+   *
+   * So the primary is pinned. Asserted by scrolling to the top of a long results screen
+   * and checking the button is still on screen, which is the only thing that distinguishes
+   * a sticky bar from a button that merely happens to be visible when you land.
+   */
+  test("pins the way out of the results screen on mobile", async ({ page }) => {
+    test.setTimeout(180_000);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/ranked");
+    await assertOnboarded(page);
+
+    /**
+     * Clear a results screen left up by the test above.
+     *
+     * The queue driver holds the match id so a reload drops you back into the arena, which
+     * means /ranked renders the finished match rather than the lobby until something says
+     * otherwise. Doubles as proof that "Back to lobby" does what its new name claims.
+     */
+    const stale = page.getByRole("button", { name: "Back to lobby" });
+    if (await stale.isVisible({ timeout: 10_000 }).catch(() => false)) await stale.click();
+
+    /**
+     * Waited for, not merely probed.
+     *
+     * A bare `isVisible()` resolves immediately, and /ranked opens on a loading skeleton
+     * while `users.me` settles — so probing without a timeout reports "no button" for a
+     * page that is simply still arriving, and the test silently skips itself.
+     */
+    const find = page.getByRole("button", { name: "Find a match" });
+    await expect(find).toBeVisible({ timeout: 30_000 });
+    await find.click();
+
+    const devBar = page.getByRole("button", { name: "Random", exact: true });
+    await expect(devBar).toBeVisible({ timeout: 45_000 });
+
+    const ready = page.getByRole("button", { name: /I'm ready/ });
+    await expect(ready).toBeVisible({ timeout: 30_000 });
+    await ready.click();
+    await expect(page.getByText(/Ban a category|is banning…/).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await devBar.click();
+
+    const verdict = page.getByRole("heading", { name: /VICTORY|DEFEAT|DRAW/ });
+    await expect(verdict).toBeVisible({ timeout: 30_000 });
+
+    const cta = page.getByRole("button", { name: "Back to lobby" });
+    await expect(cta).toBeInViewport();
+
+    // Back to the top, where the verdict is — the CTA must still be reachable.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(verdict).toBeInViewport();
+    await expect(cta).toBeInViewport();
+
+    await page.screenshot({ path: path.join(SCREENSHOTS, "duel-match-end-mobile.png") });
   });
 });

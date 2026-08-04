@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { MIN_HUMAN_REACTION_MS, ROUND_DURATION_MS, SCORE_TIERS } from "./config";
+import {
+  CLIENT_CLOCK_TOLERANCE_MS,
+  MIN_HUMAN_REACTION_MS,
+  ROUND_DURATION_MS,
+  SCORE_TIERS,
+} from "./config";
 import {
   revealBeatAt,
   revealStageAt,
+  roundHasExpired,
   scoreForGuess,
   shazamMarginReport,
   tierById,
@@ -104,6 +110,30 @@ describe("revealStageAt / revealBeatAt", () => {
   });
 });
 
+/**
+ * The guard that actually closes the replay hole.
+ *
+ * Leaving a round mid-song used to freeze it open, because nothing but a client nudge ever
+ * advances a phase. Coming back later resumed that same round with a clock starting from
+ * zero, so a song you had already heard scored as though you had named it instantly.
+ */
+describe("roundHasExpired", () => {
+  it("rejects a round left open far past its duration", () => {
+    expect(roundHasExpired(3_600_000)).toBe(true);
+  });
+
+  it("holds a round that is still running", () => {
+    expect(roundHasExpired(0)).toBe(false);
+    expect(roundHasExpired(ROUND_DURATION_MS - 1)).toBe(false);
+  });
+
+  it("tolerates the clock allowance so a slow connection is not punished", () => {
+    // Exactly at the boundary is still honest — a guess sent at 29.9s can land here.
+    expect(roundHasExpired(ROUND_DURATION_MS + CLIENT_CLOCK_TOLERANCE_MS)).toBe(false);
+    expect(roundHasExpired(ROUND_DURATION_MS + CLIENT_CLOCK_TOLERANCE_MS + 1)).toBe(true);
+  });
+});
+
 describe("validateClientClock", () => {
   const base = { clientElapsedMs: 2_000, serverObservedElapsedMs: 2_150 };
 
@@ -129,6 +159,20 @@ describe("validateClientClock", () => {
   it("tolerates normal network latency", () => {
     expect(
       validateClientClock({ clientElapsedMs: 2_000, serverObservedElapsedMs: 2_400 }).valid,
+    ).toBe(true);
+  });
+
+  /**
+   * The exploit this check does NOT cover, pinned so nobody mistakes it for one that does.
+   *
+   * A player who leaves mid-round freezes it — phase transitions are client-driven — and
+   * returns with an audio clock starting from zero. Every rule here passes: the claim is
+   * above the human floor, well under the round duration, and far *below* the server's
+   * window rather than above it. `roundHasExpired` is what catches this.
+   */
+  it("does not catch a fresh clock after a long absence", () => {
+    expect(
+      validateClientClock({ clientElapsedMs: 2_000, serverObservedElapsedMs: 3_600_000 }).valid,
     ).toBe(true);
   });
 

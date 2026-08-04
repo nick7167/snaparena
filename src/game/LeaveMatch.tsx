@@ -7,10 +7,10 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { SURRENDER_FROM_ROUND } from "@/engine/config";
 import { useQueue } from "@/app/queue-driver";
+import { getGuestToken } from "@/app/guest";
 import { Button } from "@/ui/Button";
 import { Dialog } from "@/ui/Dialog";
 import { Glyph } from "@/ui/Glyph";
-import { MuteToggle } from "@/ui/MuteToggle";
 
 export type LeaveMode = "ranked" | "practice" | "room" | "daily";
 
@@ -44,8 +44,10 @@ const CONSEQUENCE: Record<LeaveMode, { title: string; body: string; action: stri
   },
   daily: {
     title: "Leave today's run?",
-    body: "Your progress is kept — you can pick the run up where you left it.",
-    action: "Leave run",
+    body:
+      "Your run ends here and is scored as it stands — songs you have not played count " +
+      "zero. The daily can only be played once a day, so there is no coming back to it.",
+    action: "End my run",
   },
 };
 
@@ -58,10 +60,13 @@ const CONSEQUENCE: Record<LeaveMode, { title: string; body: string; action: stri
  * run, and the results screen. The only reliable escape was the browser's back button,
  * which silently forfeited rated matches.
  *
- * So this is deliberately rendered OUTSIDE the phase switch and pinned to the viewport:
- * it has to survive every beat, including the loading and error dead-ends, because those
- * are exactly where being stuck is worst. The mute toggle rides along for the same reason
- * — the shell was also the only place to silence a game that is entirely about sound.
+ * So this is deliberately rendered OUTSIDE the phase switch, by `MatchChrome`: it has to
+ * survive every beat, including the loading and error dead-ends, because those are exactly
+ * where being stuck is worst.
+ *
+ * This component is the button and its confirm only. Where it sits is `MatchChrome`'s job —
+ * it used to place itself `fixed`, and that is what put it on top of the match header on
+ * every phone-width screen.
  */
 export function LeaveMatch({
   mode,
@@ -70,9 +75,10 @@ export function LeaveMatch({
   live,
 }: {
   mode: LeaveMode;
-  /** Absent for the daily, which has no surrender path. */
+  /** Needed by every mode that writes something on the way out — resigning, or recording
+      an abandoned daily. Optional only so a caller with no match yet can still render. */
   matchId?: Id<"matches">;
-  /** Zero-indexed. Decides whether the server will accept a clean resignation. */
+  /** Zero-indexed. Decides whether the server will accept a clean resignation. Duels only. */
   currentRound?: number;
   /** False once the match is over — nothing is at stake, so leaving needs no confirm. */
   live: boolean;
@@ -80,6 +86,7 @@ export function LeaveMatch({
   const router = useRouter();
   const queue = useQueue();
   const surrender = useMutation(api.ranked.surrender);
+  const forfeitDaily = useMutation(api.daily.forfeit);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
   /** Lets the unload guard stand down for a departure the player already agreed to. */
@@ -107,11 +114,27 @@ export function LeaveMatch({
       }
     }
 
+    /**
+     * The daily is recorded on the way out, which is what makes leaving final.
+     *
+     * Without this the run stays live and resumable — and because an unwatched round never
+     * advances, resuming means picking up the same song with a fresh clock. See
+     * `daily.forfeit` for the whole shape of that hole.
+     */
+    if (mode === "daily" && matchId && live) {
+      try {
+        await forfeitDaily({ matchId, guestToken: getGuestToken() });
+      } catch {
+        // Never trap someone in a run because the write failed. The server-side round
+        // expiry still denies the replay this was protecting against.
+      }
+    }
+
     // Ranked holds the match id in the queue driver so a reload drops you back in. Without
     // clearing it, navigating to /ranked would put you straight back into the match.
     queue.clearMatch();
     router.push(EXIT_HREF[mode]);
-  }, [rated, matchId, currentRound, live, surrender, queue, router, mode]);
+  }, [rated, matchId, currentRound, live, surrender, forfeitDaily, queue, router, mode]);
 
   // Only rated, in-progress matches have anything to lose to a stray Back press.
   useDepartureWarning(rated && live, departing, () => setConfirming(true));
@@ -120,26 +143,18 @@ export function LeaveMatch({
 
   return (
     <>
-      {/*
-        Fixed rather than placed in the header: the header is hidden during the VS reveal
-        and the results screen, and several stages size themselves to the viewport, so
-        anything in normal flow can end up off-screen at exactly the wrong moment.
-      */}
-      <div
-        className="border-line bg-ink-800/80 fixed top-3 left-3 z-40 flex items-center gap-1
-                   rounded-full border p-1 backdrop-blur"
+      {/* Placed by `MatchChrome`, in normal flow. This used to position itself `fixed`,
+          which put it on top of the match header on any viewport narrow enough for the
+          content column to reach the screen edge — i.e. every phone. */}
+      <button
+        onClick={() => (live ? setConfirming(true) : void leave())}
+        aria-label={live ? copy.title : "Leave match"}
+        className="text-muted hover:text-paper -m-1 flex items-center gap-1.5 rounded-full p-1
+                   text-xl transition-colors"
       >
-        <button
-          onClick={() => (live ? setConfirming(true) : void leave())}
-          aria-label={live ? copy.title : "Leave match"}
-          className="text-muted hover:text-paper flex items-center gap-1.5 rounded-full px-2.5
-                     py-1 text-xl transition-colors"
-        >
-          <Glyph name="leave" />
-          <span className="text-body-sm sr-only sm:not-sr-only">Leave</span>
-        </button>
-        <MuteToggle />
-      </div>
+        <Glyph name="leave" />
+        <span className="text-label font-semibold tracking-[0.1em]">LEAVE</span>
+      </button>
 
       <Dialog
         open={confirming}

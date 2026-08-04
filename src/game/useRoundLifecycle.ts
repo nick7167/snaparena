@@ -127,6 +127,10 @@ export function rejectionMessage(reason: string): string {
       return "Rejected by the timing check";
     case "stale-round":
       return "The round moved on";
+    // Distinct from "stale-round": the round did not move on, it ran out while nobody was
+    // here to close it. Says so plainly rather than implying the guess was mistimed.
+    case "round-expired":
+      return "This round ran out while you were away";
     default:
       return "Guess rejected";
   }

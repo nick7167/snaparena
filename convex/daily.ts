@@ -220,42 +220,96 @@ export const complete = mutation({
 
     const date = todayKey(match.createdAt);
 
-    const existing = await ctx.db
-      .query("dailyRuns")
-      .withIndex("by_user_date", (q) => q.eq("userId", user._id).eq("date", date))
-      .unique();
-
-    if (existing) return existing._id; // idempotent
-
-    const guesses = await ctx.db
-      .query("guesses")
-      .withIndex("by_match_round", (q) => q.eq("matchId", args.matchId))
-      .collect();
-
-    const perRoundPoints: number[] = [];
-    const perRoundMs: number[] = [];
-
-    for (let round = 0; round < match.trackIds.length; round++) {
-      const solved = guesses.find(
-        (guess) => guess.roundIndex === round && guess.userId === user._id && guess.correct,
-      );
-      perRoundPoints.push(solved?.points ?? 0);
-      // -1 marks "never solved", distinct from a genuine 0ms.
-      perRoundMs.push(solved ? Math.round(solved.clientElapsedMs) : -1);
-    }
-
-    return await ctx.db.insert("dailyRuns", {
-      userId: user._id,
-      date,
-      totalPoints: perRoundPoints.reduce((sum, points) => sum + points, 0),
-      perRoundPoints,
-      perRoundMs,
-      completedAt: Date.now(),
-      // Denormalised so the board can exclude guests without a lookup per run.
-      isGuest: user.isGuest === true ? true : undefined,
-    });
+    return await recordRun(ctx, user, match, date);
   },
 });
+
+/**
+ * Ends a run early, keeping whatever was earned.
+ *
+ * Leaving used to abandon the match without recording anything, which left a hole worth
+ * closing: phase transitions are driven by client nudges, so an abandoned round never
+ * advances. Coming back later resumed that same frozen round with a fresh audio clock —
+ * and `validateClientClock` only bounds a claim against how long the server has been
+ * waiting, which by then is enormous. You could hear song one, leave, return an hour
+ * later and score a SNAP on a track you already knew.
+ *
+ * Recording the run is what shuts that: `start` checks for a recorded run BEFORE it looks
+ * for a live match, so once this has written a row there is nothing to come back to.
+ *
+ * Unplayed songs score zero, exactly as an unsolved song does — a run left after three of
+ * five keeps those three. The alternative, voiding everything, punishes a dropped
+ * connection precisely as hard as a deliberate exit, and the server cannot tell them apart.
+ */
+export const forfeit = mutation({
+  args: { matchId: v.id("matches"), guestToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const user = await resolveDailyPlayer(ctx, args.guestToken);
+    const match = await ctx.db.get(args.matchId);
+    if (!match || match.mode !== "daily") throw new Error("Not a daily match");
+
+    const runId = await recordRun(ctx, user, match, todayKey(match.createdAt));
+
+    // Belt and braces. `start` already refuses on the recorded run above, but leaving a
+    // match flagged active would keep it in every "live match" sweep for no reason.
+    if (match.status === "active") {
+      await ctx.db.patch(args.matchId, { status: "complete" });
+    }
+
+    return runId;
+  },
+});
+
+/**
+ * Writes the `dailyRuns` row for a match, scoring every round it contains.
+ *
+ * Shared by `complete` and `forfeit` rather than copied, because the two must agree on
+ * what a run was worth — a second copy of this loop is how the totals start diverging.
+ * Idempotent: an existing row for the day wins and is returned untouched.
+ */
+async function recordRun(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  match: Doc<"matches">,
+  date: string,
+): Promise<Id<"dailyRuns">> {
+  const existing = await ctx.db
+    .query("dailyRuns")
+    .withIndex("by_user_date", (q) => q.eq("userId", user._id).eq("date", date))
+    .unique();
+
+  if (existing) return existing._id;
+
+  const guesses = await ctx.db
+    .query("guesses")
+    .withIndex("by_match_round", (q) => q.eq("matchId", match._id))
+    .collect();
+
+  const perRoundPoints: number[] = [];
+  const perRoundMs: number[] = [];
+
+  // Every round in the match, not every round played — so a run abandoned early is
+  // recorded as the full five with zeros on the songs never reached.
+  for (let round = 0; round < match.trackIds.length; round++) {
+    const solved = guesses.find(
+      (guess) => guess.roundIndex === round && guess.userId === user._id && guess.correct,
+    );
+    perRoundPoints.push(solved?.points ?? 0);
+    // -1 marks "never solved", distinct from a genuine 0ms.
+    perRoundMs.push(solved ? Math.round(solved.clientElapsedMs) : -1);
+  }
+
+  return await ctx.db.insert("dailyRuns", {
+    userId: user._id,
+    date,
+    totalPoints: perRoundPoints.reduce((sum, points) => sum + points, 0),
+    perRoundPoints,
+    perRoundMs,
+    completedAt: Date.now(),
+    // Denormalised so the board can exclude guests without a lookup per run.
+    isGuest: user.isGuest === true ? true : undefined,
+  });
+}
 
 /**
  * Moves a guest's runs onto the account that just signed in.

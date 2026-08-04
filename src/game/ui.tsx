@@ -169,8 +169,18 @@ export function Stage({
       animate={{ opacity: 1, y: 0 }}
       exit={reduced ? undefined : { opacity: 0, y: -12 }}
       transition={settle}
+      /**
+       * `--match-chrome` is the height of the row the runners put above every stage (see
+       * MatchChrome). It defaults to 0px, so a stage rendered anywhere else is unaffected;
+       * inside a match it has to come out of the budget or the stage claims a full viewport
+       * it does not have, and `overflow-hidden` below hides the overflow rather than
+       * reporting it.
+       */
       className={`mx-auto flex w-full flex-col px-4 ${width} ${
-        fit ? "h-dvh max-h-dvh justify-center gap-3 overflow-hidden py-3" : "gap-6"
+        fit
+          ? `h-[calc(100dvh-var(--match-chrome,0px))] max-h-[calc(100dvh-var(--match-chrome,0px))]
+             justify-center gap-3 overflow-hidden py-3`
+          : "gap-6"
       } ${className}`}
     >
       {children}

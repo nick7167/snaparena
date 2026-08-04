@@ -744,8 +744,11 @@ export function Countdown({
 
       {lead !== null && (
         <p className="text-body text-secondary">
+          {/* The tie branch used to read "Dead level", which was the only one of the three
+              that did not name what it was measuring — so the state you see on entering
+              every duel, when both players are on full health, was the least legible. */}
           {lead === 0
-            ? "Dead level"
+            ? `Level on ${me?.hp ?? 0} HP`
             : lead > 0
               ? `You lead by ${lead} HP`
               : `Behind by ${Math.abs(lead)} HP`}
@@ -1306,7 +1309,7 @@ export function StandingsStage({
                   <span className="text-signal-text">ROUND LOST</span>
                 )
               ) : (
-                <span className="text-muted">DEAD HEAT</span>
+                <span className="text-muted">ROUND DRAWN</span>
               )}
             </p>
 
@@ -1419,7 +1422,7 @@ export function StandingsStage({
             }`}
           >
             {lead === 0
-              ? "Dead level"
+              ? `Level on ${me ? hpFor(me.userId) : 0} HP`
               : lead > 0
                 ? `You lead by ${lead}`
                 : `Behind by ${Math.abs(lead)}`}

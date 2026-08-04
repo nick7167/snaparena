@@ -15,6 +15,7 @@ import { useNow, usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { useImmersive } from "@/app/immersive";
 import { usePrefetchTrackIndex } from "./track-index";
 import { LeaveMatch } from "./LeaveMatch";
+import { MATCH_CHROME_HEIGHT, MatchChrome } from "./MatchChrome";
 import { getGuestToken } from "@/app/guest";
 import { Meter } from "@/ui/Surface";
 import { snap } from "@/ui/motion";
@@ -107,10 +108,16 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
     match.roundResults.find((result) => me && result.userId === me.userId) ?? null;
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ ["--match-chrome" as string]: MATCH_CHROME_HEIGHT }}>
       {/* The run hides the app navigation, and until now offered nothing in its place —
-          the only way out of a daily was the browser's back button. */}
-      <LeaveMatch mode="daily" live={phase !== "match_end"} />
+          the only way out of a daily was the browser's back button.
+
+          No `meta`, unlike the duel: `RunHeader` below already carries the song counter,
+          the named tally and a progress meter. The duel's chrome took the round number
+          because its header gave that row up; this one never did. */}
+      <MatchChrome
+        leave={<LeaveMatch mode="daily" matchId={matchId} live={phase !== "match_end"} />}
+      />
 
       <RunHeader
         roundNumber={match.currentRound + 1}

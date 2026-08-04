@@ -129,6 +129,23 @@ export function validateClientClock(input: ClockValidationInput): ClockValidatio
 }
 
 /**
+ * Whether a round is over by the SERVER's clock, regardless of what any client claims.
+ *
+ * `validateClientClock` cannot answer this and was never able to. It bounds a claim
+ * against how long the server has been waiting, and that window only ever grows — so it
+ * catches a client claiming to be faster than physically possible, and waves through a
+ * client claiming a fresh two seconds against a window an hour wide.
+ *
+ * That gap was reachable: phase transitions are driven by client nudges, so a round nobody
+ * is watching never advances. Hear the song, close the tab, come back later, and the round
+ * is still open with the audio clock starting again from zero — full marks for a track you
+ * already knew. Measuring from the server's clock closes it for every way of leaving.
+ */
+export function roundHasExpired(serverObservedElapsedMs: number): boolean {
+  return serverObservedElapsedMs > ROUND_DURATION_MS + CLIENT_CLOCK_TOLERANCE_MS;
+}
+
+/**
  * Diagnostic for balance tuning: what a cheater gains by identifying the track
  * with an external app instead of knowing it.
  *

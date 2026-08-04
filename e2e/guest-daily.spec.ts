@@ -32,7 +32,8 @@ const DUEL_COPY = [
   "THE SONG WINS",
   "ROUND WON",
   "ROUND LOST",
-  "DEAD HEAT",
+  "ROUND DRAWN",
+  "Level on",
   "VICTORY",
   "DEFEAT",
   "DRAW",
@@ -97,7 +98,33 @@ test("a guest can play the daily start to finish and leave", async ({ page }) =>
 
   // The way out. The run hides the app navigation, so this control is the only exit —
   // it used to not exist at all, and the browser's back button was the whole escape plan.
-  await expect(page.getByRole("button", { name: /Leave today.s run/ })).toBeVisible();
+  const leave = page.getByRole("button", { name: /Leave today.s run/ });
+  await expect(leave).toBeVisible();
+
+  /**
+   * And it must not sit on top of the header it stands beside.
+   *
+   * It used to. The control positioned itself `fixed top-3 left-3`, which looked correct
+   * on desktop only because the content column is centred there and left an empty gutter
+   * beneath it. At phone width the column reaches the screen edge and the control landed
+   * squarely on "Song 1 of 5".
+   *
+   * Geometry rather than a screenshot, because this is precisely the bug a visual check
+   * waves through — the pixels look busy but plausible and nothing fails.
+   */
+  const runHeader = songHeader(page, 1);
+  const leaveBox = (await leave.boundingBox())!;
+  const headerBox = (await runHeader.boundingBox())!;
+
+  const overlaps =
+    leaveBox.x < headerBox.x + headerBox.width &&
+    headerBox.x < leaveBox.x + leaveBox.width &&
+    leaveBox.y < headerBox.y + headerBox.height &&
+    headerBox.y < leaveBox.y + leaveBox.height;
+
+  expect(overlaps, "the leave control is sitting on top of the run header").toBe(false);
+  // A real touch target, not a sliver squeezed by the row it now shares.
+  expect(leaveBox.height).toBeGreaterThanOrEqual(24);
 
   // A deliberate miss first: the wrong-guess path has its own feedback and a lockout,
   // and passing exercises neither.
@@ -217,11 +244,16 @@ test("a guest can play the daily start to finish and leave", async ({ page }) =>
    *
    * The run hides the app chrome and previously nothing gave it back — the daily ended
    * on a screen with no navigation at all.
+   *
+   * Scoped to `main`: the sidebar now carries its own Home row, so an unscoped lookup
+   * matches two links and cannot tell "the result screen offers a way out" from "the
+   * shell came back". This assertion is about the former.
    */
-  await expect(page.getByRole("link", { name: "Home" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Play ranked/ })).toBeVisible();
+  const resultExits = page.getByRole("main");
+  await expect(resultExits.getByRole("link", { name: "Home" })).toBeVisible();
+  await expect(resultExits.getByRole("link", { name: /Play ranked/ })).toBeVisible();
 
-  await page.getByRole("link", { name: "Home" }).click();
+  await resultExits.getByRole("link", { name: "Home" }).click();
   await expect(page).toHaveURL(/localhost:3000\/$/);
 
   // The navigation is genuinely restored, not merely routed away from.

@@ -110,9 +110,14 @@ export function MatchEnd({
   }, [promotion, levelUp, subjectWon, spectating]);
 
   const winner = players.find((player) => player.userId === winnerId);
+  /** The pinned primary exists only in a live match the viewer played. */
+  const pinnedExit = !spectating && onPlayAgain !== undefined;
 
   return (
-    <Stage keyName="match-end" className="py-12">
+    // No bottom padding when the pinned bar is present: a sticky child sticks within its
+    // parent's CONTENT box, so trailing padding would unstick the button three rem early
+    // and leave it floating above a gap. The bar carries its own spacing instead.
+    <Stage keyName="match-end" className={pinnedExit ? "pt-12" : "py-12"}>
       {/* Stated without softening. A loss says so — that is what makes a win worth
           anything. Everything below this line is generous; this line is not.
 
@@ -211,28 +216,42 @@ export function MatchEnd({
         controls at all, and a ranked one with exactly one. Same failure the daily result
         screen was reported for and already fixed; this matches that solution.
       */}
-      {!spectating && (
+      {/* The secondary exits, at the end of the reading. Only where the app chrome is
+          hidden — the recap route renders this same component with its own header and
+          back link, and duplicating them there would be clutter rather than a way out. */}
+      {!spectating && immersive && (
         <div className="mx-auto flex flex-wrap justify-center gap-2">
+          <ButtonLink href="/" variant="secondary">
+            Home
+          </ButtonLink>
+          <ButtonLink href="/leaderboard" variant="secondary">
+            Leaderboard
+          </ButtonLink>
+        </div>
+      )}
+
+      {/**
+       * The primary, pinned.
+       *
+       * This screen runs long — verdict, both players, the round timeline, XP and badges —
+       * so on a phone the only thing you actually want next was several scrolls below the
+       * fold, on a screen where the tab bar is hidden and nothing else offers a way on.
+       *
+       * `sticky`, not `fixed`: it stays inside the stage's column, so it cannot drift over
+       * content the way the match chrome did before this pass. `-mx-4` and `px-4` cancel
+       * the Stage's own padding so the bar's background reaches the full width while its
+       * button stays on the column.
+       */}
+      {pinnedExit && (
+        <div
+          className="bg-ink-900 border-line sticky bottom-0 -mx-4 mt-2 border-t px-4 pt-3
+                     pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+        >
           {/* Named for what it does. It returns you to the lobby — it does not re-queue,
               and calling it "Play again" meant the button lied about where it went. */}
-          {onPlayAgain && (
-            <Button size="lg" onClick={onPlayAgain}>
-              Back to lobby
-            </Button>
-          )}
-          {/* Only where the app chrome is hidden. The recap route renders this same
-              component with its own header and back link, and duplicating them there
-              would be clutter rather than a way out. */}
-          {immersive && (
-            <>
-              <ButtonLink href="/" variant="secondary">
-                Home
-              </ButtonLink>
-              <ButtonLink href="/leaderboard" variant="secondary">
-                Leaderboard
-              </ButtonLink>
-            </>
-          )}
+          <Button size="lg" block onClick={onPlayAgain}>
+            Back to lobby
+          </Button>
         </div>
       )}
     </Stage>

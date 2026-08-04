@@ -6,7 +6,12 @@ import { endGuessingEarly } from "./phases";
 import { MAX_GUESSES_PER_ROUND, WRONG_GUESS_LOCKOUT_MS } from "../src/engine/config";
 import { checkGuess } from "../src/engine/match";
 import { normalizeTitle } from "../src/engine/normalize";
-import { revealBeatAt, scoreForGuess, validateClientClock } from "../src/engine/scoring";
+import {
+  revealBeatAt,
+  roundHasExpired,
+  scoreForGuess,
+  validateClientClock,
+} from "../src/engine/scoring";
 import { rankForElo, matchupLabel } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
 import { sortBadges } from "../src/engine/badges";
@@ -391,6 +396,24 @@ export async function applyGuess(
     return { status: "rejected", reason: "not-a-player" };
   }
   if (!match.roundStartedAt) return { status: "rejected", reason: "round-not-started" };
+
+  /**
+   * The round is objectively over, whatever the client says its clock reads.
+   *
+   * Phase transitions are driven by client nudges, so a round nobody is watching never
+   * advances — and `validateClientClock` cannot catch what that enables. It bounds a claim
+   * against `now - roundStartedAt`, which only ever GROWS, so it rejects claiming to be
+   * faster than the server's window and happily accepts a fresh clock reading 2s against a
+   * window an hour wide. Hear a song, close the tab, come back later, score a SNAP on a
+   * track you already know.
+   *
+   * Measured from the server's own clock, so leaving by any means is covered — the exit
+   * button, the back button, a force-quit, a dead battery. Cannot affect a live player:
+   * their client nudges every two seconds, so a round they are in never sits stale.
+   */
+  if (roundHasExpired(now - match.roundStartedAt)) {
+    return { status: "rejected", reason: "round-expired" };
+  }
 
   const priorGuesses = await ctx.db
     .query("guesses")

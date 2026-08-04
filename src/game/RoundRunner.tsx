@@ -23,6 +23,7 @@ import { MatchEnd, type MatchEndPlayer } from "./MatchEnd";
 import { useImmersive } from "@/app/immersive";
 import { usePrefetchTrackIndex } from "./track-index";
 import { LeaveMatch } from "./LeaveMatch";
+import { MATCH_CHROME_HEIGHT, MatchChrome } from "./MatchChrome";
 import { Chip, Meter } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 
@@ -142,17 +143,48 @@ export function RoundRunner({
   }
 
   return (
-    <div className="relative">
+    // The chrome row is real layout, not an overlay, so the viewport-bound stages below
+    // have to know it is there. See MatchChrome for why this is declared rather than measured.
+    <div className="relative" style={{ ["--match-chrome" as string]: MATCH_CHROME_HEIGHT }}>
       {/* Outside the phase switch on purpose — every beat needs a way out, including the
           VS reveal and the results screen, where the header below renders nothing. */}
-      <LeaveMatch
-        mode={match.mode === "room" ? "room" : match.mode === "practice" ? "practice" : "ranked"}
-        matchId={matchId}
-        currentRound={match.currentRound}
-        live={phase !== "match_end"}
+      <MatchChrome
+        leave={
+          <LeaveMatch
+            mode={
+              match.mode === "room" ? "room" : match.mode === "practice" ? "practice" : "ranked"
+            }
+            matchId={matchId}
+            currentRound={match.currentRound}
+            live={phase !== "match_end"}
+          />
+        }
+        meta={
+          // Absent on the VS reveal and the results screen, where there is no round in
+          // progress to number and the chrome is only carrying the way out.
+          phase === "guessing" || phase === "reveal" || phase === "standings" ? (
+            match.suddenDeath ? (
+              // Outranks the round number: at this point the next hit ends the match, and
+              // that is the only thing on this bar worth reading.
+              <Chip tone="signal" size="sm">
+                <Glyph name="damage" />
+                SUDDEN DEATH
+              </Chip>
+            ) : (
+              <>
+                <span>ROUND {match.currentRound + 1}</span>
+                {match.multiplier > 1 && (
+                  <Chip tone="gold" size="sm">
+                    ×{match.multiplier}
+                  </Chip>
+                )}
+              </>
+            )
+          ) : undefined
+        }
       />
 
-      <MatchHeader match={match} opponent={opponent} maxHp={maxHp} />
+      <MatchHeader match={match} maxHp={maxHp} />
 
       <AnimatePresence mode="wait">
         {phase === "vs_reveal" && me && opponent && (
@@ -280,53 +312,15 @@ function hasPassed(match: MatchState, userId: string): boolean {
  * outlives every phase (see LeaveMatch), rather than a quiet link that vanished during
  * the VS reveal and the results screen — the two places it was needed most.
  */
-function MatchHeader({
-  match,
-  opponent,
-  maxHp,
-}: {
-  match: MatchState;
-  opponent: PlayerCardData | undefined;
-  maxHp: number;
-}) {
+function MatchHeader({ match, maxHp }: { match: MatchState; maxHp: number }) {
   if (match.phase === "vs_reveal" || match.phase === "match_end") return null;
 
   return (
-    <div className="border-line mx-auto flex w-full max-w-2xl flex-col gap-2.5 border-b px-4 py-3">
-      <div className="text-body-sm flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2">
-          {match.suddenDeath ? (
-            <Chip tone="signal" size="sm">
-              <Glyph name="damage" />
-              SUDDEN DEATH
-            </Chip>
-          ) : (
-            <>
-              <span className="text-secondary">Round {match.currentRound + 1}</span>
-              {match.multiplier > 1 && (
-                <Chip tone="gold" size="sm">×{match.multiplier}</Chip>
-              )}
-            </>
-          )}
-        </span>
-
-        <span className="flex min-w-0 items-center gap-2">
-          {opponent && (
-            <>
-              <span className="text-muted truncate">vs {nameFor(opponent)}</span>
-              {opponent.isBot && <BotBadge />}
-              <RankBadge
-                label={opponent.rankLabel}
-                tierId={opponent.rankTierId}
-                division={opponent.rankDivision}
-                accent={opponent.rankAccent}
-                placements={opponent.placementsRemaining}
-                size="sm"
-              />
-            </>
-          )}
-        </span>
-      </div>
+    <div className="border-line mx-auto flex w-full max-w-2xl flex-col gap-2.5 border-b px-4 pb-3">
+      {/* The round number, the multiplier and the sudden-death chip all moved up into
+          `MatchChrome`, and "vs {name}" is gone entirely — the bars below already label
+          both players, so it was printing the opponent's name twice. What is left is the
+          opponent's rank, which the bars did NOT carry. */}
 
       {/* Both bars use the same ramp — brightness is how much health is left, not who
           you are. Whose row is whose is carried by the label, not by hue. */}
@@ -335,11 +329,29 @@ function MatchHeader({
           const name = entry.isMe ? "You" : nameFor(entry);
           return (
             <div key={String(entry.userId)} className="flex flex-1 flex-col gap-1">
-              <div className="text-label flex justify-between">
-                <span className={entry.isMe ? "text-paper font-semibold" : "text-muted"}>
+              <div className="text-label flex items-center justify-between gap-1.5">
+                {/* The name truncates and the badges do not: on a 390px screen these two
+                    columns are ~170px each, and a long handle must not push the opponent's
+                    rank off the row it was moved here to show. */}
+                <span
+                  className={`min-w-0 truncate ${
+                    entry.isMe ? "text-paper font-semibold" : "text-muted"
+                  }`}
+                >
                   {name}
                 </span>
-                <span className="font-display text-secondary font-bold tabular-nums">
+                {!entry.isMe && entry.isBot && <BotBadge />}
+                {!entry.isMe && (
+                  <RankBadge
+                    label={entry.rankLabel ?? ""}
+                    tierId={entry.rankTierId ?? "bronze"}
+                    division={entry.rankDivision ?? 1}
+                    accent={entry.rankAccent ?? "#888"}
+                    placements={entry.placementsRemaining ?? 0}
+                    size="sm"
+                  />
+                )}
+                <span className="font-display text-secondary ml-auto font-bold tabular-nums">
                   {entry.hp}
                 </span>
               </div>
