@@ -3,6 +3,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "./_generate
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { currentUser, requireUser } from "./users";
+import { globalPosition } from "./ladder";
 import { applyGuess } from "./matches";
 import { difficultyTierForElo, pickTracksForMatch } from "./tracks";
 import { endGuessingEarly, enterPhase } from "./phases";
@@ -172,12 +173,18 @@ async function createBotMatch(
   });
 
   for (const player of [user, bot]) {
+    // Frozen at creation for the same reason ranked does it — practice reaches the VS
+    // screen too, and `matches.state` must not read the ladder. A bot is off the board,
+    // so its position is null and its badge simply does not render.
+    const { position } = await globalPosition(ctx, player);
+
     await ctx.db.insert("matchPlayers", {
       matchId,
       userId: player._id,
       totalPoints: 0,
       hp: DUEL_STARTING_HP,
       ratingBefore: player.elo,
+      globalRankAtStart: position ?? undefined,
       forfeited: false,
     });
   }

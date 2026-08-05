@@ -18,12 +18,29 @@ import { sortBadges } from "../src/engine/badges";
 import { damageMultiplier, wonRound } from "../src/engine/duel";
 
 /**
+ * Where a card's ladder position comes from.
+ *
+ * `matches.state` is a live subscription that re-executes on every guess and phase
+ * change, so it must not read the ladder at all — not the 5,000-row walk it used to, and
+ * not the stored field either, which is a ~400KB document. It passes the position frozen
+ * at match creation instead. Nobody expects an opponent's rank to move mid-duel.
+ *
+ * `matches.card` and `matches.recap` are one-off reads on a profile or a results screen,
+ * so they default to `live` and their output is unchanged.
+ */
+type RankSource = { kind: "live" } | { kind: "frozen"; position: number | null };
+
+/**
  * A player's public card: everything the VS screen and in-match header need.
  *
  * This is a read-side join over data that already exists — no new writes were added
  * to support it.
  */
-async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
+async function playerCard(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  rankSource: RankSource = { kind: "live" },
+) {
   const user = await ctx.db.get(userId);
   if (!user) return null;
 
@@ -51,7 +68,12 @@ async function playerCard(ctx: QueryCtx, userId: Id<"users">) {
   // Shipped ungated: the profile wants a real position for everyone, bucketed past 500.
   // The "#N GLOBAL" flag on the VS screen is a narrower question, so that surface applies
   // `isNotable` itself rather than relying on this being null.
-  const { position, approximate } = await globalPosition(ctx, user);
+  const { position, approximate } =
+    rankSource.kind === "frozen"
+      ? // Frozen values are exact by construction — they were a real position when the
+        // match began, and the profile page is the only surface that reads `approximate`.
+        { position: rankSource.position, approximate: false }
+      : await globalPosition(ctx, user);
 
   return {
     userId: user._id,
@@ -130,7 +152,22 @@ export const state = query({
       .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
       .collect();
 
-    const cards = await Promise.all(players.map((player) => playerCard(ctx, player.userId)));
+    /**
+     * The frozen position, so this query reads no ladder at all.
+     *
+     * It re-executes on every guess and every phase change, tens of times a minute per
+     * client. Resolving a position here — by walking the board OR by reading the stored
+     * field — is what made rating changes anywhere invalidate every live duel. The rows
+     * are already in hand, so this costs nothing.
+     */
+    const cards = await Promise.all(
+      players.map((player) =>
+        playerCard(ctx, player.userId, {
+          kind: "frozen",
+          position: player.globalRankAtStart ?? null,
+        }),
+      ),
+    );
 
     const roundElapsedMs = match.roundStartedAt ? Date.now() - match.roundStartedAt : 0;
     const phase = match.phase ?? (match.status === "veto" ? "veto" : "guessing");

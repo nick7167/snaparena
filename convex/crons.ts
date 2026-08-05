@@ -41,4 +41,24 @@ crons.interval(
   {},
 );
 
+/**
+ * Rebuilds the stored ladder field.
+ *
+ * A cron rather than a self-scheduling chain: `ranked.sweep`'s pattern is for work that
+ * should cost nothing while idle, and this has to run whether or not anybody is playing.
+ * The builder's write-if-changed guard recovers most of that benefit anyway — an idle
+ * ladder costs the cron's own calls and nothing downstream.
+ *
+ * Five minutes: 8,640 calls a month, under one percent of the free tier, against a term
+ * that otherwise grows with the SQUARE of concurrent players. A one-minute interval would
+ * be 43,200 and re-execute every subscribed reader five times as often for a board that
+ * moves once a match.
+ */
+crons.interval(
+  "rebuild ladder snapshot",
+  { minutes: 5 },
+  internal.ladder.rebuild,
+  {},
+);
+
 export default crons;

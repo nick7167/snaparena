@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, type QueryCtx, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { publicAvatarUrl } from "./avatar";
 import {
   STARTING_ELO,
   PLACEMENT_MATCHES,
@@ -10,7 +11,21 @@ import {
 import { computeStreak, dayKey } from "../src/engine/streak";
 import { levelForXp } from "../src/engine/xp";
 // DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
-import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
+import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
+import {
+  POSITION_CEILING,
+  POSITION_EXACT_TO,
+  boundIn,
+  entryIndexOf,
+  globalPosition,
+  ladderField,
+  ladderQuery,
+  onBoardDoc,
+  positionIn,
+} from "./ladder";
+
+// Re-exported so `matches.ts` and friends keep importing it from here.
+export { globalPosition };
 
 /** Resolves the signed-in Clerk identity to a user row, or null when signed out. */
 export async function currentUser(ctx: QueryCtx | MutationCtx): Promise<Doc<"users"> | null> {
@@ -187,9 +202,7 @@ const AVATAR_COLOUR_PATTERN = /^color:#[0-9a-fA-F]{6}$/;
  * row, and hiding someone's picture from themselves would leave them unable to tell why
  * it looks wrong to everyone else or to go and change it.
  */
-export function publicAvatarUrl(user: Doc<"users">): string | undefined {
-  return user.avatarHidden ? undefined : user.avatarUrl;
-}
+export { publicAvatarUrl };
 
 /**
  * Obvious-slur blocklist.
@@ -506,109 +519,6 @@ export const setHandle = mutation({
   },
 });
 
-/**
- * Who counts as being on the ladder — the half of the rule an index filter can express.
- *
- * Shared by `leaderboard` and by `globalPosition` below. These two used to carry their
- * own copies of the rule and they disagreed: the position count excluded bots
- * unconditionally while the board included the sixteen dev rank bots, so every bot
- * counted zero players above it and every bot profile read "#1 global". A rank and the
- * list it refers to have to be measured against the same set of people.
- *
- * This is only half the rule. `onBoardDoc` is the other half and both are required —
- * see the note there.
- *
- * `q` is deliberately untyped — Convex's filter builder is structurally identical across
- * the two call sites but not nameable from here.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function onBoard(q: any, showRankBots: boolean) {
-  const clauses = [
-    q.eq(q.field("placementsRemaining"), 0),
-    // Guests keep their full placement count so the clause above already excludes them.
-    // Stated explicitly so the exclusion is a decision rather than a side effect of how
-    // placements happen to work.
-    q.neq(q.field("isGuest"), true),
-  ];
-  // Bots are opponents, never ladder entries. Listing them would make the leaderboard
-  // partly a ranking of software.
-  if (!showRankBots) clauses.push(q.neq(q.field("isBot"), true));
-  return q.and(...clauses);
-}
-
-/**
- * The half of the ladder rule that the index filter cannot express.
- *
- * `onBoard` drops its `isBot` clause in dev mode so the sixteen rank bots can be listed;
- * this is what keeps the twelve shipping practice bots out, and it has to run in JS
- * because the check is a persona-id prefix. Every ladder read applies BOTH halves — a
- * reader that applies only `onBoard` measures against a population the board does not
- * show, which is exactly how the board and the profile drifted apart the second time:
- * the practice bots sit at 720-1800 Elo with zero placements, so they were counted as
- * being above a player without ever appearing on the list, and the #3 row's profile
- * read "#5 global".
- */
-function onBoardDoc(user: Doc<"users">, showRankBots: boolean): boolean {
-  return !user.isBot || (showRankBots && isDevRankBotPersona(user.botPersonaId));
-}
-
-/**
- * How far down the ladder we are willing to count before giving an approximate answer.
- *
- * Positions past this are reported as a bucket, so the read stays bounded no matter how
- * large the population gets. See `formatGlobalRank` for the display side.
- */
-const POSITION_CEILING = 5_000;
-
-/** Exact positions up to here; beyond it the number is rounded down to a bucket. */
-const POSITION_EXACT_TO = 500;
-
-/**
- * A player's position on the global ladder.
- *
- * Walks the ladder in the same order `leaderboard` lists it and stops at the player's
- * own slot, so the number IS their row index rather than a second opinion about it.
- * This used to count everyone with a strictly greater Elo instead, which disagreed with
- * the board twice over: it saw a different population (see `onBoardDoc`), and counting
- * `elo >` gives every tied player the same number while the board numbers them 1, 2, 3
- * by list position. Deriving the position from the same walk makes both impossible.
- *
- * `approximate` means the caller should render a bucket ("1,500+") rather than the exact
- * figure — either because the position is past POSITION_EXACT_TO, or because it hit the
- * ceiling and the true number is unknown.
- */
-export async function globalPosition(
-  ctx: QueryCtx,
-  user: Doc<"users">,
-): Promise<{ position: number | null; approximate: boolean }> {
-  if (user.placementsRemaining > 0) return { position: null, approximate: false };
-
-  const showRankBots = devRankBotsEnabled();
-  let ahead = 0;
-
-  // Reads no more than the old count did: the range starts at the player's own Elo, so
-  // someone near the top stops after a handful of documents.
-  for await (const other of ctx.db
-    .query("users")
-    .withIndex("by_elo", (q) => q.gte("elo", user.elo))
-    .order("desc")
-    .filter((q) => onBoard(q, showRankBots))) {
-    // Convex appends `_creationTime` to every index, so `by_elo` descending is a total
-    // order and ties come back newest first. Once an entry sorts at or past the
-    // player's own slot, everything left is below them. Compared by slot rather than by
-    // `_id` so a player the filter excludes still terminates here instead of walking to
-    // the ceiling.
-    if (other.elo === user.elo && other._creationTime <= user._creationTime) break;
-    if (!onBoardDoc(other, showRankBots)) continue;
-    if (++ahead > POSITION_CEILING) break;
-  }
-
-  return {
-    position: ahead + 1,
-    approximate: ahead >= POSITION_EXACT_TO,
-  };
-}
-
 /** Global Elo ladder. Players still in placements are excluded — they have no rank yet. */
 export const leaderboard = query({
   args: { limit: v.optional(v.number()) },
@@ -624,16 +534,39 @@ export const leaderboard = query({
      */
     const limit = Math.min(args.limit ?? 50, 500);
 
+    /**
+     * From the stored field when there is one — and then this reads NO user documents at
+     * all, which matters because it is the heaviest read in the app and every viewer holds
+     * it open for the whole session.
+     *
+     * Deliberately impersonal: no `currentUser` call, so it stays one cache entry shared
+     * by everybody. The viewer's own row is spliced in on the client, where it costs
+     * nothing, rather than forking this cache per identity.
+     */
+    const field = await ladderField(ctx);
+    if (field) {
+      const depth = Math.min(limit, field.rows.length);
+      return field.rows.slice(0, depth).map((row, index) => ({
+        rank: index + 1,
+        userId: field.entries[index].u,
+        handle: row.handle,
+        displayName: row.displayName,
+        avatarUrl: row.avatarUrl,
+        // The field's Elo, not a fresh read: the row number and the rating it is derived
+        // from have to come from the same instant or the board contradicts itself.
+        elo: field.entries[index].e,
+        gamesPlayed: row.gamesPlayed,
+        level: row.level,
+      }));
+    }
+
     // DEV ONLY — delete with convex/devbots.ts. The sixteen rank bots exist to make this
     // board show every rank at once; the twelve shipping practice bots stay hidden either
     // way, which is why the relaxed path still filters on the persona prefix below.
     const showRankBots = devRankBotsEnabled();
 
-    const ranked = await ctx.db
-      .query("users")
-      .withIndex("by_elo")
+    const ranked = await ladderQuery(ctx, showRankBots)
       .order("desc")
-      .filter((q) => onBoard(q, showRankBots))
       // Over-read only on the dev path, since the prefix filter below cannot be
       // expressed in the index scan and would otherwise cut the page short.
       .take(showRankBots ? limit * 2 : limit);
@@ -745,6 +678,20 @@ const TIER_COUNT_CAP = 50;
 export const tierCounts = query({
   args: {},
   handler: async (ctx) => {
+    /**
+     * Exact, once there is a stored field — the builder walks the whole ladder anyway, so
+     * bucketing it costs nothing and the cap stops applying. A band header reads "4,812"
+     * instead of "50+", which the existing markup already handles.
+     */
+    const field = await ladderField(ctx);
+    if (field) {
+      return RANK_TIERS.map((tier) => ({
+        tierId: tier.id,
+        count: field.tierCounts.find((stored) => stored.tierId === tier.id)?.count ?? 0,
+        approximate: false,
+      }));
+    }
+
     const showRankBots = devRankBotsEnabled();
 
     return await Promise.all(
@@ -753,15 +700,11 @@ export const tierCounts = query({
 
         // The range is the tier's own Elo band: at or above its floor, below the next
         // tier's. The top tier has no ceiling, so its range is open-ended.
-        const rows = await ctx.db
-          .query("users")
-          .withIndex("by_elo", (q) =>
-            next
-              ? q.gte("elo", tier.minElo).lt("elo", next.minElo)
-              : q.gte("elo", tier.minElo),
-          )
-          .filter((q) => onBoard(q, showRankBots))
-          .take(TIER_COUNT_CAP + 1);
+        const rows = await ladderQuery(ctx, showRankBots, (q) =>
+          next
+            ? q.gte("elo", tier.minElo).lt("elo", next.minElo)
+            : q.gte("elo", tier.minElo),
+        ).take(TIER_COUNT_CAP + 1);
 
         // Applied after the index scan for the same reason `leaderboard` does it: the
         // dev-bot persona check cannot be expressed as an index filter, and both readers
@@ -803,11 +746,16 @@ export const rankedPlayerCount = query({
   handler: async (ctx) => {
     const showRankBots = devRankBotsEnabled();
 
-    const rows = await ctx.db
-      .query("users")
-      .withIndex("by_elo")
-      .filter((q) => onBoard(q, showRankBots))
-      .take(LADDER_COUNT_CAP + 1);
+    // The builder already counted, exactly, over the same population the board lists.
+    const field = await ladderField(ctx);
+    if (field) {
+      return {
+        count: Math.min(field.playerCount, LADDER_COUNT_CAP),
+        approximate: field.truncated,
+      };
+    }
+
+    const rows = await ladderQuery(ctx, showRankBots).take(LADDER_COUNT_CAP + 1);
 
     const visible = rows.filter((user) => onBoardDoc(user, showRankBots));
 
@@ -929,6 +877,75 @@ export const ladderNeighbours = query({
     // No rank yet means no neighbours — the panel hides rather than inventing a slot.
     if (!user || user.placementsRemaining > 0) return null;
 
+    const field = await ladderField(ctx);
+    if (field) {
+      const bound = boundIn(field, user);
+      const mine = entryIndexOf(field, user._id);
+      const { position, approximate } = positionIn(field, user);
+
+      /**
+       * Both walks skip the player's own stored entry, and that skip is what makes the
+       * relative positions come out right in all three cases — rating unchanged, risen or
+       * fallen. Worth spelling out for the risen case: the entry now sitting at `bound`
+       * has `bound` entries above it in the field PLUS the player, so its true position is
+       * `bound + 2`, which is exactly `position + 1`.
+       *
+       * The old two-walk version needed an explicit "skip anyone tied but ranked above"
+       * guard so nobody appeared on both sides. That disappears here: a tie ranked above
+       * sits at an index below `bound` by definition of the comparator, so it can only
+       * ever land in `above`. The binary search IS the tie rule.
+       */
+      const aboveEntries = [];
+      for (let i = bound - 1; i >= 0 && aboveEntries.length < NEIGHBOUR_REACH; i--) {
+        if (i === mine) continue;
+        aboveEntries.push(field.entries[i]);
+      }
+      aboveEntries.reverse();
+
+      const belowEntries = [];
+      for (
+        let i = bound;
+        i < field.entries.length && belowEntries.length < NEIGHBOUR_REACH;
+        i++
+      ) {
+        if (i === mine) continue;
+        belowEntries.push(field.entries[i]);
+      }
+
+      /**
+       * Identity comes from the document, rating comes from the field.
+       *
+       * Reading the neighbour's live Elo here would let the panel show "@kilo 1480" sitting
+       * above "you 1500", because the ordering it was placed in came from the snapshot.
+       * Four document reads, down from thousands.
+       */
+      const hydrate = async (entry: { u: Id<"users">; e: number }, offset: number) => {
+        const doc = await ctx.db.get(entry.u);
+        return {
+          userId: entry.u,
+          handle: doc?.handle ?? "",
+          displayName: doc?.displayName ?? "",
+          avatarUrl: doc ? publicAvatarUrl(doc) : undefined,
+          elo: entry.e,
+          position: position + offset,
+          /** Signed, from the player's point of view: positive means they are ahead of you. */
+          gap: entry.e - user.elo,
+        };
+      };
+
+      return {
+        position,
+        approximate,
+        elo: user.elo,
+        above: await Promise.all(
+          aboveEntries.map((entry, index) => hydrate(entry, index - aboveEntries.length)),
+        ),
+        below: await Promise.all(
+          belowEntries.map((entry, index) => hydrate(entry, index + 1)),
+        ),
+      };
+    }
+
     const showRankBots = devRankBotsEnabled();
 
     /** The last NEIGHBOUR_REACH players ahead, oldest-first once the walk stops. */
@@ -936,11 +953,9 @@ export const ladderNeighbours = query({
     let ahead = 0;
     let truncated = false;
 
-    for await (const other of ctx.db
-      .query("users")
-      .withIndex("by_elo", (q) => q.gte("elo", user.elo))
-      .order("desc")
-      .filter((q) => onBoard(q, showRankBots))) {
+    for await (const other of ladderQuery(ctx, showRankBots, (q) =>
+      q.gte("elo", user.elo),
+    ).order("desc")) {
       // Same terminator as globalPosition: ties come back newest first, so this is the
       // player's own slot in the total order.
       if (other.elo === user.elo && other._creationTime <= user._creationTime) break;
@@ -956,11 +971,9 @@ export const ladderNeighbours = query({
 
     // Everything at or below the player's Elo, skipping the player's own row.
     const below: Doc<"users">[] = [];
-    for await (const other of ctx.db
-      .query("users")
-      .withIndex("by_elo", (q) => q.lte("elo", user.elo))
-      .order("desc")
-      .filter((q) => onBoard(q, showRankBots))) {
+    for await (const other of ladderQuery(ctx, showRankBots, (q) =>
+      q.lte("elo", user.elo),
+    ).order("desc")) {
       if (other._id === user._id) continue;
       // Skip anyone tied but ranked ABOVE the player, or they would appear on both sides.
       if (other.elo === user.elo && other._creationTime > user._creationTime) continue;

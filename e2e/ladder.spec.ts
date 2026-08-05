@@ -244,29 +244,51 @@ test.describe("profile", () => {
     const rows = page.locator("ol > li");
     await expect(rows.first()).toBeVisible({ timeout: 30_000 });
 
-    // The rank is the row's first span; the link carries the handle.
-    const listed: { href: string; rank: number }[] = [];
+    // The rank is the row's first span; the link carries the handle. The rating is
+    // captured too — see the comparison below.
+    const listed: { href: string; rank: number; elo: number | null }[] = [];
     const total = Math.min(await rows.count(), 8);
     for (let index = 0; index < total; index++) {
       const row = rows.nth(index);
       const href = await row.getByRole("link").first().getAttribute("href");
       const rank = Number((await row.locator("span").first().innerText()).trim());
-      if (href && Number.isInteger(rank)) listed.push({ href, rank });
+      const elo = readRating(await row.innerText());
+      if (href && Number.isInteger(rank)) listed.push({ href, rank, elo });
     }
     expect(listed.length, "not enough players to compare").toBeGreaterThan(1);
 
     const disagreed: string[] = [];
-    for (const { href, rank } of listed) {
+    let compared = 0;
+
+    for (const { href, rank, elo } of listed) {
       await page.goto(href);
       const match = /^#([\d,]+)/.exec(await readGlobalRank(page));
       // Past the exact-count threshold the chip is a bucket ("1,500+") by design, so
       // there is no number to compare. Unreachable from the top of the board, but this
       // runs against seeded data and should not fail on a thin one.
       if (!match) continue;
+
+      /**
+       * Only compare players who have not moved since the board was built.
+       *
+       * The board renders the ladder snapshot's rating; the profile renders the live one.
+       * A player whose rating changed in the last few minutes is legitimately in a
+       * different place on each — that is the design, not a defect, and asserting through
+       * it would make this race the rebuild cron. When the two ratings agree the player
+       * demonstrably has not moved, so the positions MUST be equal.
+       *
+       * The original defect involved no rating drift at all — the count was measured
+       * against a population the board did not list — so it is still caught here.
+       */
+      const profileElo = readRating(await page.locator("main").innerText());
+      if (elo === null || profileElo === null || elo !== profileElo) continue;
+
+      compared++;
       const claimed = Number(match[1].replace(/,/g, ""));
       if (claimed !== rank) disagreed.push(`${href}: row #${rank}, profile #${claimed}`);
     }
 
+    expect(compared, "no unmoved player to compare — is the board empty?").toBeGreaterThan(0);
     expect(disagreed, "the board and the profile disagree").toEqual([]);
   });
 });
@@ -329,3 +351,21 @@ test.describe("emblem assets", () => {
     }
   });
 });
+
+/**
+ * The four-figure rating out of a block of text.
+ *
+ * Both the board row and the profile render it as a bare number, and every other number
+ * on those surfaces — rank, level, games, percentage — sits outside the Elo range, so a
+ * bounded match is enough and does not need a test id on either surface.
+ *
+ * Returns null when nothing plausible is found, which the caller treats as "cannot
+ * compare" rather than as a failure.
+ */
+function readRating(text: string): number | null {
+  for (const raw of text.match(/\b\d{3,4}\b/g) ?? []) {
+    const value = Number(raw);
+    if (value >= 100 && value <= 3000) return value;
+  }
+  return null;
+}

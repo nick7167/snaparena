@@ -35,6 +35,25 @@ export function timeAgo(then: number, now: number): string {
 }
 
 /**
+ * How long until a deadline, in the coarsest unit that is still true.
+ *
+ * The forward-looking counterpart to `timeAgo`, and the same "A · B" line uses both — the
+ * leaderboard's "updated 2m ago · next in 3m". Lives beside it so the pair cannot drift
+ * into two different ideas of how long a minute is.
+ *
+ * Clamped at zero: a deadline that has passed reads "now" rather than counting negative,
+ * which is what a viewer sees in the seconds between a due rebuild and its arrival.
+ */
+export function timeUntil(deadline: number, now: number): string {
+  const minutes = Math.max(0, Math.round((deadline - now) / 60_000));
+  if (minutes < 1) return "now";
+
+  const hours = Math.floor(minutes / 60);
+  if (hours >= 1) return `${hours}h ${minutes % 60}m`;
+  return `${minutes}m`;
+}
+
+/**
  * Your most recent match, and what it paid.
  *
  * The reward moment. Everything here was shown once already, on the results screen, at a

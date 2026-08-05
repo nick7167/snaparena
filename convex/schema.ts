@@ -156,7 +156,30 @@ export default defineSchema({
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_handle", ["handle"])
-    .index("by_elo", ["elo"]),
+    .index("by_elo", ["elo"])
+    /**
+     * The ladder, as an index range rather than a filter — fields are
+     * `placementsRemaining, isGuest, isBot, elo`.
+     *
+     * `onBoard` in users.ts expresses the same rule as a `.filter()`, and a filter does
+     * not reduce documents READ: the `by_elo` range spans every guest (all parked at
+     * STARTING_ELO), every bot and every unplaced account, so a `.take(5001)` over it can
+     * scan far more than 5,001 rows and is one dense guest cohort away from the 16,384
+     * read ceiling.
+     *
+     * Queried as `eq(placementsRemaining, 0).eq(isGuest, undefined).eq(isBot, undefined)`.
+     * Nothing anywhere writes `isBot: false` or `isGuest: false` — only `true` is ever
+     * set — so `undefined` selects exactly what `neq(..., true)` did.
+     *
+     * Convex appends `_creationTime` to every index, so within that equality prefix the
+     * order is exactly (elo desc, _creationTime desc) under `.order("desc")` — the same
+     * newest-first tie-break the live walk terminates on. That equivalence is what lets a
+     * stored snapshot reproduce positions bit-for-bit.
+     *
+     * Not usable in dev mode: `showRankBots` needs "bot or not-bot", which an equality
+     * prefix cannot express. Those reads keep `by_elo`.
+     */
+    .index("by_ladder_elo", ["placementsRemaining", "isGuest", "isBot", "elo"]),
 
   /** Bio reports, for manual review. No automated takedown. */
   reports: defineTable({
@@ -290,6 +313,23 @@ export default defineSchema({
     totalPoints: v.number(),
     /** Rating snapshot taken at match start, so results are reproducible. */
     ratingBefore: v.number(),
+    /**
+     * Ladder position at match start, frozen for the same reason `ratingBefore` is.
+     *
+     * `matches.state` is a live subscription that re-executes on every guess and phase
+     * change, and it renders the "#N GLOBAL" badge on the VS screen. Computing that
+     * position live meant reading the ladder on every one of those re-executions — which
+     * is what made invalidations grow with the square of concurrent players. Reading the
+     * stored field instead would be no better there: it is a ~400KB document.
+     *
+     * So the rule is that no high-frequency subscribed query touches the ladder at all,
+     * and this is how `matches.state` opts out. Nobody expects an opponent's rank to move
+     * mid-duel; the VS screen shows it once, before round one.
+     *
+     * Optional, so historical rows need no backfill — an absent value renders as no badge,
+     * exactly as a player in placements already does.
+     */
+    globalRankAtStart: v.optional(v.number()),
     ratingAfter: v.optional(v.number()),
     ratingDelta: v.optional(v.number()),
     /** This player's veto bans. Undefined means they have not banned yet. */
@@ -465,6 +505,77 @@ export default defineSchema({
     date: v.string(), // UNIQUE
     players: v.number(),
   }).index("by_date", ["date"]),
+
+  /**
+   * The ladder, snapshotted, so reading a position stops walking the whole board.
+   *
+   * `globalPosition` used to walk an open-ended `by_elo` range from a player's own rating
+   * upward, and it is called from `playerCard` inside `matches.state` — a live
+   * subscription. So ANY rating change anywhere re-executed the heaviest query in the game
+   * for both players in every live duel: invalidations grew with the SQUARE of concurrent
+   * players.
+   *
+   * Two documents, deliberately:
+   *
+   *   - `field` holds the ordering and is rewritten ONLY when the ladder actually changed.
+   *     Every subscribed reader re-executes when it is written, so an unconditional
+   *     five-minute write would cost each active user hundreds of calls a day on a board
+   *     where nothing moved.
+   *   - `summary` holds the timestamps, which change every run by definition. Keeping them
+   *     out of `field` is what makes the write-if-changed guard possible at all.
+   *
+   * A player's position is computed from their LIVE rating against this stored field, so
+   * only the field is ever old — never the player. See `positionIn` in ladder.ts.
+   */
+  ladderSnapshot: defineTable(
+    v.union(
+      v.object({
+        kind: v.literal("summary"),
+        generation: v.number(),
+        /** When the field last CHANGED — what "updated 2m ago" means. */
+        builtAt: v.number(),
+        /** When the cron last ran, changed or not. */
+        checkedAt: v.number(),
+      }),
+      v.object({
+        kind: v.literal("field"),
+        generation: v.number(),
+        playerCount: v.number(),
+        /** The ladder outgrew SNAPSHOT_MAX_ENTRIES; positions past it are floors. */
+        truncated: v.boolean(),
+        tierCounts: v.array(v.object({ tierId: v.string(), count: v.number() })),
+        /**
+         * The ordering, as (elo desc, _creationTime desc).
+         *
+         * `t` is the user's `_creationTime` and is not optional: Convex appends it to
+         * every index, so descending Elo breaks ties newest-first, and Elo is an integer
+         * over a narrow range with a large cohort parked at STARTING_ELO — ties are the
+         * common case, not the tail. Without it the stored order cannot reproduce the
+         * live walk's.
+         */
+        entries: v.array(
+          v.object({ u: v.id("users"), e: v.number(), t: v.number() }),
+        ),
+        /**
+         * Display fields for the top ROW_DEPTH, INDEX-ALIGNED with `entries`.
+         *
+         * `rows[i]` describes `entries[i]`. Aligning them rather than repeating the id
+         * makes it structurally impossible for the list and the ordering to disagree —
+         * the same class of bug as the "#3 row reads #5" regression, prevented by
+         * construction rather than by care.
+         */
+        rows: v.array(
+          v.object({
+            handle: v.string(),
+            displayName: v.string(),
+            avatarUrl: v.optional(v.string()),
+            gamesPlayed: v.number(),
+            level: v.number(),
+          }),
+        ),
+      }),
+    ),
+  ).index("by_kind", ["kind"]),
 
   /** Ranked matchmaking pool. Indexed by elo so we can widen the band over time. */
   queue: defineTable({

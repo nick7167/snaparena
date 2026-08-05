@@ -6,6 +6,9 @@ import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { PLACEMENT_MATCHES, RANK_TIERS } from "@/engine/config";
 import { rankForElo } from "@/engine/ranks";
+import { levelForXp } from "@/engine/xp";
+import { timeAgo, timeUntil } from "../dashboard/last-result";
+import { useNow } from "@/game/usePrefersReducedMotion";
 import { GlobalRank } from "../dashboard/global-rank";
 import { Button } from "@/ui/Button";
 import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -34,8 +37,31 @@ const PER_BAND = 10;
  * whenever you are not already visible in the page.
  */
 export default function LeaderboardPage() {
-  const board = useQuery(api.users.leaderboard, { limit: 500 });
+  const stored = useQuery(api.users.leaderboard, { limit: 500 });
   const me = useQuery(api.users.me, {});
+  /**
+   * Lifted from the pinned rail so the splice below can use it.
+   *
+   * `position` is computed from your LIVE rating against the stored field, so it is the
+   * one number on this page that is never stale — which is exactly what makes it the right
+   * index to insert yourself at.
+   */
+  const standing = useQuery(api.users.myStanding, {});
+
+  /**
+   * Your own row, placed by your live rating rather than by the snapshot's.
+   *
+   * The board is a five-minute-old field; you are not. Splicing here rather than on the
+   * server keeps `leaderboard` free of `currentUser`, so it stays ONE cache entry shared
+   * by every viewer instead of forking per identity on the heaviest read in the app.
+   *
+   * Indexed by `standing.position` rather than by finding-and-replacing your existing row:
+   * that also covers a player who climbed INTO the top 500 since the last build and so has
+   * no row to replace. Because the insert index is the position, your rendered row number
+   * IS your position — the same figure the pinned rail, the dashboard chip and your profile
+   * all show.
+   */
+  const board = spliceOwnRow(stored, me, standing?.position ?? null);
 
   const myRow = board?.find((entry) => entry.userId === me?._id);
   const myAccent = me ? rankForElo(me.elo).tier.accent : undefined;
@@ -52,7 +78,15 @@ export default function LeaderboardPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-12">
-      <h1 className="font-display text-display-1 mb-6 font-extrabold">Leaderboard</h1>
+      {/*
+        The heading and its freshness line move together, so the line cannot be scrolled
+        under the band headers below — those are `sticky top-0`. Rendered unconditionally
+        with a reserved line height so the board does not jump when the timestamp lands.
+      */}
+      <div className="mb-6 flex min-h-[3lh] flex-col gap-1">
+        <h1 className="font-display text-display-1 font-extrabold">Leaderboard</h1>
+        <BoardFreshness />
+      </div>
 
       {board === undefined && (
         <div className="flex flex-col gap-2">
@@ -396,4 +430,80 @@ function Row({
       </span>
     </Card>
   );
+}
+
+/**
+ * How old the field is, and when it moves next.
+ *
+ * The staleness being disclosed is the FIELD's, not the viewer's — your own rank is
+ * computed from your live rating and is current everywhere in the app. That is why this
+ * line lives only here and says "board", rather than appearing beside every rank in the
+ * app and wrongly implying your number is old.
+ *
+ * Renders nothing where there is nothing to disclose: before the first build, and in dev
+ * where the rank bots bypass the snapshot and the board really is live.
+ */
+function BoardFreshness() {
+  const status = useQuery(api.ladder.status, {});
+  const now = useNow(60_000);
+
+  if (!status) return null;
+
+  return (
+    <p className="text-label text-muted tabular-nums">
+      Board updated {timeAgo(status.builtAt, now)}
+      <span className="text-faint" aria-hidden="true">
+        {" · "}
+      </span>
+      next in {timeUntil(status.builtAt + status.intervalMs, now)}
+    </p>
+  );
+}
+
+type BoardRow = NonNullable<ReturnType<typeof useQuery<typeof api.users.leaderboard>>>[number];
+type Me = NonNullable<ReturnType<typeof useQuery<typeof api.users.me>>>;
+
+/**
+ * Places the viewer's own row by their LIVE rating rather than the snapshot's.
+ *
+ * The board is a field that is up to five minutes old; the viewer is not. Their position
+ * comes from `myStanding`, which measures their current rating against that same field —
+ * so inserting at `position - 1` makes the rendered row number equal the position shown on
+ * the pinned rail, the dashboard chip and their profile. That agreement is the invariant
+ * the ladder e2e suite exists to protect.
+ *
+ * Indexing by position rather than replacing an existing row also covers the player who
+ * climbed INTO the top 500 since the last build, and therefore has no row to replace.
+ *
+ * Done on the client on purpose: `users.leaderboard` takes no auth, so it stays one cache
+ * entry shared by every viewer. Splicing server-side would fork that cache per identity on
+ * the heaviest read in the app.
+ */
+function spliceOwnRow(
+  stored: BoardRow[] | undefined,
+  me: Me | null | undefined,
+  position: number | null,
+): BoardRow[] | undefined {
+  if (!stored || !me || !position) return stored;
+  if (position > stored.length) return stored;
+
+  const without = stored.filter((entry) => entry.userId !== me._id);
+
+  const mine: BoardRow = stored.find((entry) => entry.userId === me._id) ?? {
+    rank: position,
+    userId: me._id,
+    handle: me.handle,
+    displayName: me.displayName,
+    avatarUrl: me.avatarUrl,
+    elo: me.elo,
+    gamesPlayed: me.gamesPlayed,
+    level: levelForXp(me.xp ?? 0).level,
+  };
+
+  const spliced = [...without];
+  spliced.splice(Math.min(position - 1, without.length), 0, { ...mine, elo: me.elo });
+
+  // Renumbering the whole list is correct: moving one entry within an ordered list leaves
+  // it ordered, so sequential numbering is still the field's numbering.
+  return spliced.slice(0, stored.length).map((entry, index) => ({ ...entry, rank: index + 1 }));
 }

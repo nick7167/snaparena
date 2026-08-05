@@ -9,6 +9,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { publicAvatarUrl, requireUser } from "./users";
+import { globalPosition } from "./ladder";
 import {
   DUEL_STARTING_HP,
   RECONNECT_GRACE_MS,
@@ -254,12 +255,17 @@ async function pairFor(
   });
 
   for (const player of [user, opponent]) {
+    // Frozen here so `matches.state` never has to touch the ladder — see the field's note
+    // in schema.ts. One stored-field read each, not a walk.
+    const { position } = await globalPosition(ctx, player);
+
     await ctx.db.insert("matchPlayers", {
       matchId,
       userId: player._id,
       totalPoints: 0,
       hp: DUEL_STARTING_HP,
       ratingBefore: player.elo,
+      globalRankAtStart: position ?? undefined,
       forfeited: false,
     });
 

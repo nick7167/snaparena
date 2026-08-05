@@ -9,6 +9,7 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as avatar from "../avatar.js";
 import type * as botprofiles from "../botprofiles.js";
 import type * as bots from "../bots.js";
 import type * as crons from "../crons.js";
@@ -16,6 +17,7 @@ import type * as daily from "../daily.js";
 import type * as devbots from "../devbots.js";
 import type * as draft from "../draft.js";
 import type * as guests from "../guests.js";
+import type * as ladder from "../ladder.js";
 import type * as matches from "../matches.js";
 import type * as phases from "../phases.js";
 import type * as progression from "../progression.js";
@@ -32,6 +34,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  avatar: typeof avatar;
   botprofiles: typeof botprofiles;
   bots: typeof bots;
   crons: typeof crons;
@@ -39,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   devbots: typeof devbots;
   draft: typeof draft;
   guests: typeof guests;
+  ladder: typeof ladder;
   matches: typeof matches;
   phases: typeof phases;
   progression: typeof progression;
