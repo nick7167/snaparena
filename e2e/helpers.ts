@@ -124,22 +124,20 @@ export async function hideDevOverlay(page: Page): Promise<void> {
 }
 
 /**
- * Fails fast if the onboarding modal is blocking the app.
+ * Fails fast if the account was never taken through the welcome flow.
  *
- * `OnboardingGate` renders a full-screen overlay while the sidebar renders normally
- * behind it — so a signed-in spec looks fine to a locator and then spends its entire
- * timeout retrying a click that pointer events never reach. That is a two-minute
- * failure whose message says nothing about the actual cause.
+ * `WelcomeGate` redirects to /welcome rather than rendering an overlay, which makes this a
+ * far better check than it used to be: a spec on the wrong URL fails immediately and says
+ * why, instead of spending its whole timeout retrying clicks against a page that is no
+ * longer the one it thinks it is.
  *
- * Call it at the top of any spec that assumes an onboarded account, so the real problem
- * — setup did not complete onboarding — is what gets reported.
+ * Call it at the top of any spec that assumes a set-up account.
  */
 export async function assertOnboarded(page: Page): Promise<void> {
-  const dialog = page.getByRole("dialog", { name: "Pick your username" });
-  if (await dialog.isVisible()) {
+  if (new URL(page.url()).pathname.startsWith("/welcome")) {
     throw new Error(
-      "Onboarding modal is blocking the page: the persistent test account was never " +
-        "onboarded. Delete playwright/.clerk/user.json and re-run the setup project.",
+      "Redirected to the welcome flow: the persistent test account has no username. " +
+        "Delete playwright/.clerk/user.json and re-run the setup project.",
     );
   }
 }

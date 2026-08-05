@@ -79,28 +79,58 @@ export function RoundRunner({
     onRoundStart: () => setFeedback(null),
   });
 
+  /**
+   * Submits a guess and turns the answer into something on screen.
+   *
+   * The `catch` is the point. This used to be an uncaught `await`, so a rejected mutation
+   * — a dropped connection, a server hiccup — propagated out through `GuessInput`'s
+   * `void submit(...)` and vanished. The typed text stayed put, no feedback appeared, and
+   * the round clock kept running: a player racing on tenths of a second had no way to tell
+   * a rejected guess from one that never left the browser.
+   *
+   * The failure branch deliberately returns `status: "error"`, which is not `"correct"` —
+   * `GuessInput` clears the field on any non-correct result, so returning anything else
+   * would throw away what they typed at the moment they most need to resend it. See the
+   * `keepText` handling there.
+   */
+  /**
+   * Read out here rather than inside the callback below.
+   *
+   * The React Compiler infers a callback's dependencies from what it actually reads, and
+   * reading `match?.currentRound` inside the `try` makes it infer the whole `match` object
+   * — which is a new identity on every phase tick and every guess, so the memo would be
+   * rebuilt constantly. Narrowing it to the number keeps the manual dependency list and
+   * the inferred one in agreement.
+   */
+  const currentRound = match?.currentRound ?? 0;
+
   const onGuess = useCallback(
     async (text: string) => {
-      const result = await submitGuess({
-        matchId,
-        roundIndex: match?.currentRound ?? 0,
-        text,
-        clientElapsedMs: audio.elapsedMs(),
-      });
+      try {
+        const result = await submitGuess({
+          matchId,
+          roundIndex: currentRound,
+          text,
+          clientElapsedMs: audio.elapsedMs(),
+        });
 
-      if (result.status === "correct") {
-        play(result.tier === "snap" ? "snap" : "correct");
-        setFeedback(`${result.tierLabel} · +${result.points}`);
-        audio.stop();
-      } else if (result.status === "wrong") {
-        play("wrong");
-        setFeedback("Not it");
-      } else {
-        setFeedback(rejectionMessage(result.reason));
+        if (result.status === "correct") {
+          play(result.tier === "snap" ? "snap" : "correct");
+          setFeedback(`${result.tierLabel} · +${result.points}`);
+          audio.stop();
+        } else if (result.status === "wrong") {
+          play("wrong");
+          setFeedback("Not it");
+        } else {
+          setFeedback(rejectionMessage(result.reason));
+        }
+        return result;
+      } catch {
+        setFeedback("That didn't send — try again");
+        return { status: "error" as const, keepText: true };
       }
-      return result;
     },
-    [submitGuess, matchId, match?.currentRound, audio],
+    [submitGuess, matchId, currentRound, audio],
   );
 
   if (match === undefined) return <Centered>Loading…</Centered>;
@@ -223,7 +253,12 @@ export function RoundRunner({
             onGuess={onGuess}
             onPass={() => {
               audio.stop();
-              void passRound({ matchId, roundIndex: match.currentRound });
+              // Reported through the same channel as a guess. A failed pass leaves the
+              // server thinking you are still playing while your audio has stopped, so
+              // silence here strands the player until the round times out.
+              void passRound({ matchId, roundIndex: match.currentRound }).catch(() =>
+                setFeedback("Couldn't pass — try again"),
+              );
             }}
           />
         )}

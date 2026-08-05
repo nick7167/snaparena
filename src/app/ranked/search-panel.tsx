@@ -130,14 +130,31 @@ export function SearchPanel() {
           ladder should hand you a game immediately, not make you earn one by waiting.
           The automatic fallback is the safety net for someone who walks away, not the
           primary route. */}
+      {/* Reported here as well as on the idle screen: the fallback fires `startBot` on a
+          timer with no control behind it, so this is the only place that failure can
+          surface while the search is running. */}
+      {queue.error && (
+        <p className="text-body-sm text-signal-text" role="alert">
+          {queue.error}
+        </p>
+      )}
+
       <div className="border-line flex flex-wrap items-center gap-3 border-t pt-4">
         {!queue.fallingBack && (
-          <Button variant="secondary" onClick={queue.startBot}>
+          <Button
+            variant="secondary"
+            loading={queue.pending === "startBot"}
+            onClick={queue.startBot}
+          >
             <BotBadge />
             Play a bot instead
           </Button>
         )}
-        <Button variant="ghost" onClick={queue.dequeue}>
+        <Button
+          variant="ghost"
+          loading={queue.pending === "dequeue"}
+          onClick={queue.dequeue}
+        >
           Cancel
         </Button>
         <Link

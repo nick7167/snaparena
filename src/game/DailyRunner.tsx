@@ -2,8 +2,9 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../convex/_generated/api";
+import { track } from "@/analytics";
 import type { Id } from "../../convex/_generated/dataModel";
 import { PHASE_DURATIONS_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
@@ -57,6 +58,26 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
   const audio = useRoundAudio(match?.currentAudioUrl ?? null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  /**
+   * One event per song closed, carrying which song it was.
+   *
+   * The rate of finished runs was always derivable; WHERE people stop was not, and that is
+   * the actionable half — a cliff at song 2 is a difficulty problem, a slow bleed across
+   * all five is a length problem, and they need opposite fixes.
+   *
+   * Keyed on the reveal phase rather than `currentRound` advancing, because the last song
+   * of a run never advances a round: it goes straight to complete, so counting transitions
+   * would silently drop song five from every funnel.
+   */
+  const reported = useRef(-1);
+  useEffect(() => {
+    if (match?.phase !== "reveal") return;
+    const round = match.currentRound;
+    if (reported.current === round) return;
+    reported.current = round;
+    track("daily_round_complete", { round, solved: myStatus?.solved ?? false });
+  }, [match?.phase, match?.currentRound, myStatus?.solved]);
+
   useRoundLifecycle({
     matchId,
     currentRound: match?.currentRound,
@@ -68,29 +89,45 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
     onRoundStart: () => setFeedback(null),
   });
 
+  /**
+   * Same shape, and same `catch`, as the duel's `onGuess` in RoundRunner.
+   *
+   * Both were uncaught `await`s, so a submission that failed to reach the server left the
+   * typed text in place with no feedback and no indication anything had happened. It
+   * matters at least as much here: the daily is one attempt per day, so a guess silently
+   * lost to a dropped connection is not recoverable by playing again.
+   */
+  /** Narrowed to the number for the same reason as RoundRunner — see the note there. */
+  const currentRound = match?.currentRound ?? 0;
+
   const onGuess = useCallback(
     async (text: string) => {
-      const result = await submitGuess({
-        matchId,
-        roundIndex: match?.currentRound ?? 0,
-        text,
-        clientElapsedMs: audio.elapsedMs(),
-        guestToken,
-      });
+      try {
+        const result = await submitGuess({
+          matchId,
+          roundIndex: currentRound,
+          text,
+          clientElapsedMs: audio.elapsedMs(),
+          guestToken,
+        });
 
-      if (result.status === "correct") {
-        play(result.tier === "snap" ? "snap" : "correct");
-        setFeedback(`${result.tierLabel} · +${result.points}`);
-        audio.stop();
-      } else if (result.status === "wrong") {
-        play("wrong");
-        setFeedback("Not it");
-      } else {
-        setFeedback(rejectionMessage(result.reason));
+        if (result.status === "correct") {
+          play(result.tier === "snap" ? "snap" : "correct");
+          setFeedback(`${result.tierLabel} · +${result.points}`);
+          audio.stop();
+        } else if (result.status === "wrong") {
+          play("wrong");
+          setFeedback("Not it");
+        } else {
+          setFeedback(rejectionMessage(result.reason));
+        }
+        return result;
+      } catch {
+        setFeedback("That didn't send — try again");
+        return { status: "error" as const, keepText: true };
       }
-      return result;
     },
-    [submitGuess, matchId, match?.currentRound, audio, guestToken],
+    [submitGuess, matchId, currentRound, audio, guestToken],
   );
 
   if (match === undefined) return <Centered>Loading…</Centered>;
@@ -149,7 +186,11 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
             onGuess={onGuess}
             onPass={() => {
               audio.stop();
-              void passRound({ matchId, roundIndex: match.currentRound, guestToken });
+              void passRound({
+                matchId,
+                roundIndex: match.currentRound,
+                guestToken,
+              }).catch(() => setFeedback("Couldn't pass — try again"));
             }}
           />
         )}

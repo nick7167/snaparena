@@ -507,12 +507,22 @@ function QueueControl({ elo, placing }: { elo: number; placing: boolean }) {
       <Button
         size="lg"
         block
+        loading={queue.pending === "enqueue"}
         onClick={queue.enqueue}
         className="min-h-16 text-xl tracking-[0.14em] uppercase"
       >
         <Glyph name="tier" filled />
         Find a match
       </Button>
+
+      {/* The one thing this screen could not previously say. A rejected enqueue left the
+          loudest control in the app inert, which reads as a broken button rather than a
+          failed request. */}
+      {queue.error && (
+        <p className="text-body-sm text-signal-text text-center" role="alert">
+          {queue.error}
+        </p>
+      )}
 
       <p className="text-label text-muted text-center tabular-nums">
         {/* The band is real: `openingRange` reads the same `eloBandFor` the server matches

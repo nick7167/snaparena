@@ -58,30 +58,53 @@ test("a new account is onboarded, then plays its first daily", async ({ page }) 
   await page.goto("/");
   await hideDevOverlay(page);
 
-  // ------------------------------------------------------------- onboarding
-  const dialog = page.getByRole("dialog", { name: "Pick your username" });
-  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  // --------------------------------------------------------- the welcome flow
+  /**
+   * A redirect, not a modal.
+   *
+   * `WelcomeGate` sends a new account to /welcome until it has a username. That makes the
+   * whole flow assertable by URL, and removes the race the modal version had between
+   * `users.me` resolving and an overlay committing.
+   */
+  await expect(page).toHaveURL(/\/welcome/, { timeout: 30_000 });
 
-  // The username is the whole point of the gate — it is what appears on every board,
-  // and onboarding says so.
-  await expect(dialog.getByText(/how you.ll appear on leaderboards/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to SNAP" })).toBeVisible();
+  await page.screenshot({ path: path.join(SCREENSHOTS, "new-01-welcome-intro.png") });
+  await page.getByRole("button", { name: "Get started" }).click();
+
+  // The username is the whole point of the required step — it is what appears on every
+  // board, and the flow says so.
+  await expect(page.getByText(/how you.ll appear on leaderboards/i)).toBeVisible();
 
   // Must start with `e2e` — the purge mutation refuses any handle outside that prefix.
   handle = `e2e${Date.now().toString().slice(-8)}`;
-  await dialog.getByLabel("Username").fill(handle);
+  await page.getByLabel("Username").fill(handle);
 
-  // Optional flourishes, filled to prove they are reachable and do not block.
-  await dialog.getByRole("button", { name: /Avatar colour/ }).first().click();
-  await dialog.getByLabel("Tagline").fill("Here for the country deep cuts");
-
-  await page.screenshot({ path: path.join(SCREENSHOTS, "new-01-onboarding.png") });
-
-  const start = dialog.getByRole("button", { name: "Start playing" });
+  const submit = page.getByRole("button", { name: "Continue" });
   // Availability is checked live; wait for that round trip rather than clicking a
   // disabled control.
-  await expect(start).toBeEnabled({ timeout: 20_000 });
-  await start.click();
-  await expect(dialog).toBeHidden({ timeout: 20_000 });
+  await expect(submit).toBeEnabled({ timeout: 20_000 });
+  await page.screenshot({ path: path.join(SCREENSHOTS, "new-02-welcome-handle.png") });
+  await submit.click();
+
+  /**
+   * Everything past the username is skippable, and this proves it.
+   *
+   * The avatar step is the first optional one; skipping straight through from here is the
+   * path most players will take, and it must land them in the app rather than looping.
+   */
+  await expect(page.getByRole("heading", { name: "Pick a look" })).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("heading", { name: /What do you listen to/ })).toBeVisible();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("heading", { name: "How a round works" })).toBeVisible();
+  await page.screenshot({ path: path.join(SCREENSHOTS, "new-03-welcome-explain.png") });
+  await page.getByRole("button", { name: "Skip" }).click();
+
+  // Skipping the tutorial finishes the flow and drops into the app.
+  await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
 
   /**
    * The chosen handle is now the identity everywhere.
@@ -102,7 +125,7 @@ test("a new account is onboarded, then plays its first daily", async ({ page }) 
   // A brand-new account is level 1 with an empty bar — the state the old sidebar hid
   // entirely until placements were done.
   await expect(page.locator("aside").getByText("LVL 1")).toBeVisible();
-  await page.screenshot({ path: path.join(SCREENSHOTS, "new-02-first-sidebar.png") });
+  await page.screenshot({ path: path.join(SCREENSHOTS, "new-04-first-sidebar.png") });
 
   // ------------------------------------------------------- first daily, signed in
   const answers = await loadDailyAnswers();

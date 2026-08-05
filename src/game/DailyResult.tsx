@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { track } from "@/analytics";
 import { Button, ButtonLink } from "@/ui/Button";
 import { Card } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
@@ -59,6 +60,17 @@ export function DailyResult({
   };
 }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  /**
+   * "Copied" used to latch for the rest of the session, so a second attempt confirmed
+   * nothing — the button already said it had worked. Same two-second reset as RoomCode.
+   */
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(id);
+  }, [copied]);
 
   /**
    * Does this platform have a share sheet?
@@ -170,17 +182,32 @@ export function DailyResult({
           <Button
             variant="secondary"
             onClick={async () => {
-              // Unguarded before: `writeText` rejects on an insecure origin or a denied
-              // permission, and the rejection went nowhere with no feedback at all.
+              /**
+               * `writeText` rejects on an insecure origin and under a denied clipboard
+               * permission. The rejection was already caught — but the catch set `copied`
+               * to the value it already held, so the screen did not change and the player
+               * had no idea it had failed.
+               *
+               * That matters more here than almost anywhere: `Share` only renders where
+               * `navigator.share` exists, so on a desktop this button is the ONLY route to
+               * the grid the whole run was played to produce.
+               *
+               * Same shape as RoomCode in rooms/[code]/page.tsx, which got this right.
+               */
               try {
                 await navigator.clipboard.writeText(shareText);
                 setCopied(true);
+                setFailed(false);
               } catch {
-                setCopied(false);
+                setFailed(true);
               }
             }}
           >
-            {copied ? "Copied" : "Copy result"}
+            {copied
+              ? "Copied"
+              : failed
+                ? "Copy failed — select the text above"
+                : "Copy result"}
           </Button>
         </div>
 
@@ -223,6 +250,18 @@ function SaveScore({
 }: {
   run: { totalPoints: number; rank: number; totalPlayers: number };
 }) {
+  /**
+   * The denominator, fired on mount.
+   *
+   * `save_score_clicked / save_score_shown` is the conversion rate of the single most
+   * valuable screen in the product, and neither half of that fraction existed before. It
+   * carries the score because the panel's own argument is built on it — if the pitch only
+   * works for players who did well, that is worth being able to see.
+   */
+  useEffect(() => {
+    track("save_score_shown", { points: run.totalPoints, rank: run.rank });
+  }, [run.totalPoints, run.rank]);
+
   return (
     <Card variant="hero" className="flex flex-col gap-4 p-5 sm:p-6">
       <div className="flex flex-col gap-1">
@@ -240,7 +279,15 @@ function SaveScore({
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row">
-        <AuthDialogButton mode="sign-up" size="lg" className="flex-1" redirectTo="/daily">
+        {/* `mode` rides along because the two buttons answer different questions: one is
+            acquisition, the other is a returning player who happened to play signed out. */}
+        <AuthDialogButton
+          mode="sign-up"
+          size="lg"
+          className="flex-1"
+          redirectTo="/daily"
+          onOpen={() => track("save_score_clicked", { mode: "sign-up" })}
+        >
           Save my score
         </AuthDialogButton>
         <AuthDialogButton
@@ -249,6 +296,7 @@ function SaveScore({
           size="lg"
           className="flex-1"
           redirectTo="/daily"
+          onOpen={() => track("save_score_clicked", { mode: "sign-in" })}
         >
           I already have an account
         </AuthDialogButton>

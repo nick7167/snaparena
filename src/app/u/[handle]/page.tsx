@@ -13,6 +13,8 @@ import { RankEmblem } from "@/ui/RankEmblem";
 import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { ReportDialog } from "./report";
 import { PageHeader } from "../../page-header";
+import { timeAgo } from "@/ui/relative-time";
+import { useNow } from "@/game/usePrefersReducedMotion";
 
 /**
  * Public player profile.
@@ -197,6 +199,23 @@ export default function ProfilePage() {
             <p className="text-body text-secondary max-w-md text-balance">{card.bio}</p>
           )}
 
+          {/*
+           * What they say they like — the first thing anywhere in the app to read
+           * `preferredCategoryIds`, which onboarding has been collecting and discarding.
+           *
+           * Sits next to the bio rather than near the category ratings further down, and
+           * that separation is the point: this is stated taste, those are measured
+           * results, and putting them together would imply the first predicts the second.
+           */}
+          {profile.preferred.length > 0 && (
+            <p className="text-body-sm text-muted">
+              Into{" "}
+              <span className="text-secondary">
+                {profile.preferred.map((category) => category.name).join(" · ")}
+              </span>
+            </p>
+          )}
+
           {placing && (
             <p className="text-body-sm text-muted">
               {profile.placementsRemaining} placement match
@@ -343,6 +362,10 @@ function BadgeCase({ earned }: { earned: string[] }) {
  */
 function RecentMatches({ userId }: { userId: Id<"users"> }) {
   const matches = useQuery(api.matches.history, { userId });
+  // Shared with the dashboard's history strip and the rooms list, so one match reads the
+  // same on every screen it appears on. Ticked, because a profile is a page people leave
+  // open — see the note in relative-time.ts.
+  const now = useNow(60_000);
 
   if (matches === undefined) {
     return (
@@ -424,7 +447,7 @@ function RecentMatches({ userId }: { userId: Id<"users"> }) {
                     {match.forfeited && " · resigned"}
                     {match.mode === "practice" && " · practice"}
                     {" · "}
-                    {relativeDay(match.completedAt)}
+                    {timeAgo(match.completedAt, now)}
                   </span>
                 </span>
 
@@ -458,18 +481,6 @@ function RecentMatches({ userId }: { userId: Id<"users"> }) {
       </ul>
     </section>
   );
-}
-
-/** Coarse on purpose: the exact minute of a match three weeks ago is not information. */
-function relativeDay(completedAt: number): string {
-  const days = Math.floor((Date.now() - completedAt) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days} days ago`;
-  return new Date(completedAt).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
 }
 
 /**

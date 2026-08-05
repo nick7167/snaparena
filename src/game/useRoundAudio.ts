@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
 import { revealStageAt } from "@/engine/scoring";
 import { createAnalyser, type Analyser } from "@/audio/visualizer";
+import { track } from "@/analytics";
 
 /**
  * Drives one round's audio and owns the authoritative-for-the-client score clock.
@@ -54,6 +55,13 @@ export interface UseRoundAudioResult {
    * the beat loop. Like `replay`, it does not touch the score clock.
    */
   playFull: () => void;
+  /**
+   * Re-attempts a clip that errored, without restarting the round clock.
+   *
+   * Must be called from a user gesture — that is what clears a `playback-blocked`, and
+   * there is no other way to clear one.
+   */
+  retry: () => void;
   /**
    * Frequency analyser for the visualiser, or null when Web Audio is unavailable
    * or the track is CORS-tainted. Callers must degrade rather than fail.
@@ -159,6 +167,24 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
+
+  /**
+   * Reports a failed clip, once per failure.
+   *
+   * Here rather than at the two call sites because this hook is the single point every
+   * audio failure passes through, so neither runner can forget to report and the two
+   * cannot drift.
+   *
+   * This event decides a real open question. The audit found that a failed load costs the
+   * player the round, and the fix shipped for it is UI-only — Retry and Skip — on the
+   * assumption that genuine failures are rare enough to live with. Nothing measured that
+   * assumption. If this fires often, the honest server-side fix (voiding the round) is
+   * worth the abuse surface it carries; if it barely fires, it is not.
+   */
+  useEffect(() => {
+    if (error === null) return;
+    track("audio_error", { reason: error });
+  }, [error]);
 
   const elapsedMs = useCallback(() => {
     if (startedAtRef.current === null) return 0;
@@ -302,6 +328,47 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     }
   }, []);
 
+  /**
+   * Re-attempt a clip that failed.
+   *
+   * `startedAtRef` is deliberately left alone, and that is the whole safety property here.
+   * The round clock has been running since the server dispatched the round; resetting it
+   * would hand a fresh thirty seconds to anyone who could make a load fail on purpose,
+   * which is a scoring exploit rather than a courtesy. A genuine failure costs the time it
+   * cost — this only buys back the ability to play at all.
+   *
+   * Covers both shapes of failure. A blocked playback needs nothing but another `play()`,
+   * and because this runs inside the retry button's click handler it carries the user
+   * gesture the autoplay policy is asking for — which is the one thing the automatic path
+   * could never provide. A failed load needs the element re-fetched; the `canplay`
+   * listeners from the load effect are still attached, so a successful reload resolves
+   * through them as normal.
+   */
+  const retry = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    setError(null);
+    setLoaded(false);
+    audio.load();
+
+    if (startedAtRef.current !== null) {
+      void audio.play().catch(() => setError("playback-blocked"));
+    }
+
+    /**
+     * The load effect's timeout has already fired and will not re-arm, so without this a
+     * second failure would sit on "Buffering audio…" forever rather than returning to an
+     * error the player can act on.
+     *
+     * Reads `readyState` rather than tracking state, so there is nothing to keep in sync
+     * and nothing to clean up if the round moves on underneath it.
+     */
+    setTimeout(() => {
+      if (audioRef.current === audio && audio.readyState < 3) setError("audio-timeout");
+    }, LOAD_TIMEOUT_MS);
+  }, []);
+
   return {
     phase,
     ready: loaded && error === null,
@@ -313,6 +380,7 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     stop,
     replay,
     playFull,
+    retry,
     analyser,
   };
 }

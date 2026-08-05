@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { RANK_TIERS, SCORE_TIERS } from "@/engine/config";
+import { RANK_TIERS, SCORE_TIERS, TUTORIAL_ASSIST_MS } from "@/engine/config";
+import { TUTORIAL_FIXTURE_TRACK } from "@/game/TutorialRunner";
 import { BADGES } from "@/engine/badges";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
@@ -44,6 +45,7 @@ export function DesignGallery() {
       <Glyphs />
       <Emblems />
       <GameChrome />
+      <TutorialAssist />
       <RareStates />
     </div>
   );
@@ -428,6 +430,85 @@ function GameChrome() {
 }
 
 /**
+ * The welcome tutorial's coaching ladder.
+ *
+ * Every rung, side by side. This is exactly the kind of thing the gallery exists for: the
+ * ladder escalates on a wall clock over nine seconds and stops the instant the player
+ * solves, so the later rungs are ONLY reachable by deliberately sitting still on a
+ * brand-new account — which is once per account, and slow.
+ *
+ * The design intent, for anyone changing this: the answer is never stated until rung 3.
+ * Rungs 1 and 2 scaffold the autocomplete instead, because the technique that actually wins
+ * rounds is recognise → type two or three characters → arrow down → enter, and a tutorial
+ * that says "type Blinding Lights" trains the opposite habit.
+ */
+function TutorialAssist() {
+  const title = TUTORIAL_FIXTURE_TRACK.title;
+
+  const rungs: { at: string; coaching: React.ReactNode; list: "none" | "pinned" | "lit" }[] = [
+    {
+      at: "0s",
+      coaching: "Heard it? Tap the field and start typing.",
+      list: "none",
+    },
+    {
+      at: `${TUTORIAL_ASSIST_MS.suggest / 1000}s`,
+      coaching: "Type any letter — we'll show you the list.",
+      list: "pinned",
+    },
+    {
+      at: `${TUTORIAL_ASSIST_MS.highlight / 1000}s`,
+      coaching: "That's the one, highlighted below.",
+      list: "lit",
+    },
+    {
+      at: `${TUTORIAL_ASSIST_MS.reveal / 1000}s`,
+      coaching: (
+        <>
+          It&rsquo;s <span className="text-paper font-semibold">{title}</span> — type the
+          first few letters and pick it.
+        </>
+      ),
+      list: "lit",
+    },
+  ];
+
+  return (
+    <Group
+      title="Tutorial coaching"
+      note="The assist ladder in the welcome flow. Escalates over 9s, stops the moment the player solves — most never see past the first rung."
+    >
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {rungs.map((rung) => (
+          <Card key={rung.at} className="flex flex-col gap-3 p-4">
+            <p className="text-label text-muted font-mono tracking-[0.14em] uppercase">
+              at {rung.at}
+            </p>
+
+            {rung.list !== "none" && (
+              <ul className="border-line bg-ink-700 flex flex-col overflow-hidden rounded-md border">
+                <li
+                  className={`text-body px-3 py-2 ${
+                    rung.list === "lit"
+                      ? "bg-gold text-ink-900 font-semibold"
+                      : "text-secondary"
+                  }`}
+                >
+                  {title}
+                </li>
+                <li className="text-muted text-body-sm px-3 py-2">Blinded</li>
+              </ul>
+            )}
+
+            <p className="text-body-sm text-secondary">{rung.coaching}</p>
+          </Card>
+        ))}
+      </div>
+    </Group>
+  );
+}
+
+/**
  * The states you cannot reach by playing. This is the reason the gallery exists.
  */
 function RareStates() {
@@ -437,14 +518,30 @@ function RareStates() {
         <div className="flex flex-col gap-2">
           <p className="text-body-sm text-secondary font-semibold">Audio faults</p>
           <div className="grid gap-3 sm:grid-cols-3">
+            {/* Mirrors GuessingStage's error branch in stages.tsx. Both controls are the
+                point: this state used to render neither, so a player whose audio failed
+                could not play the round or concede it. `playback-blocked` gets different
+                copy because it is the autoplay policy rather than a fault, and a press is
+                exactly the gesture that clears it. */}
             {[
-              ["audio-timeout", "This track took too long to load."],
-              ["playback-blocked", "Your browser blocked audio playback."],
-              ["load-failed", "This track's audio failed to load."],
-            ].map(([key, message]) => (
-              <Card key={key} className="flex flex-col gap-1 p-4">
+              ["audio-timeout", "This track took too long to load.", false],
+              ["playback-blocked", "Your browser blocked audio playback.", true],
+              ["load-failed", "This track's audio failed to load.", false],
+            ].map(([key, message, blocked]) => (
+              <Card key={String(key)} className="flex flex-col items-center gap-3 p-4 text-center">
                 <p className="text-body">{message}</p>
-                <p className="text-body-sm text-muted">The round will move on shortly.</p>
+                <p className="text-body-sm text-muted">
+                  {blocked
+                    ? "Tap below to allow sound — the clock is already running."
+                    : "The clock is already running, so retrying costs the time it takes."}
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button>
+                    <Glyph name="sound" />
+                    {blocked ? "Allow sound" : "Try again"}
+                  </Button>
+                  <Button variant="ghost">Skip this song</Button>
+                </div>
               </Card>
             ))}
           </div>

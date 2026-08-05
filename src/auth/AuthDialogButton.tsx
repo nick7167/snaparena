@@ -24,6 +24,7 @@ export function AuthDialogButton({
   block,
   className,
   redirectTo,
+  onOpen,
 }: {
   mode: AuthMode;
   children: React.ReactNode;
@@ -33,6 +34,14 @@ export function AuthDialogButton({
   className?: string;
   /** Defaults to staying put, which is almost always what a mid-flow sign-in wants. */
   redirectTo?: string;
+  /**
+   * Fired when the dialog is opened, for the call site to record the intent.
+   *
+   * Here rather than inside this component because the interesting fact is never "auth was
+   * opened" — it is WHERE from. The same control on the daily result screen and in the
+   * sidebar mean entirely different things to a funnel.
+   */
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // Held here rather than in the form so switching between the two inside the dialog
@@ -49,6 +58,7 @@ export function AuthDialogButton({
         onClick={() => {
           setMode(initialMode);
           setOpen(true);
+          onOpen?.();
         }}
       >
         {children}

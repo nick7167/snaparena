@@ -24,8 +24,18 @@ export function MuteToggle({ className }: { className?: string }) {
   return (
     <button
       onClick={() => setMuted(!muted)}
-      aria-label={muted ? "Unmute sound effects" : "Mute sound effects"}
-      aria-pressed={muted}
+      /**
+       * The NAME stays put and the STATE moves. That is the rule app-shell.tsx states for
+       * the mobile Play control, and this is the same situation.
+       *
+       * This used to flip its label to "Unmute sound effects" while `aria-pressed` was
+       * true, which announces as "Unmute sound effects, pressed" — the name describing an
+       * action and the state describing something else, so the two contradict. A stable
+       * name plus a moving pressed state says exactly one thing, and it also stops the
+       * accessible name changing under any test locator that refers to it.
+       */
+      aria-label="Sound effects"
+      aria-pressed={!muted}
       className={`text-muted hover:text-paper rounded-xs p-1 text-xl transition-colors ${className ?? ""}`}
     >
       <Glyph name={muted ? "mute" : "sound"} />

@@ -2,7 +2,12 @@
 
 import { motion } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  getDevToolsServerSnapshot,
+  getDevToolsSnapshot,
+  subscribeDevTools,
+} from "@/ui/dev-tools";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { VETO_PHASE_MS } from "@/engine/config";
@@ -81,8 +86,21 @@ export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeav
 function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
   const dev = useQuery(api.devbots.enabled, {});
   const resolveNow = useMutation(api.devbots.resolveNow);
+  /**
+   * The second gate.
+   *
+   * The deployment flag licenses this bar to exist; the per-browser toggle decides whether
+   * it is actually on. It used to appear over every duel for as long as DEV_RANK_BOTS was
+   * set — which, on a shared deployment, meant it sat on top of the match screen whether or
+   * not anyone was currently using it. Flip it from the dev panel (Ctrl+.).
+   */
+  const tools = useSyncExternalStore(
+    subscribeDevTools,
+    getDevToolsSnapshot,
+    getDevToolsServerSnapshot,
+  );
 
-  if (!dev?.enabled) return null;
+  if (!dev?.enabled || !tools.resolveBar) return null;
 
   return (
     // Top right, clear of the guess combobox and the HP bars — this is a scaffold, and a

@@ -8,50 +8,7 @@ import { Avatar } from "@/game/ui";
 import { useNow } from "@/game/usePrefersReducedMotion";
 import { Chip, SectionLabel } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
-
-/**
- * How long ago, in words.
- *
- * Ticked from `useNow` rather than read once at render: this sits on a screen a player
- * leaves open, and "just now" that is still claiming to be just now twenty minutes later
- * is worse than no timestamp at all.
- */
-export function timeAgo(then: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - then) / 1000));
-  if (seconds < 60) return "just now";
-
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-
-  const days = Math.round(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days} days ago`;
-
-  const months = Math.round(days / 30);
-  return `${months} month${months === 1 ? "" : "s"} ago`;
-}
-
-/**
- * How long until a deadline, in the coarsest unit that is still true.
- *
- * The forward-looking counterpart to `timeAgo`, and the same "A · B" line uses both — the
- * leaderboard's "updated 2m ago · next in 3m". Lives beside it so the pair cannot drift
- * into two different ideas of how long a minute is.
- *
- * Clamped at zero: a deadline that has passed reads "now" rather than counting negative,
- * which is what a viewer sees in the seconds between a due rebuild and its arrival.
- */
-export function timeUntil(deadline: number, now: number): string {
-  const minutes = Math.max(0, Math.round((deadline - now) / 60_000));
-  if (minutes < 1) return "now";
-
-  const hours = Math.floor(minutes / 60);
-  if (hours >= 1) return `${hours}h ${minutes % 60}m`;
-  return `${minutes}m`;
-}
+import { timeAgo } from "@/ui/relative-time";
 
 /**
  * Your most recent match, and what it paid.

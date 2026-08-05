@@ -4,7 +4,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { AppShell, MobileTopBar, UserProvisioner } from "./app-shell";
 import { ImmersiveProvider } from "./immersive";
-import { OnboardingGate } from "./onboarding";
+import { WelcomeGate } from "./welcome-gate";
+import { DevPanel } from "./dev-panel";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -46,7 +47,21 @@ const siteUrl =
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "SNAP",
+  /**
+   * A template, not a string.
+   *
+   * Every route in the app used to render as "SNAP" because this was the only metadata
+   * export anywhere — so browser history was a wall of identical entries, several open
+   * tabs were indistinguishable, and a shared profile or match link previewed as the
+   * homepage. Each route now names itself and this appends the brand.
+   *
+   * `default` is what the home page keeps, and what any route that forgets falls back to.
+   *
+   * Worth knowing when adding a route: these pages are almost all `"use client"`, which
+   * cannot export `metadata`. That is why the titles live in per-route `layout.tsx` files
+   * rather than beside the components they describe.
+   */
+  title: { default: "SNAP", template: "%s — SNAP" },
   description: "One second of a song. Name it before they do.",
   openGraph: {
     title: "SNAP",
@@ -86,8 +101,13 @@ export default function RootLayout({
               <MobileTopBar />
               {children}
             </AppShell>
-            {/* Blocks until a username is chosen; renders nothing once onboarded. */}
-            <OnboardingGate />
+            {/* Redirects a new account to /welcome until it has a username. Renders
+                nothing, and stops firing the moment one is committed. */}
+            <WelcomeGate />
+            {/* Dev-only, twice over: absent unless DEV_RANK_BOTS is set on the deployment,
+                and every tool inside it is off until switched on in this browser. Mounted
+                at the root so it survives immersive mode, where the shell is hidden. */}
+            <DevPanel />
           </ImmersiveProvider>
         </Providers>
       </body>

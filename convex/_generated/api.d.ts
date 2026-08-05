@@ -24,6 +24,7 @@ import type * as progression from "../progression.js";
 import type * as ranked from "../ranked.js";
 import type * as rooms from "../rooms.js";
 import type * as tracks from "../tracks.js";
+import type * as tutorial from "../tutorial.js";
 import type * as users from "../users.js";
 
 import type {
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   ranked: typeof ranked;
   rooms: typeof rooms;
   tracks: typeof tracks;
+  tutorial: typeof tutorial;
   users: typeof users;
 }>;
 

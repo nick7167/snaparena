@@ -276,6 +276,67 @@ export const PLACEMENT_MATCHES = 5;
  */
 export const HANDLE_MAX_LENGTH = 12;
 
+/**
+ * Longest tagline, for the same reason as the handle above: one number, read by the form
+ * that enforces it as you type and by the mutation that enforces it on write.
+ *
+ * Moved here from `convex/users.ts`, where it was a private constant — so the onboarding
+ * form hardcoded `80` in two places and had no way to know if the server ever disagreed.
+ */
+export const BIO_MAX_LENGTH = 80;
+
+/**
+ * The song the welcome tutorial teaches on, identified by its iTunes id.
+ *
+ * PINNED BY `itunesTrackId`, NOT BY A CONVEX DOCUMENT ID, and the distinction is the whole
+ * reason this is a number rather than an `Id<"tracks">`. `scripts/ingest.ts` re-creates
+ * track rows, so a document id would silently stop resolving after any re-ingest and the
+ * tutorial would fall back forever without anyone noticing. The iTunes id is external,
+ * stable, and already indexed as `by_itunes_id`.
+ *
+ * Set this to a song that is unambiguous and very widely known — the tutorial's whole job
+ * is a recognition moment, and it cannot happen with a track the player has to be told.
+ * `tutorial.track` falls back to a random difficulty-1 track when this is null or missing
+ * from the catalogue, so the flow is never broken by an unset or retired value.
+ *
+ * To find an id: search the iTunes API for the track and read `trackId` from the result.
+ */
+export const TUTORIAL_ITUNES_TRACK_ID: number | null = null;
+
+/**
+ * How the scripted rival performs in the coached duel.
+ *
+ * It solves at the player's own time plus this gap, floored and capped, so the player
+ * always wins the tutorial duel by a visible margin — the HP bar has to move for "the gap
+ * is the damage" to be a thing you watch rather than a thing you are told.
+ *
+ * That is a deliberate lie, and a small one: a first duel that is lost teaches the same
+ * mechanic while making the game feel like something you are bad at. Set RIVAL_GAP_MS to a
+ * negative number if you would rather the tutorial be honest about losing.
+ */
+export const TUTORIAL_RIVAL_GAP_MS = 1_800;
+export const TUTORIAL_RIVAL_MIN_MS = 3_000;
+export const TUTORIAL_RIVAL_MAX_MS = 12_000;
+
+/**
+ * When each rung of the coaching assist appears, in ms from the start of the round.
+ *
+ * The ladder exists so that a player who knows the song gets the recognition moment the
+ * whole product sells, and a player who does not still cannot fail. Most never see past
+ * the first rung.
+ *
+ * These are a first guess and should be tuned against real sessions — `welcome_step`
+ * events will show what fraction of players reach each one.
+ */
+export const TUTORIAL_ASSIST_MS = {
+  /** Pin the correct track to the top of the suggestion list. */
+  suggest: 3_000,
+  /** Draw attention to that row. */
+  highlight: 6_000,
+  /** Name the song outright. */
+  reveal: 9_000,
+} as const;
+
 export const K_PLACEMENT = 40;
 export const K_EARLY = 24;
 export const K_ESTABLISHED = 16;

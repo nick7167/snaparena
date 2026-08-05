@@ -7,7 +7,7 @@ import { api } from "../../../convex/_generated/api";
 import { PLACEMENT_MATCHES, RANK_TIERS } from "@/engine/config";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
-import { timeAgo, timeUntil } from "../dashboard/last-result";
+import { timeAgo, timeUntil } from "@/ui/relative-time";
 import { useNow } from "@/game/usePrefersReducedMotion";
 import { GlobalRank } from "../dashboard/global-rank";
 import { Button } from "@/ui/Button";

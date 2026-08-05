@@ -28,6 +28,7 @@ import {
 } from "@/audio/sfx";
 import { MuteToggle } from "@/ui/MuteToggle";
 import { snap } from "@/ui/motion";
+import { track } from "@/analytics";
 import {
   getSidebarCollapsedServerSnapshot,
   getSidebarCollapsedSnapshot,
@@ -502,11 +503,15 @@ function SearchingPlayButton({ href }: { href: string }) {
           <span className="truncate">SEARCHING</span>
         </Link>
 
+        {/* No spinner: a 24px target has no room for one. Disabled while the leave is in
+            flight so a second press cannot fire a second mutation — the failure itself is
+            reported on /ranked, which is where this control links to. */}
         <button
           type="button"
           onClick={queue.dequeue}
+          disabled={queue.pending === "dequeue"}
           aria-label="Cancel search"
-          className="text-ink-900/70 hover:bg-ink-900/10 hover:text-ink-900 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-xs transition-colors"
+          className="text-ink-900/70 hover:bg-ink-900/10 hover:text-ink-900 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-xs transition-colors disabled:opacity-40"
         >
           <Glyph name="leave" />
         </button>
@@ -1108,7 +1113,22 @@ function Provisioner() {
     const token = getGuestToken();
     if (!token) return;
 
-    void claimGuestRun({ guestToken: token }).then(clearGuestToken);
+    void claimGuestRun({ guestToken: token })
+      .then((result) => {
+        clearGuestToken();
+        /**
+         * The last step of the guest funnel, and the only one that proves the mechanism
+         * worked end to end — a signup that fails to carry the run across is a conversion
+         * the player experiences as having lost their score.
+         *
+         * `claimed` is a COUNT of runs moved, and zero is a real outcome rather than a
+         * failure: it is what a token with nothing behind it returns.
+         */
+        track("guest_run_claimed", { runs: result?.claimed ?? 0 });
+      })
+      // Previously an unhandled rejection. It stays non-fatal — a failed claim must not
+      // break the first screen of a new account — but it is no longer invisible.
+      .catch(() => track("guest_run_claimed", { runs: 0, failed: true }));
   }, [me, claimGuestRun]);
 
   return null;

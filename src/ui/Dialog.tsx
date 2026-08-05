@@ -47,8 +47,44 @@ export function Dialog({
     // opened this with rather than to the top of the document.
     opener.current = document.activeElement;
 
+    /**
+     * Escape closes, and Tab is contained.
+     *
+     * The trap was the missing half. Focus moved IN on open and back OUT on close, but
+     * nothing stopped Tab walking straight out of the panel and into the page behind —
+     * which `aria-modal="true"` has already promised assistive technology is inert. A
+     * screen-reader user tabbing out of a dialog lands in content their software has been
+     * told does not exist, with no visible indication they have left.
+     *
+     * Recomputed per keypress rather than cached on open, because the focusable set is not
+     * static: the auth dialog swaps between sign-in and sign-up, and the report dialog
+     * reveals a confirm step. A list captured at open time would be wrong by then.
+     */
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = panel.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      // Wrapping is what makes it a trap rather than a wall: Tab past the end returns to
+      // the start, and Shift+Tab before the start goes to the end.
+      if (event.shiftKey && (active === first || active === panel.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
 

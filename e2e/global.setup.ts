@@ -46,57 +46,70 @@ setup("sign in and save state", async ({ page }) => {
   await page.goto("/");
 
   /**
-   * Wait for the Convex row before deciding anything about onboarding.
+   * Clear the welcome flow if this is the account's first run.
    *
-   * Order is load-bearing and got this wrong once. `UserProvisioner` creates the user
-   * document client-side after sign-in, and BOTH the sidebar and `OnboardingGate` render
-   * off the same `users.me` query — so until it resolves, neither exists. Checking for
-   * the modal first found nothing, skipped onboarding, and saved a storage state whose
-   * account was still un-onboarded. Every later spec then timed out clicking a sidebar
-   * that renders perfectly happily *behind* the modal's full-screen overlay.
+   * `WelcomeGate` REDIRECTS to /welcome rather than opening a modal over the app, which is
+   * what this used to have to deal with. That makes the check simpler and far more robust:
+   * the URL is the state, so there is no race between `users.me` resolving and an overlay
+   * committing, and no way to mistake "not shown yet" for "not needed".
+   */
+  await completeWelcomeIfShown(page);
+
+  /**
+   * Wait for the Convex row before saving.
+   *
+   * `UserProvisioner` creates the user document client-side after sign-in, and the sidebar
+   * renders off the same `users.me` query — so until it resolves there is nothing to
+   * assert against, and a storage state saved early belongs to an account that is not
+   * fully set up.
    */
   await expect(
     page.getByRole("button", { name: "Account menu" }).first(),
   ).toBeVisible({ timeout: 30_000 });
 
-  await completeOnboardingIfShown(page);
-
   /**
    * Prove it before saving.
    *
    * The failure this prevents is silent: a storage state is just a cookie jar, so it
-   * cannot record "and onboarding is done". If the modal is still up, every spec that
-   * inherits this state is broken, and the cause is nowhere near the symptom.
+   * cannot record "and setup is done". If the gate still fires, every spec that inherits
+   * this state is broken, and the cause is nowhere near the symptom.
    */
-  await expect(page.getByRole("dialog", { name: "Pick your username" })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/\/welcome/);
 
   await page.context().storageState({ path: AUTH_FILE });
 });
 
 /**
- * Clears the onboarding gate if this is the account's first run.
+ * Gets the persistent account through the welcome flow, once.
  *
- * Idempotent: `OnboardingGate` renders nothing once `onboardedAt` is set, so on every
- * subsequent run this is a no-op. Dedicated onboarding coverage lives in
- * new-player.spec.ts against a throwaway account — this exists only so the persistent
- * user gets past it once.
+ * Idempotent: `WelcomeGate` stops redirecting the moment `onboardedAt` is set, so on every
+ * subsequent run this returns immediately. Dedicated coverage of the flow itself lives in
+ * new-player.spec.ts against a throwaway account — this exists only so the shared user gets
+ * past it.
+ *
+ * Only the username step is completed. Everything after it is skippable by design, and the
+ * setup project has no business spending two minutes of a coached tutorial to produce a
+ * cookie jar.
  */
-async function completeOnboardingIfShown(page: import("@playwright/test").Page) {
-  const dialog = page.getByRole("dialog", { name: "Pick your username" });
-
-  // A short wait, not `isVisible()` — that is an immediate check and returns false
-  // during the frame between `users.me` resolving and the gate committing.
-  const shown = await dialog
-    .waitFor({ state: "visible", timeout: 5_000 })
+async function completeWelcomeIfShown(page: import("@playwright/test").Page) {
+  // The gate redirects, so the URL is the signal. A short wait rather than an immediate
+  // check: the redirect happens in an effect after `users.me` resolves.
+  const redirected = await page
+    .waitForURL(/\/welcome/, { timeout: 15_000 })
     .then(() => true)
     .catch(() => false);
 
-  if (!shown) return;
+  if (!redirected) return;
 
-  const start = dialog.getByRole("button", { name: "Start playing" });
-  // The handle is pre-filled and checked for availability live; wait for that round
+  // Step 0 is the intro; step 1 is the username.
+  await page.getByRole("button", { name: "Get started" }).click();
+
+  const submit = page.getByRole("button", { name: "Continue" });
+  // The handle is pre-filled and its availability is checked live; wait for that round
   // trip rather than clicking a disabled control.
-  await expect(start).toBeEnabled({ timeout: 20_000 });
-  await start.click();
-  await expect(dialog).toBeHidden({ timeout: 20_000 });
+  await expect(submit).toBeEnabled({ timeout: 20_000 });
+  await submit.click();
+
+  // Past the required step. Leaving is allowed from here — the gate will not fire again.
+  await page.goto("/");
 }

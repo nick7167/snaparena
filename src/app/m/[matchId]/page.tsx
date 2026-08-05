@@ -8,6 +8,8 @@ import { MatchEnd, type MatchEndPlayer } from "@/game/MatchEnd";
 import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { Empty, Skeleton } from "@/ui/Surface";
 import { PageHeader } from "../../page-header";
+import { timeAgoCapitalized } from "@/ui/relative-time";
+import { useNow } from "@/game/usePrefersReducedMotion";
 
 /**
  * A finished match, reopened.
@@ -25,6 +27,9 @@ export default function MatchRecapPage() {
   const params = useParams<{ matchId: string }>();
   const search = useSearchParams();
   const matchId = params.matchId as Id<"matches">;
+  // Shared formatter, so this match reads the same here as it does in the dashboard strip
+  // and on the profile that linked here — it previously read three different ways.
+  const now = useNow(60_000);
 
   const perspectiveUserId = search.get("p") ?? undefined;
   const recap = useQuery(api.matches.recap, {
@@ -77,7 +82,7 @@ export default function MatchRecapPage() {
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
         <p className="text-body-sm text-muted text-center">
-          {formatWhen(recap.completedAt)}
+          {timeAgoCapitalized(recap.completedAt, now)}
           {recap.mode === "practice" && " · practice"}
           {recap.suddenDeath && " · sudden death"}
         </p>
@@ -98,15 +103,3 @@ export default function MatchRecapPage() {
   );
 }
 
-/** "3 days ago" down to the hour, then a plain date. Matches the history list. */
-function formatWhen(completedAt: number): string {
-  const days = Math.floor((Date.now() - completedAt) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 30) return `${days} days ago`;
-  return new Date(completedAt).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}

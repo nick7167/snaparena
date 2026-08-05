@@ -279,3 +279,17 @@
     transform: none;
   }
 }
+
+/**
+ * DEV ONLY — layout outlines, toggled from the dev panel (Ctrl+.).
+ *
+ * Applied as a class on <html> rather than by each component, because the whole point is
+ * to see every box at once — including anything rendered outside the normal tree.
+ *
+ * Reachable only when DEV_RANK_BOTS is set on the deployment: the panel that sets this
+ * class does not render at all otherwise, so on the live app nothing can turn it on.
+ */
+.dev-outlines * {
+  outline: 1px solid rgb(255 255 255 / 0.14);
+  outline-offset: -1px;
+}

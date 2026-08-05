@@ -22,6 +22,7 @@ import {
   eloBandFor,
 } from "@/engine/matchmaking";
 import { useNow } from "@/game/usePrefersReducedMotion";
+import { track } from "@/analytics";
 
 /**
  * The matchmaking queue, lifted out of the page that used to own it.
@@ -53,6 +54,24 @@ interface QueueState {
   fallingBack: boolean;
   /** Set the instant a match is found, ahead of the `activeMatch` subscription. */
   matchId: Id<"matches"> | null;
+  /**
+   * A queue action is in flight.
+   *
+   * Named rather than boolean so a control can tell "my request" from "some request" —
+   * Cancel must not wear a spinner because Find a match is still resolving.
+   */
+  pending: "enqueue" | "dequeue" | "startBot" | null;
+  /**
+   * What went wrong with the last queue action, ready to render.
+   *
+   * These three used to be `() => void mutation({})` — nothing awaited, nothing caught.
+   * A rejected enqueue left the loudest control in the app completely inert, which reads
+   * as "that did not work" and earns a second press. Same bug `rooms/page.tsx` fixed for
+   * room creation; see its docblock.
+   */
+  error: string | null;
+  /** Dismiss the error, so a retry starts from a clean slate. */
+  clearError: () => void;
   enqueue: () => void;
   dequeue: () => void;
   /** Take the bot offer now rather than waiting out the fallback. */
@@ -80,6 +99,9 @@ const DORMANT: QueueState = {
   band: eloBandFor(0),
   fallingBack: false,
   matchId: null,
+  pending: null,
+  error: null,
+  clearError: () => {},
   enqueue: () => {},
   dequeue: () => {},
   startBot: () => {},
@@ -202,10 +224,53 @@ export function QueueProvider({ children }: { children: ReactNode }) {
 
   const matchId = held ?? activeMatch ?? null;
 
+  /**
+   * Which action is in flight, and what the last one failed with.
+   *
+   * Both setters are stable, so nothing below re-creates a callback when they fire — which
+   * matters because `startBot`'s identity is a dependency of the fallback timer, and an
+   * unstable one would re-arm it on every state change.
+   */
+  const [pending, setPending] = useState<QueueState["pending"]>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Runs a queue mutation with a pending flag and a caught failure.
+   *
+   * The three actions used to be bare `void mutation({})` calls. A rejection went nowhere:
+   * no spinner, no message, no state change — indistinguishable from a control that does
+   * not work. `rooms/page.tsx:77-81` documents the same bug and the same fix.
+   */
+  const run = useCallback(
+    async (name: NonNullable<QueueState["pending"]>, action: () => Promise<unknown>) => {
+      setPending(name);
+      setError(null);
+      try {
+        await action();
+      } catch {
+        setError(
+          name === "dequeue"
+            ? "Could not leave the queue. Try again."
+            : "Could not start a match. Check your connection and try again.",
+        );
+      } finally {
+        setPending(null);
+      }
+    },
+    [],
+  );
+
+  /**
+   * Also called by the automatic fallback below, where there is no control to report to —
+   * so the failure has to be caught here rather than at the call site. The banner keeps
+   * saying it is matching you with a bot; the error line underneath says it did not.
+   */
   const startBot = useCallback(async () => {
-    const result = await startBotMatch({});
-    if (result.status === "started" && result.matchId) onMatched(result.matchId);
-  }, [startBotMatch, onMatched]);
+    await run("startBot", async () => {
+      const result = await startBotMatch({});
+      if (result.status === "started" && result.matchId) onMatched(result.matchId);
+    });
+  }, [run, startBotMatch, onMatched]);
 
   /**
    * Landing a match the server paired for us.
@@ -320,8 +385,26 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       band: eloBandFor(waitingMs),
       fallingBack,
       matchId,
-      enqueue: () => void enqueueMutation({}),
-      dequeue: () => void dequeueMutation({}),
+      pending,
+      error,
+      clearError: () => setError(null),
+      enqueue: () =>
+        void run("enqueue", async () => {
+          await enqueueMutation({});
+          track("queue_enqueue");
+        }),
+      /**
+       * `waited_ms` is the number this event exists for.
+       *
+       * How long people tolerate a queue before giving up is what decides whether
+       * BOT_FALLBACK_MS is set correctly — and the fallback currently fires on a constant
+       * that was chosen without any way to check it against real patience.
+       */
+      dequeue: () =>
+        void run("dequeue", async () => {
+          await dequeueMutation({});
+          track("queue_cancel", { waited_ms: Math.round(waitingMs) });
+        }),
       startBot: () => void startBot(),
       clearMatch: () => setHeld(null),
     }),
@@ -331,6 +414,9 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       pool?.playersWaiting,
       fallingBack,
       matchId,
+      pending,
+      error,
+      run,
       enqueueMutation,
       dequeueMutation,
       startBot,

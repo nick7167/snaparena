@@ -1,7 +1,9 @@
 "use client";
 
 import { SignedIn, SignedOut } from "../auth-gate";
+import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
+import { track } from "@/analytics";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -49,6 +51,9 @@ function Daily() {
   // Read rather than created: visiting the page must not mint an identity, only starting
   // a run does.
   const guestToken = getGuestToken();
+  // Only for the analytics split. `isSignedIn` is undefined until Clerk resolves, and by
+  // the time anyone can press Start it has.
+  const { isSignedIn } = useUser();
 
   // Warm the local suggestion catalogue while the player reads the intro. The run itself
   // opens on a 3-second countdown, which is not long enough to fetch it from scratch.
@@ -63,6 +68,7 @@ function Daily() {
   const [matchId, setMatchId] = useState<Id<"matches"> | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const match = useQuery(api.matches.state, matchId ? { matchId, guestToken } : "skip");
 
@@ -70,16 +76,38 @@ function Daily() {
   useEffect(() => {
     if (!matchId || match?.status !== "complete") return;
     void complete({ matchId, guestToken });
-  }, [matchId, match?.status, complete, guestToken]);
+    // Fired here rather than on the result screen, which also renders for a run finished
+    // hours ago on a revisit — that would count one completion every time someone came
+    // back to look at their score.
+    track("daily_finish", { is_guest: !isSignedIn });
+  }, [matchId, match?.status, complete, guestToken, isSignedIn]);
 
+  /**
+   * Starts, or resumes, today's run.
+   *
+   * The `finally` is load-bearing. This used to be a bare `await` with `setStarting(false)`
+   * as the last statement, so a rejected mutation skipped it and left the button in its
+   * loading state — which `Button` also renders as disabled — with a page reload as the
+   * only way out. That is the single entry point to the only mode a guest can play.
+   */
   async function begin() {
     setStarting(true);
-    // The one place a guest identity is created. Signed-in players still send a token if
-    // they have a stale one; the server ignores it in favour of the session.
-    const result = await start({ guestToken: ensureGuestToken() });
-    if (result.status === "started") setMatchId(result.matchId);
-    else setStatus(result.status);
-    setStarting(false);
+    setError(null);
+    try {
+      // The one place a guest identity is created. Signed-in players still send a token if
+      // they have a stale one; the server ignores it in favour of the session.
+      const result = await start({ guestToken: ensureGuestToken() });
+      if (result.status === "started") {
+        setMatchId(result.matchId);
+        // `is_guest` is the whole point of this event: it is the denominator of the
+        // guest→signup funnel, and nothing in the app could previously report it.
+        track("daily_start", { is_guest: !isSignedIn, resumed: activeRun !== null });
+      } else setStatus(result.status);
+    } catch {
+      setError("Could not start today's run. Check your connection and try again.");
+    } finally {
+      setStarting(false);
+    }
   }
 
   const runningId = matchId ?? activeRun?.matchId ?? null;
@@ -116,8 +144,25 @@ function Daily() {
             title="The catalogue is too small"
             body="There aren't enough tracks to build today's set yet."
           />
+        ) : status === "already-played" ? (
+          /**
+           * Handled explicitly rather than falling through to `Landing`.
+           *
+           * `myRun` normally resolves first and renders the result, so this is a race
+           * — a second tab, or a slow subscription. It used to land on "Five songs… /
+           * Start", which invites someone to start a run the server has already refused.
+           */
+          <Empty
+            title="You've already played today"
+            body="Your result is on its way — refresh if it doesn't appear."
+          />
         ) : (
-          <Landing starting={starting} resuming={activeRun !== null} onStart={begin} />
+          <Landing
+            starting={starting}
+            resuming={activeRun !== null}
+            error={error}
+            onStart={begin}
+          />
         )}
       </Beat>
 
@@ -132,10 +177,12 @@ function Daily() {
 function Landing({
   starting,
   resuming,
+  error,
   onStart,
 }: {
   starting: boolean;
   resuming: boolean;
+  error: string | null;
   onStart: () => Promise<void>;
 }) {
   const stats = useQuery(api.daily.todayStats, {});
@@ -181,6 +228,12 @@ function Landing({
       {resuming && (
         <p className="text-body-sm text-secondary">
           You left today&rsquo;s run unfinished — this picks it up where it stopped.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-body-sm text-signal-text" role="alert">
+          {error}
         </p>
       )}
     </div>

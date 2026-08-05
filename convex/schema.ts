@@ -115,8 +115,34 @@ export default defineSchema({
     snapGuesses: v.optional(v.number()),
 
     // --- profile ------------------------------------------------------------
-    /** Set once onboarding completes; its absence is what triggers the modal. */
+    /**
+     * Set the moment a username is committed, which is the FIRST step of the welcome
+     * flow rather than the last.
+     *
+     * The commitment order is load-bearing. Convex has no unique constraints, so
+     * `completeOnboarding` enforces handle uniqueness inside its own transaction — which
+     * means the only way to hold a name is to write it. Deferring that until the end of a
+     * two-and-a-half minute flow would let a player pick a free handle, play the tutorial,
+     * and fail at the last screen because somebody else took it meanwhile.
+     *
+     * So this now means "has a username", which is a weaker claim than it used to make.
+     * Whether the whole flow was seen is `welcomeStep` / `tutorialCompletedAt` below.
+     */
     onboardedAt: v.optional(v.number()),
+    /**
+     * How far through the welcome flow this player got, so a refresh resumes rather than
+     * restarting — and so a player who skipped is never asked again.
+     *
+     * Absent means "has not started". The route treats any value below the final step as
+     * resumable and anything at or past it as done.
+     *
+     * Optional, and therefore needs no backfill: every existing account reads as absent,
+     * and the flow is gated on `onboardedAt` being unset too, so nobody who already has a
+     * username is dragged back through it.
+     */
+    welcomeStep: v.optional(v.number()),
+    /** Set when the coached rounds were actually played through, as opposed to skipped. */
+    tutorialCompletedAt: v.optional(v.number()),
     bio: v.optional(v.string()),
     /** Hidden pending review after a report. */
     bioHidden: v.optional(v.boolean()),

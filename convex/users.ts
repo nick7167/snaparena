@@ -7,6 +7,7 @@ import {
   PLACEMENT_MATCHES,
   RANK_TIERS,
   HANDLE_MAX_LENGTH,
+  BIO_MAX_LENGTH,
 } from "../src/engine/config";
 import { computeStreak, dayKey } from "../src/engine/streak";
 import { levelForXp } from "../src/engine/xp";
@@ -173,9 +174,6 @@ async function allocateHandle(ctx: MutationCtx, displayName: string): Promise<st
  */
 const HANDLE_PATTERN = /^[a-z0-9_]{3,12}$/;
 
-/** Bio cap. Short enough to read on a VS card, short enough to moderate cheaply. */
-const BIO_MAX_LENGTH = 80;
-
 /**
  * Avatar upload limits.
  *
@@ -312,7 +310,22 @@ export const updateProfile = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    const bio = (args.bio ?? "").trim().slice(0, BIO_MAX_LENGTH);
+
+    /**
+     * Every field is INDEPENDENTLY optional, and that is a correctness requirement rather
+     * than a convenience.
+     *
+     * This used to compute `(args.bio ?? "").trim()` unconditionally and patch the result,
+     * so a call that set only `preferredCategoryIds` resolved bio to `""` and then to
+     * `undefined` — which in a Convex patch removes the field. Updating your favourite
+     * genres silently deleted your tagline.
+     *
+     * Nothing hit it while the only caller sent all three fields at once, but Settings now
+     * has separate sections that each save one thing, which is exactly the shape that
+     * would have triggered it. Guarded the same way `avatarUrl` below already was.
+     */
+    const bio =
+      args.bio === undefined ? undefined : args.bio.trim().slice(0, BIO_MAX_LENGTH);
     if (bio && containsBlockedTerm(bio)) throw new Error("That bio isn't allowed");
 
     /**
@@ -335,7 +348,9 @@ export const updateProfile = mutation({
     }
 
     await ctx.db.patch(user._id, {
-      bio: bio || undefined,
+      // Spread rather than assigned, so an absent argument leaves the stored value alone.
+      // An empty string IS a deliberate clear — that is how a player removes their bio.
+      ...(bio === undefined ? {} : { bio: bio || undefined }),
       avatarUrl: args.avatarUrl ?? user.avatarUrl,
       ...(args.avatarUrl !== undefined
         ? { avatarStorageId: undefined, avatarHidden: undefined }
@@ -789,11 +804,32 @@ export const profile = query({
       })),
     );
 
+    /**
+     * The genres this player said they liked, resolved to names.
+     *
+     * `preferredCategoryIds` was written by onboarding from the day it existed and read by
+     * nothing — no query, no matchmaking path, no screen. Asking a new player to declare
+     * their taste and then discarding the answer is a question that should not have been
+     * asked; this is the cheaper of the two ways to make it honest.
+     *
+     * Deliberately DISTINCT from `categories` below, which is measured performance from
+     * `categoryRatings`. One is what they say they like, the other is what they are
+     * actually good at, and conflating them would be a lie in both directions.
+     *
+     * Bounded by the number of categories in the app, so the fan-out is small and fixed.
+     */
+    const preferred = (
+      await Promise.all((user.preferredCategoryIds ?? []).map((id) => ctx.db.get(id)))
+    )
+      .filter((category) => category !== null)
+      .map((category) => ({ slug: category.slug, name: category.name }));
+
     return {
       // Lets the profile page chain into matches.card, which holds the badges, bio and
       // level this query does not. The two are complementary rather than redundant:
       // only this one has the per-category breakdown.
       userId: user._id,
+      preferred,
       handle: user.handle,
       displayName: user.displayName,
       avatarUrl: publicAvatarUrl(user),

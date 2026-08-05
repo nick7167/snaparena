@@ -15,7 +15,7 @@ import { Glyph } from "@/ui/Glyph";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { LobbyColumn } from "../lobby-column";
 import { Beat } from "../dashboard/motion";
-import { timeAgo } from "../dashboard/last-result";
+import { timeAgo } from "@/ui/relative-time";
 
 /** Codes are read aloud, so the alphabet excludes O/0 and I/1/L. Typing them is futile. */
 const NOT_CODE = /[^ABCDEFGHJKMNPQRSTUVWXYZ23456789]/g;

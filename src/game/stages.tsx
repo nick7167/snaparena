@@ -17,7 +17,7 @@ import { Card, Chip, Meter } from "@/ui/Surface";
 import { Button } from "@/ui/Button";
 import { Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
-import { GuessInput } from "./GuessInput";
+import { GuessInput, type GuessResult } from "./GuessInput";
 import { Waveform } from "./Waveform";
 import type { useRoundAudio } from "./useRoundAudio";
 
@@ -1074,25 +1074,56 @@ export function GuessingStage({
   pointsThisRound: number;
   lockedUntil: number;
   feedback: string | null;
-  onGuess: (text: string) => Promise<{ status: string }>;
+  onGuess: (text: string) => Promise<GuessResult>;
   onPass: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const beat = REVEAL_BEATS[audio.revealStage];
   const nextBeat = REVEAL_BEATS[audio.revealStage + 1];
 
+  /**
+   * The round, when the audio did not arrive.
+   *
+   * This branch used to return before the guess field AND the pass control, which left the
+   * player unable to play the round or to concede it — they watched a dead end while the
+   * server scored them zero and their opponent took the damage. Both controls are here
+   * now, so the round is at worst lost on purpose rather than lost silently.
+   *
+   * `retry` is the more useful of the two, and deliberately first. A blocked playback is
+   * the autoplay policy rather than a fault, and pressing a button is exactly the gesture
+   * needed to clear it — the automatic path had no gesture to offer.
+   */
   if (audio.error !== null) {
+    const blocked = audio.error === "playback-blocked";
+
     return (
       <Stage keyName="audio-error" className="items-center py-16 text-center">
-        <Card className="flex flex-col gap-2 p-6">
+        <Card className="flex flex-col items-center gap-3 p-6">
           <p className="text-body-lg text-paper">
             {audio.error === "audio-timeout"
               ? "This track took too long to load."
-              : audio.error === "playback-blocked"
+              : blocked
                 ? "Your browser blocked audio playback."
                 : "This track's audio failed to load."}
           </p>
-          <p className="text-body-sm text-muted">The round moves on shortly.</p>
+
+          <p className="text-body-sm text-muted max-w-xs">
+            {blocked
+              ? "Tap below to allow sound — the clock is already running."
+              : "The clock is already running, so retrying costs the time it takes."}
+          </p>
+
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button onClick={audio.retry}>
+              <Glyph name="sound" />
+              {blocked ? "Allow sound" : "Try again"}
+            </Button>
+            {!solved && !passed && (
+              <Button variant="ghost" onClick={onPass}>
+                Skip this song
+              </Button>
+            )}
+          </div>
         </Card>
       </Stage>
     );

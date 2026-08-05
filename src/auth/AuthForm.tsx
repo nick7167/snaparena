@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
+import { track } from "@/analytics";
 
 /**
  * Sign in and sign up, in SNAP's own chrome.
@@ -192,6 +193,10 @@ function SignUpForm({
     if (error) return;
 
     if (signUp.status === "complete") {
+      // Both finalize paths report, because which one a signup took is not a detail: one
+      // is a single form, the other is a form plus an email round trip, and if the funnel
+      // leaks it will leak between those two steps.
+      track("signup_complete", { method: "password", verified_email: false });
       await signUp.finalize({ navigate: () => router.push(redirectTo) });
       return;
     }
@@ -202,6 +207,7 @@ function SignUpForm({
     event.preventDefault();
     const { error } = await signUp.verifications.verifyEmailCode({ code });
     if (error) return;
+    track("signup_complete", { method: "password", verified_email: true });
     await signUp.finalize({ navigate: () => router.push(redirectTo) });
   }
 

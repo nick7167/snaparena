@@ -178,9 +178,20 @@ function Rules() {
   const snap = SCORE_TIERS[0];
 
   return (
-    // Hidden below `sm` for the same reason as the feature row: still in the HTML, off
-    // the phone's single screen.
-    <section className="border-line hidden gap-4 border-t pt-6 sm:grid sm:grid-cols-3">
+    /**
+     * Visible on phones now, and that is the point.
+     *
+     * This was `hidden sm:grid` to protect the "fits one screen" promise — which meant the
+     * only explanation of the game anywhere on the landing page was absent from the device
+     * most people arrive on. The onboarding tutorial is post-signup, so a guest heading
+     * into the daily gets no teaching at all otherwise; these three lines are the entire
+     * budget for explaining the game to someone who has not signed up.
+     *
+     * The one-screen promise survives because this sits BELOW the challenge card rather
+     * than competing with it: the card is still what a phone opens on, and this is what
+     * they find if they scroll — which someone deciding whether to play is likely to do.
+     */
+    <section className="border-line grid gap-4 border-t pt-6 sm:grid-cols-3">
       <Rule glyph="song" title={`${REVEAL_BEATS[0].playToMs / 1000}s to start`}>
         You hear one second, and the clip grows every few seconds until someone names it.
       </Rule>

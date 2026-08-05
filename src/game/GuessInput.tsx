@@ -14,14 +14,56 @@ const NO_OPTIONS: readonly string[] = Object.freeze([]);
 /** How many suggestions fit in the time a player has to read them. */
 const MAX_SUGGESTIONS = 6;
 
+/**
+ * What a submitted guess comes back as.
+ *
+ * Exported and shared by both runners so the contract cannot drift between the duel and
+ * the daily — they had independently identical copies of this, and independently identical
+ * bugs in the code that used it.
+ */
+export interface GuessResult {
+  status: string;
+  /**
+   * Keep what the player typed instead of clearing the field.
+   *
+   * Set when the submission itself failed rather than being judged — the guess never
+   * reached the server, so throwing away the text would make the player retype it under a
+   * clock that is still running.
+   */
+  keepText?: boolean;
+}
+
 interface GuessInputProps {
-  onGuess: (text: string) => Promise<{ status: string }>;
+  onGuess: (text: string) => Promise<GuessResult>;
   disabled: boolean;
   /** Server-provided timestamp; input stays locked until it passes. */
   lockedUntil: number;
+  /**
+   * Force a title to the head of the suggestion list. TUTORIAL ONLY.
+   *
+   * The welcome tutorial has to guarantee a win without handing over the answer, because
+   * telling someone the title trains them to type full titles — and the technique that
+   * actually wins rounds is recognise, type two or three characters, arrow down, enter.
+   * Pinning the right track at the top of the list scaffolds exactly that technique
+   * instead of bypassing it.
+   *
+   * Only `TutorialRunner` passes this. When absent — which is every real round, ranked,
+   * daily, practice and rooms — the options list is computed exactly as it was before this
+   * prop existed. Keep it that way: this component is where a dropped keystroke costs a
+   * player a rated round.
+   */
+  pinnedSuggestion?: string;
+  /** Draw attention to the pinned row, once coaching escalates. TUTORIAL ONLY. */
+  highlightPinned?: boolean;
 }
 
-export function GuessInput({ onGuess, disabled, lockedUntil }: GuessInputProps) {
+export function GuessInput({
+  onGuess,
+  disabled,
+  lockedUntil,
+  pinnedSuggestion,
+  highlightPinned = false,
+}: GuessInputProps) {
   const [text, setText] = useState("");
   const [lockRemaining, setLockRemaining] = useState(0);
   // -1 means "no suggestion highlighted" — the raw typed text is what submits.
@@ -88,7 +130,25 @@ export function GuessInput({ onGuess, disabled, lockedUntil }: GuessInputProps) 
   }, [inputDisabled]);
 
   const gateOpen = text.trim().length >= AUTOCOMPLETE_MIN_CHARS;
-  const options = gateOpen ? (local ?? remote ?? heldRemote) : NO_OPTIONS;
+  const matched = gateOpen ? (local ?? remote ?? heldRemote) : NO_OPTIONS;
+
+  /**
+   * The real path is untouched.
+   *
+   * Without `pinnedSuggestion` this is `matched` by identity — the same array the previous
+   * version computed, with no copy, no filter and no allocation. The tutorial branch only
+   * runs when the prop is set, which is only ever from `TutorialRunner`.
+   *
+   * The gate is dropped along with it: a tutorial pin has to appear on the FIRST keystroke,
+   * and AUTOCOMPLETE_MIN_CHARS is 2 — so a coached player typing one letter would see
+   * nothing and conclude the field is broken.
+   */
+  const options = pinnedSuggestion
+    ? text.trim().length === 0
+      ? NO_OPTIONS
+      : [pinnedSuggestion, ...matched.filter((title) => title !== pinnedSuggestion)]
+    : matched;
+
   const open = options.length > 0;
 
   /**
@@ -107,7 +167,9 @@ export function GuessInput({ onGuess, disabled, lockedUntil }: GuessInputProps) 
     inFlight.current = true;
     try {
       const result = await onGuess(trimmed);
-      if (result.status !== "correct") setText("");
+      // A guess that was judged and rejected clears the field; one that never reached the
+      // server keeps it, so retrying costs a keystroke rather than the whole title.
+      if (result.status !== "correct" && !result.keepText) setText("");
       setActive(-1);
     } finally {
       inFlight.current = false;
@@ -146,29 +208,37 @@ export function GuessInput({ onGuess, disabled, lockedUntil }: GuessInputProps) 
         >
           {/* Titles are unique — the index keeps one recording per normalized title — so
               the title itself is a safe key. */}
-          {options.map((title, index) => (
-            <li key={title} role="presentation">
-              <button
-                type="button"
-                role="option"
-                id={`guess-suggestion-${index}`}
-                aria-selected={index === activeIndex}
-                // Prevents the field losing focus before the click registers, which
-                // would otherwise blur mid-race.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void submit(title)}
-                disabled={inputDisabled}
-                className={`text-body block w-full min-h-11 px-4 py-2 text-left transition-colors
-                            disabled:opacity-50 ${
-                              index === activeIndex
-                                ? "bg-ink-500 text-paper"
-                                : "text-secondary hover:bg-ink-600 hover:text-paper"
-                            }`}
-              >
-                {title}
-              </button>
-            </li>
-          ))}
+          {options.map((title, index) => {
+            // Tutorial only, and inert in every real round because `highlightPinned` is
+            // false unless the coaching has escalated to its second rung.
+            const coached = highlightPinned && title === pinnedSuggestion;
+
+            return (
+              <li key={title} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  id={`guess-suggestion-${index}`}
+                  aria-selected={index === activeIndex}
+                  // Prevents the field losing focus before the click registers, which
+                  // would otherwise blur mid-race.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void submit(title)}
+                  disabled={inputDisabled}
+                  className={`text-body block w-full min-h-11 px-4 py-2 text-left transition-colors
+                              disabled:opacity-50 ${
+                                coached
+                                  ? "bg-gold text-ink-900 font-semibold"
+                                  : index === activeIndex
+                                    ? "bg-ink-500 text-paper"
+                                    : "text-secondary hover:bg-ink-600 hover:text-paper"
+                              }`}
+                >
+                  {title}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
