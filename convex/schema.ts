@@ -346,12 +346,43 @@ export default defineSchema({
     /** Badge ids newly unlocked by this match, for the post-match celebration. */
     badgesEarned: v.optional(v.array(v.string())),
     forfeited: v.boolean(),
-    /** Heartbeat timestamp; drives disconnect-forfeit detection. */
-    lastSeenAt: v.number(),
+    /**
+     * DEPRECATED — presence lives in the `presence` table now. Read through
+     * `ranked.lastSeenFor`, which still falls back to this for matches that predate the
+     * move.
+     *
+     * Optional rather than deleted: Convex validates stored documents against the schema
+     * on push, so removing it would mean rewriting every historical row, and every batch
+     * of that would invalidate `matches.history`, `activeMatch` and `lastRatingChange`
+     * for the players involved. An unread optional field costs nothing.
+     */
+    lastSeenAt: v.optional(v.number()),
   })
     .index("by_match", ["matchId"])
     .index("by_match_user", ["matchId", "userId"])
     .index("by_user", ["userId"]),
+
+  /**
+   * Liveness, one row per player per ranked match.
+   *
+   * Split out of `matchPlayers` because it is written every five seconds per player and
+   * that document is read by half the app: `matches.state` for both players, plus
+   * `ranked.activeMatch` and `users.lastRatingChange`, which the shell subscribes to on
+   * every route. A heartbeat therefore re-executed four subscribed queries, and reactive
+   * re-executions bill as function calls — it was the single largest line in the budget.
+   *
+   * Nothing subscribes to this table, so writing it is free.
+   *
+   * Ranked only. `claimForfeit` returns early for every other mode, so a room, practice
+   * or daily match has no reader and gets no row.
+   */
+  presence: defineTable({
+    matchId: v.id("matches"),
+    userId: v.id("users"),
+    lastSeenAt: v.number(),
+  })
+    .index("by_match", ["matchId"])
+    .index("by_match_user", ["matchId", "userId"]),
 
   guesses: defineTable({
     matchId: v.id("matches"),
@@ -417,6 +448,24 @@ export default defineSchema({
     .index("by_user_date", ["userId", "date"])
     .index("by_date_points", ["date", "totalPoints"]),
 
+  /**
+   * How many runs each day has, as a running total.
+   *
+   * Exists purely so the landing page does not have to count by reading. `todayStats` is
+   * subscribed by every visitor including signed-out ones, and counting meant a `.take`
+   * of up to a thousand `dailyRuns` — so every completed run anywhere re-executed a
+   * thousand-document read for every visitor with the page open.
+   *
+   * Maintained by `daily.recordRun`, which seeds the row from the rows already present
+   * the first time it writes for a date; nothing needed backfilling. Deleting old guest
+   * runs can leave the count high for dates past the retention window, which is
+   * harmless — only today's row is ever read.
+   */
+  dailyCounts: defineTable({
+    date: v.string(), // UNIQUE
+    players: v.number(),
+  }).index("by_date", ["date"]),
+
   /** Ranked matchmaking pool. Indexed by elo so we can widen the band over time. */
   queue: defineTable({
     userId: v.id("users"),
@@ -434,5 +483,16 @@ export default defineSchema({
     isBot: v.optional(v.boolean()),
   })
     .index("by_elo", ["elo"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    /**
+     * Humans only, for the "players waiting" readout.
+     *
+     * Counting them used to be an unindexed `.take(100)` over the whole table, which put
+     * every queue row in the read set — so a single enqueue re-ran that query for every
+     * signed-in user in the app, on every route. Selecting on `isBot` narrows the read
+     * set to human rows, and the dev bot cron's per-minute writes stop invalidating it
+     * at all. Nothing ever writes `isBot: false` — `enqueue` writes `true` or
+     * `undefined` — so `eq("isBot", undefined)` is exactly the old filter.
+     */
+    .index("by_isBot", ["isBot"]),
 });

@@ -160,11 +160,42 @@ export const state = query({
       )
       .collect();
 
-    // Every guess in the match, for the running stats the between-round beats show.
-    const allGuesses = await ctx.db
-      .query("guesses")
-      .withIndex("by_match_round", (q) => q.eq("matchId", args.matchId))
-      .collect();
+    /**
+     * Per-round outcomes, for the running stats the between-round beats show.
+     *
+     * Taken from `roundLog`, which `phases.applyRoundDamage` already writes from exactly
+     * this data — points, elapsed time and solved state, per player, per round. This
+     * used to collect EVERY guess in the match instead, which grew without bound with
+     * players × rounds × attempts and was re-read on every one of this query's
+     * re-executions, of which there are tens per minute per client.
+     *
+     * The log only covers rounds that have closed, so the round in progress is filled in
+     * from `guesses` above — already read, so it costs nothing. Taking the first correct
+     * guess is the same as summing them: `submitGuess` rejects a second solve from the
+     * same player in the same round, so there can only ever be one.
+     */
+    type RoundResult = { userId: Id<"users">; points: number; elapsedMs?: number; solved: boolean };
+
+    const resultsByRound = new Map<number, readonly RoundResult[]>();
+    // Keyed by the recorded index rather than by array position, so this cannot drift if
+    // a round is ever logged out of order.
+    for (const entry of match.roundLog ?? []) {
+      resultsByRound.set(entry.roundIndex, entry.results);
+    }
+    if (!resultsByRound.has(match.currentRound)) {
+      resultsByRound.set(
+        match.currentRound,
+        match.playerIds.map((id) => {
+          const solve = guesses.find((guess) => guess.userId === id && guess.correct);
+          return {
+            userId: id,
+            points: solve?.points ?? 0,
+            elapsedMs: solve?.clientElapsedMs,
+            solved: solve !== undefined,
+          };
+        }),
+      );
+    }
 
     /**
      * Running per-player stats.
@@ -179,19 +210,22 @@ export const state = query({
       let solved = 0;
 
       for (let round = 0; round <= match.currentRound; round++) {
+        const results = resultsByRound.get(round) ?? [];
         const pointsFor = (id: Id<"users">) =>
-          allGuesses
-            .filter((g) => g.roundIndex === round && g.userId === id && g.correct)
-            .reduce((sum, g) => sum + g.points, 0);
+          results.find((result) => result.userId === id)?.points ?? 0;
 
         const mine = pointsFor(userId);
-        const mySolve = allGuesses.find(
-          (g) => g.roundIndex === round && g.userId === userId && g.correct,
+        const mySolve = results.find(
+          (result) => result.userId === userId && result.solved,
         );
 
         if (mySolve) {
           solved++;
-          bestMs = bestMs === null ? mySolve.clientElapsedMs : Math.min(bestMs, mySolve.clientElapsedMs);
+          const elapsed = mySolve.elapsedMs;
+          // Always present alongside `solved`, but the log types it optional.
+          if (elapsed !== undefined) {
+            bestMs = bestMs === null ? elapsed : Math.min(bestMs, elapsed);
+          }
         }
 
         const others = match.playerIds.filter((id) => id !== userId).map(pointsFor);
@@ -512,10 +546,14 @@ export async function applyGuess(
     .unique();
 
   if (player) {
-    await ctx.db.patch(player._id, {
-      totalPoints: player.totalPoints + points,
-      lastSeenAt: now,
-    });
+    /**
+     * Points only. This used to refresh `lastSeenAt` here too, which was free while the
+     * field lived on this row — but presence has its own table now, and writing it from
+     * the most contended mutation in the game would put a fresh conflict edge between
+     * every guess and both players' heartbeats. Nothing is lost: anyone submitting a
+     * guess is by definition running the client whose heartbeat is already saying so.
+     */
+    await ctx.db.patch(player._id, { totalPoints: player.totalPoints + points });
   }
 
   // Everyone solved? Cut the round short rather than making them watch the clock.

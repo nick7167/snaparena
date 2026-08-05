@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { RoundRunner } from "@/game/RoundRunner";
@@ -28,12 +28,32 @@ export default function RoomPage() {
   const start = useMutation(api.rooms.start);
   const returnToLobby = useMutation(api.rooms.returnToLobby);
 
-  // Arriving via a shared link should put you in the room, not just show it to you.
-  // Deliberately not attempted for a closed room, which cannot be joined.
+  /**
+   * Arriving via a shared link should put you in the room, not just show it to you.
+   * Deliberately not attempted for a closed room, which cannot be joined.
+   *
+   * `room` is a subscription result, so it is a fresh object on every push, and the
+   * server REFUSES a full or in-progress room by returning a status rather than by
+   * throwing. Together that meant a non-member looking at such a room re-sent `join` on
+   * every push — and one member toggling ready is a push, so a lobby of eight idly
+   * flicking Ready amplified into a mutation each time.
+   *
+   * The latch is the joinability-relevant shape of the room rather than the room itself,
+   * so a retry still happens exactly when one could newly succeed: a seat coming free
+   * changes the member count, and a match ending changes the status. Latching on `code`
+   * alone would be wrong — you would never get into a room that filled up before you
+   * arrived and then emptied.
+   */
+  const attempted = useRef<string | null>(null);
   useEffect(() => {
     if (!room || !me) return;
     if (room.status === "closed") return;
     if (room.members.some((member) => member.userId === me._id)) return;
+
+    const shape = `${code}:${room.status}:${room.members.length}`;
+    if (attempted.current === shape) return;
+    attempted.current = shape;
+
     void join({ code });
   }, [room, me, join, code]);
 

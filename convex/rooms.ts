@@ -313,7 +313,6 @@ export const start = mutation({
         hp: ROOM_STARTING_HP,
         ratingBefore: member.elo,
         forfeited: false,
-        lastSeenAt: Date.now(),
       });
     }
 

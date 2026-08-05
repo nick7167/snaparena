@@ -179,7 +179,6 @@ async function createBotMatch(
       hp: DUEL_STARTING_HP,
       ratingBefore: player.elo,
       forfeited: false,
-      lastSeenAt: Date.now(),
     });
   }
 

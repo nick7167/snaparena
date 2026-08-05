@@ -25,17 +25,30 @@ import { snap } from "@/ui/motion";
 export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeave: () => void }) {
   const match = useQuery(api.matches.state, { matchId });
   const heartbeat = useMutation(api.ranked.heartbeat);
-  const claimForfeit = useMutation(api.ranked.claimForfeit);
 
-  // Presence: silence past the grace period forfeits, which is what stops a losing
-  // player from simply closing the tab.
+  /**
+   * Presence: silence past the grace period forfeits, which is what stops a losing
+   * player from simply closing the tab.
+   *
+   * Gated on the match still being live. Hooks cannot sit below the `if (!match)` return
+   * further down, so the guard goes inside the effect instead — without it this kept
+   * firing twice every five seconds for as long as the results screen stayed open, which
+   * is unbounded: nothing makes you leave it. Presence past the final round is read by
+   * nobody, since `claimForfeit` itself returns early unless the match is active.
+   *
+   * `status`, not `phase` — the draft runs under `status: "veto"`, and `match_end` is
+   * also the phase an abandoned match is left in.
+   *
+   * One call, not two: `heartbeat` runs the forfeit sweep itself now. Reporting that you
+   * are here and noticing that your opponent is not are the same moment, and splitting
+   * them across two mutations doubled the traffic to say it.
+   */
+  const live = match?.status === "veto" || match?.status === "active";
   useEffect(() => {
-    const id = setInterval(() => {
-      void heartbeat({ matchId });
-      void claimForfeit({ matchId });
-    }, 5000);
+    if (!live) return;
+    const id = setInterval(() => void heartbeat({ matchId }), 5000);
     return () => clearInterval(id);
-  }, [matchId, heartbeat, claimForfeit]);
+  }, [live, matchId, heartbeat]);
 
   if (!match) return <p className="text-body text-muted px-4">Loading…</p>;
 
@@ -107,11 +120,22 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
 
-  // Someone has to close the phase if a player idles; the client drives it.
+  /**
+   * Someone has to close the phase if a player idles; the client drives it.
+   *
+   * Recovery only, matching the round-phase nudge in `useRoundLifecycle`: the server
+   * refuses to close the draft before the deadline anyway, so every earlier call was a
+   * round trip that could only ever no-op — two players' worth, every two seconds, for
+   * the whole draft.
+   */
+  const vetoDeadline = draft?.deadline ?? null;
   useEffect(() => {
-    const id = setInterval(() => void expireVeto({ matchId }), 2000);
+    if (!vetoDeadline) return;
+    const id = setInterval(() => {
+      if (Date.now() > vetoDeadline + 1_500) void expireVeto({ matchId });
+    }, 2000);
     return () => clearInterval(id);
-  }, [matchId, expireVeto]);
+  }, [vetoDeadline, matchId, expireVeto]);
 
   if (!draft) return <p className="text-body text-muted px-4">Loading draft…</p>;
 

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, query, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import { releaseDailyCount } from "./daily";
 
 /**
  * Guest housekeeping.
@@ -159,6 +160,9 @@ async function deleteGuest(ctx: MutationCtx, guest: Doc<"users">): Promise<void>
     .take(100);
 
   for (const run of runs) {
+    // Retention only ever reaches dates well past the one the landing page reads, but the
+    // counter is maintained rather than counted, so every deletion reports itself.
+    await releaseDailyCount(ctx, run.date);
     await ctx.db.delete(run._id);
   }
 

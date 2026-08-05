@@ -103,7 +103,21 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   const me = useQuery(api.users.me, isLoaded && isSignedIn ? {} : "skip");
   const ready = me !== undefined && me !== null;
 
-  const status = useQuery(api.ranked.queueStatus, ready ? {} : "skip");
+  /**
+   * Split deliberately.
+   *
+   * This provider wraps the whole app, so whatever it subscribes to is live on every
+   * route for every signed-in user. `queueStatus` bundled "am I queued" together with a
+   * count of the pool, and counting the pool reads every queue row — so one person
+   * pressing Find a match re-executed that query once per signed-in user, everywhere.
+   *
+   * `myQueueEntry` reads one row and so is invalidated only by your own entry. The count
+   * is subscribed only while you are actually searching, which is the only time it is
+   * rendered.
+   */
+  const status = useQuery(api.ranked.myQueueEntry, ready ? {} : "skip");
+  const inQueue = status?.inQueue === true;
+  const pool = useQuery(api.ranked.queueSize, ready && inQueue ? {} : "skip");
 
   // Subscribed here rather than on the page so the reconciliation below can see it, and
   // so a reload mid-match still drops you back in. Only ever returns a LIVE match.
@@ -130,7 +144,6 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   // Ticked client-side from the server's `enqueuedAt`. A Convex query does not re-run on
   // a timer, so anything elapsed has to be computed here or it stands still.
   const now = useNow(1000);
-  const inQueue = status?.inQueue === true;
   const waitingMs = status?.enqueuedAt ? Math.max(0, now - status.enqueuedAt) : 0;
 
   /**
@@ -174,6 +187,19 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     if (held !== null && activeMatch !== held) setHeld(null);
   }
 
+  /**
+   * Adopt whatever the server currently calls live.
+   *
+   * `held` is what keeps the results screen mounted after `activeMatch` goes null, so it
+   * has to be set while the match is still running. The poll used to do this from its
+   * own callback; with the server pairing instead, the id arrives through the
+   * subscription and is adopted here.
+   *
+   * During render rather than in an effect, for the same reason as the reset above: an
+   * effect would mount the queue for one frame before swapping to the arena.
+   */
+  if (activeMatch && held !== activeMatch) setHeld(activeMatch);
+
   const matchId = held ?? activeMatch ?? null;
 
   const startBot = useCallback(async () => {
@@ -181,14 +207,62 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     if (result.status === "started" && result.matchId) onMatched(result.matchId);
   }, [startBotMatch, onMatched]);
 
+  /**
+   * Landing a match the server paired for us.
+   *
+   * This used to be a two-second `tryMatchmake` poll per searching client, and that poll
+   * was the only thing that paired anyone — N searchers meant N mutations every two
+   * seconds, all reading overlapping slices of the same rating range, so write conflicts
+   * grew with the square of the queue. A server-side sweeper does that work once for
+   * everybody now, and the match arrives down the `activeMatch` subscription that was
+   * already open on every route.
+   *
+   * Only the side effects live here; `held` is adopted during render above, because
+   * setting state from an effect renders the wrong thing once before correcting itself.
+   *
+   * The ref keeps this to once per match. `activeMatch` stays set for the whole duel, so
+   * without it every re-render would re-fire the sound and the navigation. It also
+   * adopts whatever is already live on the first resolution after mount: reloading
+   * mid-duel is not a match being found, and should be silent.
+   */
+  const announced = useRef<Id<"matches"> | null | undefined>(undefined);
+  useEffect(() => {
+    if (activeMatch === undefined) return;
+
+    if (announced.current === undefined) {
+      announced.current = activeMatch;
+      return;
+    }
+
+    if (announced.current === activeMatch) return;
+    announced.current = activeMatch;
+    if (!activeMatch) return;
+
+    play("match_found");
+    // Ranked is where a duel is rendered. Arriving from anywhere else — the ladder, a
+    // profile, settings — has to end up there or the match plays out unwatched.
+    if (pathname !== "/ranked") router.push("/ranked");
+  }, [activeMatch, pathname, router]);
+
+  /**
+   * Safety net, not the mechanism.
+   *
+   * The server sweeper re-arms itself and is started by whoever makes the pool matchable,
+   * so in the normal case this never finds anything the sweep has not already done. But
+   * the sweeper is now the only thing that pairs anyone, and a self-scheduling chain has
+   * exactly one failure mode — if a link is ever lost, nothing restarts it until the next
+   * player happens to join at the transition point, and everyone already queued waits
+   * forever.
+   *
+   * Fifteen seconds rather than the two this used to run at: frequent enough that a
+   * broken chain costs a searching player one wait cycle instead of their whole session,
+   * rare enough that it is a rounding error against what the poll used to cost.
+   */
   useEffect(() => {
     if (!inQueue) return;
-    const id = setInterval(async () => {
-      const result = await tryMatchmake({});
-      if (result.matched) onMatched(result.matchId);
-    }, 2000);
+    const id = setInterval(() => void tryMatchmake({}), 15_000);
     return () => clearInterval(id);
-  }, [inQueue, tryMatchmake, onMatched]);
+  }, [inQueue, tryMatchmake]);
 
   /**
    * Automatic bot fallback.
@@ -198,7 +272,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * about whether the fallback is running.
    */
   const fallingBack =
-    inQueue && (status?.playersWaiting ?? 0) <= 1 && waitingMs >= BOT_FALLBACK_MS;
+    inQueue && (pool?.playersWaiting ?? 0) <= 1 && waitingMs >= BOT_FALLBACK_MS;
 
   useEffect(() => {
     if (!fallingBack) return;
@@ -242,7 +316,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     () => ({
       inQueue,
       waitingMs,
-      playersWaiting: status?.playersWaiting ?? 0,
+      playersWaiting: pool?.playersWaiting ?? 0,
       band: eloBandFor(waitingMs),
       fallingBack,
       matchId,
@@ -254,7 +328,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     [
       inQueue,
       waitingMs,
-      status?.playersWaiting,
+      pool?.playersWaiting,
       fallingBack,
       matchId,
       enqueueMutation,

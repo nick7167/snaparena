@@ -25,14 +25,18 @@ crons.interval(
  *
  * Keeps the sixteen rank bots sitting in the ranked queue so a lone developer can
  * actually match. Their queue rows are consumed when matched, so this is a refill on a
- * timer rather than a one-off seed. Every minute because a minute is the longest you
- * want to wait between test matches, and the job no-ops in a single read when the
+ * timer rather than a one-off seed. The job no-ops in a single read when the
  * DEV_RANK_BOTS flag is unset — which is where the gating lives, so turning the flag off
  * is enough and no redeploy is needed.
+ *
+ * Five minutes rather than one. A no-op still costs a function call, and at a minute
+ * that was ~43,000 a month spent doing nothing on a deployment where the flag is off —
+ * about four percent of the free tier. Sixteen bots is sixteen test matches before the
+ * pool is empty, so the shorter interval was never what made one available.
  */
 crons.interval(
   "refill dev rank bot queue",
-  { minutes: 1 },
+  { minutes: 5 },
   internal.devbots.refillQueue,
   {},
 );

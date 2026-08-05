@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { releaseDailyCount } from "./daily";
 
 /**
  * Content-import mutations, called by `scripts/import-tracks.ts`.
@@ -163,7 +164,12 @@ export const purgeTestUser = mutation({
       .withIndex("by_user_date", (q) => q.eq("userId", user._id))
       .take(50);
 
-    for (const run of runs) await ctx.db.delete(run._id);
+    // The tally the landing page reads is maintained, not counted, so a deletion has to
+    // be reported to it or "N played today" drifts up by one per suite run.
+    for (const run of runs) {
+      await releaseDailyCount(ctx, run.date);
+      await ctx.db.delete(run._id);
+    }
 
     const badges = await ctx.db
       .query("userBadges")

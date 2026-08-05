@@ -256,7 +256,6 @@ async function writeMatch(
       xpAfter: player.xpAfter,
       badgesEarned: [...player.badgesEarned],
       forfeited: false,
-      lastSeenAt: match.completedAt,
     });
   }
 }

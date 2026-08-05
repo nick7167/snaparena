@@ -125,7 +125,6 @@ export const start = mutation({
       totalPoints: 0,
       ratingBefore: user.elo,
       forfeited: false,
-      lastSeenAt: Date.now(),
     });
 
     // Solo, so no VS screen — but the countdown, reveal and standings beats still
@@ -299,6 +298,30 @@ async function recordRun(
     perRoundMs.push(solved ? Math.round(solved.clientElapsedMs) : -1);
   }
 
+  /**
+   * Keep the day's tally in step, so the landing page can read one document instead of
+   * counting a thousand. Past the `existing` guard above, so exactly one increment per
+   * new run.
+   *
+   * A missing row is seeded from what is already stored rather than starting at one —
+   * otherwise the day this counter first ran would have reported only the runs that
+   * happened after it. The `+ 1` is the row inserted just below.
+   */
+  const counter = await ctx.db
+    .query("dailyCounts")
+    .withIndex("by_date", (q) => q.eq("date", date))
+    .unique();
+
+  if (counter) {
+    await ctx.db.patch(counter._id, { players: counter.players + 1 });
+  } else {
+    const alreadyToday = await ctx.db
+      .query("dailyRuns")
+      .withIndex("by_date_points", (q) => q.eq("date", date))
+      .take(TODAY_COUNT_CEILING + 1);
+    await ctx.db.insert("dailyCounts", { date, players: alreadyToday.length + 1 });
+  }
+
   return await ctx.db.insert("dailyRuns", {
     userId: user._id,
     date,
@@ -309,6 +332,31 @@ async function recordRun(
     // Denormalised so the board can exclude guests without a lookup per run.
     isGuest: user.isGuest === true ? true : undefined,
   });
+}
+
+/**
+ * Keep the day's tally in step when a run is removed.
+ *
+ * The counter exists so the landing page reads one document instead of a thousand, and
+ * the price of that is that anything deleting a `dailyRuns` row has to say so — otherwise
+ * "N played today" drifts upward and never comes back down.
+ *
+ * Not hypothetical: the e2e suite purges its throwaway account on every run, and the run
+ * it purges is TODAY's. Left unadjusted, the landing page over-reported by one per suite
+ * execution, permanently.
+ *
+ * Floored at zero. A row deleted for a date whose counter was never created leaves
+ * nothing to adjust, and `todayStats` falls back to counting rows in that case anyway.
+ */
+export async function releaseDailyCount(ctx: MutationCtx, date: string) {
+  const counter = await ctx.db
+    .query("dailyCounts")
+    .withIndex("by_date", (q) => q.eq("date", date))
+    .unique();
+
+  if (!counter) return;
+
+  await ctx.db.patch(counter._id, { players: Math.max(0, counter.players - 1) });
 }
 
 /**
@@ -408,16 +456,34 @@ export const todayStats = query({
   args: {},
   handler: async (ctx) => {
     const date = todayKey();
-    const runs = await ctx.db
-      .query("dailyRuns")
-      .withIndex("by_date_points", (q) => q.eq("date", date))
-      .take(TODAY_COUNT_CEILING + 1);
+
+    /**
+     * One document, not a thousand.
+     *
+     * `recordRun` keeps this in step. The fallback below covers the window before the
+     * day's first run has been recorded — it reads the same range this used to, so the
+     * figure is identical either way, and it stops being reached the moment anybody
+     * finishes a run.
+     */
+    const counter = await ctx.db
+      .query("dailyCounts")
+      .withIndex("by_date", (q) => q.eq("date", date))
+      .unique();
+
+    const players =
+      counter?.players ??
+      (
+        await ctx.db
+          .query("dailyRuns")
+          .withIndex("by_date_points", (q) => q.eq("date", date))
+          .take(TODAY_COUNT_CEILING + 1)
+      ).length;
 
     return {
       date,
-      players: Math.min(runs.length, TODAY_COUNT_CEILING),
+      players: Math.min(players, TODAY_COUNT_CEILING),
       /** True when the real figure is higher than `players`. */
-      atLeast: runs.length > TODAY_COUNT_CEILING,
+      atLeast: players > TODAY_COUNT_CEILING,
     };
   },
 });
