@@ -101,12 +101,23 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
   const dev = useQuery(api.devbots.enabled, {});
   const resolveNow = useMutation(api.devbots.resolveNow);
   /**
-   * The second gate.
+   * The role gate, matching `DevPanel`.
    *
-   * The deployment flag licenses this bar to exist; the per-browser toggle decides whether
-   * it is actually on. It used to appear over every duel for as long as DEV_RANK_BOTS was
-   * set — which, on a shared deployment, meant it sat on top of the match screen whether or
-   * not anyone was currently using it. Flip it from the dev panel (Ctrl+.).
+   * The per-browser toggle below is NOT a permission — localStorage belongs to whoever is
+   * holding the browser, and the key name ships in the bundle. Without this check the only
+   * thing standing between a player and an instant rated win was knowing that key, which is
+   * obscurity rather than a gate. `devbots.resolveNow` enforces the same rule server-side;
+   * this is what stops the control being drawn in the first place.
+   */
+  const me = useQuery(api.roles.amIAdmin, {});
+  /**
+   * The third gate.
+   *
+   * The deployment flag licenses this bar to exist and the role says who may use it; the
+   * per-browser toggle decides whether it is actually on right now. It used to appear over
+   * every duel for as long as DEV_RANK_BOTS was set — which, on a shared deployment, meant
+   * it sat on top of the match screen whether or not anyone was currently using it. Flip it
+   * from the dev panel (Ctrl+.).
    */
   const tools = useSyncExternalStore(
     subscribeDevTools,
@@ -114,7 +125,7 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
     getDevToolsServerSnapshot,
   );
 
-  if (!dev?.enabled || !tools.resolveBar) return null;
+  if (!dev?.enabled || !me?.admin || !tools.resolveBar) return null;
 
   return (
     // Top right, clear of the guess combobox and the HP bars — this is a scaffold, and a

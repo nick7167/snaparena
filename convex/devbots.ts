@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireUser } from "./users";
+import { requireAdmin } from "./roles";
 import { finishMatch } from "./phases";
 import { seedBotProfiles } from "./botprofiles";
 import { PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
@@ -346,6 +346,15 @@ export async function pickDevOpponent(
  * Routed through the real `finishMatch`, which schedules `progression.finalizeMatch`, so
  * Elo, placements, per-category ratings, XP, level-ups, badges and the results screen all
  * run through the genuine path. The only thing skipped is the songs.
+ *
+ * ADMIN ONLY, and the deployment flag is not enough on its own.
+ *
+ * This project points local development and the live site at ONE Convex deployment, so
+ * `DEV_RANK_BOTS` being set means it is set in production too. With only that check, any
+ * signed-in player could call this mutation directly — the UI is irrelevant, a public
+ * mutation is reachable from a console — and hand themselves a rated win through the
+ * genuine rating path, while the opponent took a real loss. The role is the check that
+ * actually distinguishes an operator from a player; see convex/roles.ts.
  */
 export const resolveNow = mutation({
   args: {
@@ -357,7 +366,7 @@ export const resolveNow = mutation({
       throw new Error("DEV_RANK_BOTS is not enabled on this deployment");
     }
 
-    const user = await requireUser(ctx);
+    const user = await requireAdmin(ctx);
     const match = await ctx.db.get(args.matchId);
 
     if (!match) throw new Error("No such match");
