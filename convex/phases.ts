@@ -22,6 +22,9 @@ import {
   type RoundScore,
 } from "../src/engine/duel";
 import { matchHasBot } from "./bots";
+// Cyclic with draft.ts, which imports `enterPhase` from here. Safe and already the shape
+// this module has with bots.ts: every use is inside a handler, never at module scope.
+import { startDuelIfDraftDone } from "./draft";
 
 /**
  * Server-driven phase machine.
@@ -35,6 +38,14 @@ import { matchHasBot } from "./bots";
  * that fires late (or twice) against a match that has already moved on is a no-op
  * rather than a skipped round.
  */
+
+/**
+ * Padding on every watchdog re-arm.
+ *
+ * Must be greater than zero: a deadline landing exactly on `now` would otherwise schedule
+ * the next check for zero milliseconds' time, and the chain would spin.
+ */
+const WATCHDOG_SLACK_MS = 1_000;
 
 function durationFor(phase: MatchPhase): number | null {
   return phase in PHASE_DURATIONS_MS
@@ -69,10 +80,36 @@ export async function enterPhase(
   // of those phases is ever entered, so scheduling here cannot be missed.
   if (phase === "guessing" || phase === "veto" || phase === "vs_reveal") {
     const match = await ctx.db.get(matchId);
-    if (match && (await matchHasBot(ctx, match))) {
-      if (phase === "veto") {
+    const hasBot = match ? await matchHasBot(ctx, match) : false;
+
+    if (phase === "veto") {
+      if (hasBot) {
         await ctx.scheduler.runAfter(0, internal.bots.draftTurn, { matchId });
-      } else if (phase === "guessing") {
+      }
+      /**
+       * Armed for EVERY draft, bot or not — this is the phase's only server-side clock.
+       *
+       * The draft has no `phaseEndsAt` (see `durationFor`), so the generic `advance` timer
+       * below is never scheduled for it, and `nudge` refuses to act on a phase with no
+       * deadline. That left the exits entirely in the hands of the two clients: a ban, or
+       * the `expireVeto` poll running in an open browser tab. Two humans who both closed
+       * or backgrounded their tab mid-draft hung the match permanently — and because the
+       * draft runs under `status: "veto"`, the forfeit sweep would not touch it either,
+       * so neither player could even leave. Both were routed straight back into the dead
+       * match on every reload, forever.
+       *
+       * Not gated on the absence of a bot, deliberately. `bots.draftTurn` is itself a
+       * self-scheduling chain, and a broken chain is exactly what a watchdog is for.
+       * Both paths converge on the same idempotent `startDuelIfDraftDone`, so the overlap
+       * costs a handful of no-op calls and buys independence.
+       */
+      await ctx.scheduler.runAfter(
+        VETO_PHASE_MS + WATCHDOG_SLACK_MS,
+        internal.phases.draftWatchdog,
+        { matchId },
+      );
+    } else if (match && hasBot) {
+      if (phase === "guessing") {
         await ctx.scheduler.runAfter(0, internal.bots.playRound, {
           matchId,
           roundIndex: match.currentRound,
@@ -145,6 +182,66 @@ export const waitForReady = internalMutation({
   },
 });
 
+/**
+ * Closes a draft that nobody is driving.
+ *
+ * The draft is the one phase with no `phaseEndsAt`, because it waits on player input rather
+ * than a clock — which meant it had no server-side timer at all, and every way out of it
+ * ran through a live client. That is fine until both clients go away, at which point the
+ * match is stuck in `phase: "veto"` with no timer to move it, no `nudge` that will touch it
+ * (it bails on a missing deadline) and no forfeit sweep that applies (that requires
+ * `status: "active"`, and the draft is `"veto"`). Permanently. `ranked.activeMatch` then
+ * routes both players back into the corpse on every reload.
+ *
+ * Re-arms to the CURRENT deadline rather than polling, because `placeBan` pushes
+ * `vetoDeadline` out on every ban — so a single timer armed at phase entry would fire
+ * mid-draft, find the deadline moved, and leave nothing scheduled at all. Tracking the
+ * field instead costs about five scheduled calls for a whole draft rather than one every
+ * 600ms, and is automatically right whenever a ban moves it.
+ *
+ * Deliberately does NOT decide anything itself: expiry semantics — an idle player forfeits
+ * their remaining bans and the duel starts with what was placed — already live in
+ * `startDuelIfDraftDone`, which is also what the bot path and the client poll call. One
+ * decision, one place.
+ */
+export const draftWatchdog = internalMutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, args) => {
+    const match = await ctx.db.get(args.matchId);
+    if (!match) return;
+    // The draft is over, by any route. Nothing to watch, so the chain ends here.
+    if (match.phase !== "veto") return;
+    if (match.status === "complete" || match.status === "abandoned") return;
+
+    /**
+     * `leaveVsReveal` is the only way into this phase and always stamps a deadline, so
+     * this should be unreachable. Handled anyway: a draft with no deadline can never
+     * expire, and a watchdog that gives up on the one state it exists for is not a
+     * watchdog.
+     */
+    if (match.vetoDeadline === undefined) {
+      await ctx.db.patch(args.matchId, { vetoDeadline: Date.now() + VETO_PHASE_MS });
+      await ctx.scheduler.runAfter(
+        VETO_PHASE_MS + WATCHDOG_SLACK_MS,
+        internal.phases.draftWatchdog,
+        args,
+      );
+      return;
+    }
+
+    if (Date.now() >= match.vetoDeadline) {
+      await startDuelIfDraftDone(ctx, args.matchId);
+      return;
+    }
+
+    await ctx.scheduler.runAfter(
+      match.vetoDeadline - Date.now() + WATCHDOG_SLACK_MS,
+      internal.phases.draftWatchdog,
+      args,
+    );
+  },
+});
+
 function toPlayerId(
   match: Doc<"matches">,
   id: string | undefined,
@@ -190,9 +287,27 @@ export const advance = internalMutation({
         await startCountdown(ctx, match._id, match.currentRound);
         return;
 
-      case "countdown":
-        // Handled by waitForReady, which owns the transition into guessing.
+      case "countdown": {
+        /**
+         * Normally handled by `waitForReady`, which owns the transition into guessing.
+         * This is the backstop for that chain having died.
+         *
+         * The gate is what makes it safe. `waitForReady` polls itself every 300ms and
+         * gives up at READY_TIMEOUT_MS measured from the countdown's start, so for that
+         * whole window a healthy chain is still working and acting here would race it —
+         * starting the round before a slow client has buffered, which truncates the song
+         * and is the exact bug that barrier exists to prevent. Past the window, a healthy
+         * chain would provably have taken its own timeout branch and moved on, so still
+         * being in `countdown` is proof it is dead. Entering guessing is then precisely
+         * what that branch would have done.
+         *
+         * Cannot double-fire: the first rescue moves the phase, and every later call
+         * bails on the `match.phase !== args.expectedPhase` guard above.
+         */
+        if (Date.now() < (match.phaseEndsAt ?? 0) + READY_TIMEOUT_MS) return;
+        await enterPhase(ctx, match._id, "guessing");
         return;
+      }
 
       case "guessing":
         await enterPhase(ctx, match._id, "reveal");
@@ -311,6 +426,26 @@ export async function startCountdown(
     roundIndex,
     startedWaitingAt: Date.now(),
   });
+
+  /**
+   * An independent backstop for the readiness chain armed above.
+   *
+   * That chain is a single self-rescheduling thread, and until now it was the only thing
+   * that could ever leave the countdown — `advance` treated the phase as a no-op, so if
+   * the chain died the match froze on "GO" forever while both clients nudged a mutation
+   * that did nothing. `enterPhase` does schedule an `advance` at the countdown's own three
+   * seconds, but that one lands far too early to act (see the guard in `advance`).
+   *
+   * This lands after the readiness barrier's hard stop, so it only ever fires against a
+   * countdown that is genuinely stuck — and unlike a client nudge it does not need anyone
+   * to still be watching. On the healthy path it finds the match already in `guessing` and
+   * no-ops at the phase guard.
+   */
+  await ctx.scheduler.runAfter(
+    PHASE_DURATIONS_MS.countdown + READY_TIMEOUT_MS + WATCHDOG_SLACK_MS,
+    internal.phases.advance,
+    { matchId, expectedPhase: "countdown", expectedRound: roundIndex },
+  );
 }
 
 /** Per-player points and reaction time for the round that just closed. */

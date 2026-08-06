@@ -1168,6 +1168,10 @@ export function GuessingStage({
             )}
           </span>
           <span
+            // Named for the suite: whether this number is MOVING is the only way to tell a
+            // running round from the frozen one a blocked playback used to leave behind,
+            // and there is nothing else on the screen that distinguishes them.
+            data-testid="round-seconds"
             className={`font-display text-display-2 font-extrabold tabular-nums ${
               secondsLeft <= 5 ? "text-signal-text" : "text-paper"
             }`}
@@ -1187,10 +1191,22 @@ export function GuessingStage({
           </div>
         )}
 
-        {!audio.ready && (
+        {!audio.ready ? (
           <p className="text-body-sm text-muted text-center" role="status">
             Buffering audio…
           </p>
+        ) : (
+          /* Buffered but not playing. Brief on the normal path — a few frames between
+             `canplay` and `playing` — but it is also the honest label for a round that
+             loaded and then failed to start, which used to render as a live guess field
+             above a clock frozen at 30.0. */
+          !audio.started &&
+          !solved &&
+          !passed && (
+            <p className="text-body-sm text-muted text-center" role="status">
+              Waiting for audio…
+            </p>
+          )
         )}
       </div>
 
@@ -1233,9 +1249,16 @@ export function GuessingStage({
           </div>
         ) : (
           <>
+            {/* Gated on `started`, not just `ready`. The score clock is anchored to real
+                playback onset, so a round that never began reports an elapsed time of
+                zero and the server refuses every guess with `below-human-floor` — which
+                reaches the player as "Rejected by the timing check" and reads as their
+                mistake. Better to hold the field than to accept input that cannot score.
+                The pass control below stays live: someone who cannot hear the clip still
+                needs a way out of the round. */}
             <GuessInput
               onGuess={onGuess}
-              disabled={!audio.ready || audio.phase === "ended"}
+              disabled={!audio.ready || !audio.started || audio.phase === "ended"}
               lockedUntil={lockedUntil}
             />
             <button

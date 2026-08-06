@@ -489,7 +489,17 @@ export const surrender = mutation({
       // Rooms eliminate rather than concede; the daily has no opponent.
       return { surrendered: false as const };
     }
-    if (!canSurrender(match.currentRound, SURRENDER_FROM_ROUND)) {
+    /**
+     * The early-round gate is about protecting a RATING, so it does not apply to practice.
+     *
+     * It exists to stop someone bailing out of a rated duel the moment it turns against
+     * them. Practice moves no rating, so the gate bought nothing there — and it cost
+     * something real: leaving early neither resigned nor got swept (`sweepForfeits` only
+     * looks at ranked), so the match stayed `active` forever. `ranked.activeMatch` counts
+     * practice, so that corpse then re-routed the player straight back into it on every
+     * load, with no way out.
+     */
+    if (match.mode !== "practice" && !canSurrender(match.currentRound, SURRENDER_FROM_ROUND)) {
       return { surrendered: false as const };
     }
 

@@ -10,6 +10,37 @@
 
 let context: AudioContext | null = null;
 
+/**
+ * Observers of the context's state, so React can subscribe with `useSyncExternalStore`
+ * rather than polling. Same idiom as the mute store in sfx.ts.
+ */
+const stateListeners = new Set<() => void>();
+
+/** Not just "suspended": iOS parks a context in "interrupted", and closed cannot resume. */
+function isResumable(ctx: AudioContext): boolean {
+  return ctx.state !== "running" && ctx.state !== "closed";
+}
+
+/**
+ * Best-effort resume. Never throws and never rejects.
+ *
+ * Outside a user gesture this is expected to fail, and that is fine — the unlock
+ * listeners in unlock.ts will catch the next real tap. What is NOT fine is an uncaught
+ * rejection, which is what the old fire-and-forget `void context.resume()` produced on
+ * Safari every time the autoplay policy said no.
+ */
+export function resumeAudioContext(): Promise<boolean> {
+  const ctx = context;
+  if (!ctx) return Promise.resolve(false);
+  if (ctx.state === "running") return Promise.resolve(true);
+  if (!isResumable(ctx)) return Promise.resolve(false);
+
+  return ctx
+    .resume()
+    .then(() => ctx.state === "running")
+    .catch(() => false);
+}
+
 export function getAudioContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
 
@@ -19,13 +50,43 @@ export function getAudioContext(): AudioContext | null {
     }).webkitAudioContext;
     if (!Ctor) return null;
     context = new Ctor();
+
+    /**
+     * The state moves without us asking. iOS parks the context in "interrupted" after a
+     * phone call, Siri, or an audio-route change, and nothing here would ever notice —
+     * the old code only ever tested for "suspended" on the way past, so an interrupted
+     * context stayed dead for the rest of the session and every sound after it was
+     * silent with no error anywhere.
+     */
+    context.addEventListener("statechange", () => {
+      for (const listener of stateListeners) listener();
+    });
   }
 
-  // Autoplay policy suspends the context until a gesture; every entry point calls
-  // through here, so resuming in one place covers them all.
-  if (context.state === "suspended") void context.resume();
+  /**
+   * Autoplay policy suspends the context until a gesture; every entry point calls through
+   * here, so attempting a resume in one place covers them all. It only succeeds when the
+   * current call stack carries a user activation — see unlock.ts, which is what makes
+   * that reliably true rather than accidental.
+   */
+  if (isResumable(context)) void resumeAudioContext();
 
   return context;
+}
+
+/** Current state, or "none" before anything has constructed the context. */
+export function getAudioState(): AudioContextState | "none" {
+  return context?.state ?? "none";
+}
+
+/** Server render has no AudioContext and must not claim one. */
+export function getAudioServerState(): AudioContextState | "none" {
+  return "none";
+}
+
+export function subscribeAudioState(onChange: () => void): () => void {
+  stateListeners.add(onChange);
+  return () => stateListeners.delete(onChange);
 }
 
 /**

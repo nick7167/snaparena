@@ -102,11 +102,17 @@ export function LeaveMatch({
      * Resign properly when the server will take it, so the opponent is released
      * immediately rather than waiting out the presence grace period.
      *
-     * Before `SURRENDER_FROM_ROUND` the server refuses — the gate is deliberate and not
-     * ours to loosen — so leaving early just stops the heartbeat and the forfeit resolves
-     * on its own. Either way it is a loss, which is what the confirm said.
+     * Ranked keeps the early-round gate: before `SURRENDER_FROM_ROUND` the server refuses,
+     * that is deliberate, and leaving early instead stops the heartbeat so the forfeit
+     * sweep resolves it. Either way it is a loss, which is what the confirm said.
+     *
+     * Practice does NOT, and must not, because nothing would ever resolve it: the sweep
+     * only looks at ranked matches, so an unresigned practice match stays `active` forever
+     * and `ranked.activeMatch` keeps routing the player back into it. Practice moves no
+     * rating, so resigning immediately costs nothing and is the only thing that ends it.
      */
-    if (rated && matchId && (currentRound ?? 0) >= SURRENDER_FROM_ROUND && live) {
+    const canResign = mode === "practice" || (currentRound ?? 0) >= SURRENDER_FROM_ROUND;
+    if (rated && matchId && canResign && live) {
       try {
         await surrender({ matchId });
       } catch {

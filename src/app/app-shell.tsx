@@ -19,6 +19,7 @@ import { Meter } from "@/ui/Surface";
 import { useImmersiveState } from "./immersive";
 import { QueueProvider, useQueue } from "./queue-driver";
 import { recordVisit } from "./nav-history";
+import { installAudioUnlock } from "@/audio/unlock";
 import { clearGuestToken, getGuestToken } from "./guest";
 import {
   getMuteServerSnapshot,
@@ -120,6 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <QueueProvider>
       <div className="flex min-h-full flex-col lg:flex-row">
         <NavRecorder />
+        <AudioUnlock />
         {/*
          * Unconditional, unlike the two mobile bars below.
          *
@@ -164,6 +166,18 @@ function NavRecorder() {
     recordVisit(pathname);
   }, [pathname]);
 
+  return null;
+}
+
+/**
+ * Turns every tap in the app into an audio unlock.
+ *
+ * Here for the same reason NavRecorder is: the shell is the only thing on every route, and
+ * the unlock has to be listening before the first gesture — which on the ranked path is
+ * the queue button, long before any audio code has mounted. Renders nothing.
+ */
+function AudioUnlock() {
+  useEffect(() => installAudioUnlock(), []);
   return null;
 }
 

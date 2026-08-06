@@ -1,9 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
 import { revealStageAt } from "@/engine/scoring";
 import { createAnalyser, type Analyser } from "@/audio/visualizer";
+import {
+  getAudioContext,
+  getAudioServerState,
+  getAudioState,
+  resumeAudioContext,
+  subscribeAudioState,
+} from "@/audio/context";
+import { ensureAudioRunning } from "@/audio/unlock";
+import { useDocumentVisible } from "./usePageLifecycle";
 import { track } from "@/analytics";
 
 /**
@@ -31,10 +40,35 @@ export type RoundPhase = "idle" | "loading" | "ready" | "playing" | "freeplay" |
 /** How long to wait for a clip before declaring it unplayable. */
 const LOAD_TIMEOUT_MS = 8_000;
 
+/**
+ * How much of the gap between attempting playback and hearing it is forgiven.
+ *
+ * This is the anti-cheat floor on the score clock, and it closes a hole that the old
+ * broken `retry()` was only accidentally covering. `validateClientClock` bounds a
+ * reported time from ABOVE against a server window that only grows, and from below only
+ * by an absolute 350ms floor — so a player who stalls playback to t=20s and then guesses
+ * at t=21s reports 1000ms and scores a snap on a song they have been hearing for a while.
+ *
+ * Anchoring no later than the first attempt plus this grace makes a stall cost what it
+ * actually cost. Generous enough that honest decode and buffer latency is still excluded
+ * rather than charged to the player: on the normal path `playing` fires tens of
+ * milliseconds after the attempt and the `min` below picks the real timestamp, leaving
+ * the fast path byte-identical to what it always was.
+ */
+const STARTUP_GRACE_MS = 1_500;
+
 export interface UseRoundAudioResult {
   phase: RoundPhase;
   /** True once the clip is buffered — the barrier the round start waits on. */
   ready: boolean;
+  /**
+   * True once playback has genuinely begun for this round.
+   *
+   * Distinct from `ready`, which only means the bytes arrived. A round can be `ready` and
+   * never have started — that is exactly the state a blocked `play()` leaves behind — and
+   * anything that depends on the score clock running has to test THIS rather than `ready`.
+   */
+  started: boolean;
   /** Milliseconds since playback actually began. Feed this to the server. */
   elapsedMs: () => number;
   /** Index into REVEAL_BEATS, for UI. */
@@ -77,6 +111,32 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
   const analyserRef = useRef<Analyser | null>(null);
 
   /**
+   * When playback was FIRST attempted this round, as opposed to when it began.
+   *
+   * Kept apart from `startedAtRef` because the two answer different questions and
+   * collapsing them is what made the score clock forgeable. `startedAtRef` is the anchor
+   * the player is scored against and must reflect real playback onset; this one is the
+   * ceiling on how late that anchor is allowed to be. Written once per round, on the
+   * first `start()`, and never moved by a retry — a second attempt does not buy back the
+   * time the first one cost.
+   */
+  const attemptedAtRef = useRef<number | null>(null);
+
+  /** Mirrors `onPlaying` so the beat loop can be rebound without re-stacking listeners. */
+  const onPlayingRef = useRef<(() => void) | null>(null);
+
+  /**
+   * The track `attemptedAtRef` currently belongs to.
+   *
+   * The attempt anchor has to survive `previewUrl` going transiently null, which it does
+   * whenever the match subscription blips — a reconnect, or a backend deploy. Tying the
+   * reset to "a genuinely different track arrived" rather than to the load effect running
+   * keeps a blip from clearing the anchor and quietly refunding a stall the player already
+   * spent, which is the exact thing STARTUP_GRACE_MS exists to charge for.
+   */
+  const anchoredUrlRef = useRef<string | null>(null);
+
+  /**
    * Buffering state is tracked SEPARATELY from the playback phase.
    *
    * These used to be one value, and it caused total silence: the round now opens
@@ -93,6 +153,15 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
   const [loadedUrl, setLoadedUrl] = useState(previewUrl);
   const [analyser, setAnalyser] = useState<Analyser | null>(null);
 
+  /**
+   * Render-visible mirror of `startedAtRef !== null`.
+   *
+   * A ref cannot be a dependency, and the round-start effect in useRoundLifecycle has to
+   * be able to tell "this round is already running" from "this round was attempted and
+   * failed". Reading a ref there would leave it re-running against a stale value.
+   */
+  const [started, setStarted] = useState(false);
+
   // Reset for a new track during render rather than inside an effect. Calling
   // setState synchronously in an effect cascades an extra render; adjusting state
   // during render is React's sanctioned pattern for reacting to a changed prop.
@@ -103,12 +172,20 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     setDisplayMs(0);
     setRevealStage(0);
     setError(null);
+    setStarted(false);
   }
 
   // --- load / preload -------------------------------------------------------
   useEffect(() => {
     startedAtRef.current = null;
+    onPlayingRef.current = null;
     stageRef.current = 0;
+
+    // Only a genuinely different track clears the attempt anchor — see anchoredUrlRef.
+    if (previewUrl !== null && previewUrl !== anchoredUrlRef.current) {
+      attemptedAtRef.current = null;
+      anchoredUrlRef.current = previewUrl;
+    }
 
     if (!previewUrl) return;
 
@@ -186,6 +263,35 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     track("audio_error", { reason: error });
   }, [error]);
 
+  const audioState = useSyncExternalStore(
+    subscribeAudioState,
+    getAudioState,
+    getAudioServerState,
+  );
+
+  const visible = useDocumentVisible();
+
+  /**
+   * Attaches the visualiser late, if the shared context only wakes up mid-round.
+   *
+   * `start()` refuses to route the element through a context that is not running, because
+   * doing so is irreversible and silent (see createAnalyser). That is the right call, but
+   * it means a player whose first qualifying tap lands after the round opened would keep a
+   * dead waveform for the rest of the match. Watching the context state gives it back the
+   * moment the context is actually usable, without ever risking the audio itself.
+   */
+  useEffect(() => {
+    if (audioState !== "running") return;
+    if (analyserRef.current) return;
+    const element = audioRef.current;
+    if (!element) return;
+
+    const next = createAnalyser(element);
+    if (!next) return;
+    analyserRef.current = next;
+    setAnalyser(next);
+  }, [audioState]);
+
   const elapsedMs = useCallback(() => {
     if (startedAtRef.current === null) return 0;
     return performance.now() - startedAtRef.current;
@@ -261,62 +367,81 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     });
   }, []);
 
-  const start = useCallback(async () => {
+  /**
+   * The reveal-beat loop, which also drives the on-screen clock.
+   *
+   * Hoisted out of `start()` and given a stable identity so the retry path and the
+   * page-lifecycle handler can re-arm it. As a closure built inside `start()` it was
+   * reachable from nowhere else, which is part of why a round that failed to begin could
+   * never be recovered without a reload.
+   */
+  const loop = useCallback(function loop() {
+    const element = audioRef.current;
+    if (!element || startedAtRef.current === null) return;
+
+    const elapsed = performance.now() - startedAtRef.current;
+    setDisplayMs(elapsed);
+
+    if (elapsed >= ROUND_DURATION_MS) {
+      element.pause();
+      setPhase("ended");
+      rafRef.current = null;
+      return;
+    }
+
+    const stage = revealStageAt(elapsed);
+    const beat = REVEAL_BEATS[stage];
+
+    if (stage !== stageRef.current) {
+      // A new beat: replay from the top with more of the song unlocked.
+      stageRef.current = stage;
+      setRevealStage(stage);
+      element.currentTime = 0;
+      void element.play().catch(() => setError("playback-blocked"));
+    } else if (!element.paused && element.currentTime * 1000 >= beat.playToMs) {
+      // Reached the end of what this beat is allowed to reveal.
+      element.pause();
+    }
+
+    rafRef.current = requestAnimationFrame(loop);
+  }, []);
+
+  /**
+   * Attempts playback. Idempotent, and safe to call again after a failure.
+   *
+   * Split out of `start()` because recovering a blocked round needs exactly this and
+   * nothing else — no reload, no clock reset, no lifecycle round trip. `audio.play()` is
+   * reached synchronously so that a caller inside a click handler still carries the user
+   * activation the autoplay policy is asking for; anything awaited first would spend it.
+   */
+  const beginPlayback = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
-    // Guard against a double start — the round would otherwise restart its clock.
-    if (startedAtRef.current !== null) return;
 
-    // Attach the analyser on first play, not at load: an AudioContext created
-    // before a user gesture starts suspended, and by here a gesture has happened.
-    if (!analyserRef.current) {
-      analyserRef.current = createAnalyser(audio);
-      setAnalyser(analyserRef.current);
+    // A previous attempt may have left its listener attached. Two live listeners arm the
+    // beat loop twice, and the clock then runs at double speed.
+    if (onPlayingRef.current) {
+      audio.removeEventListener("playing", onPlayingRef.current);
     }
 
-    // Declared as a hoisted function so the animation loop can schedule itself
-    // without the callback having to close over its own binding.
-    function loop() {
-      const element = audioRef.current;
-      if (!element || startedAtRef.current === null) return;
-
-      const elapsed = performance.now() - startedAtRef.current;
-      setDisplayMs(elapsed);
-
-      if (elapsed >= ROUND_DURATION_MS) {
-        element.pause();
-        setPhase("ended");
-        rafRef.current = null;
-        return;
-      }
-
-      const stage = revealStageAt(elapsed);
-      const beat = REVEAL_BEATS[stage];
-
-      if (stage !== stageRef.current) {
-        // A new beat: replay from the top with more of the song unlocked.
-        stageRef.current = stage;
-        setRevealStage(stage);
-        element.currentTime = 0;
-        void element.play().catch(() => setError("playback-blocked"));
-      } else if (!element.paused && element.currentTime * 1000 >= beat.playToMs) {
-        // Reached the end of what this beat is allowed to reveal.
-        element.pause();
-      }
-
-      rafRef.current = requestAnimationFrame(loop);
-    }
-
-    // Anchor the clock to real playback onset, so decode and buffer latency are
-    // excluded rather than charged to the player.
     const onPlaying = () => {
-      if (startedAtRef.current === null) {
-        startedAtRef.current = performance.now();
-        setPhase("playing");
-        rafRef.current = requestAnimationFrame(loop);
-      }
+      if (startedAtRef.current !== null) return;
+      /**
+       * Anchored to real playback onset, but never later than the first attempt plus the
+       * startup grace. Honest decode and buffer latency is still excluded rather than
+       * charged to the player — on the normal path `playing` lands within a few frames
+       * and the `min` picks the real timestamp. A long stall is not excluded, which is
+       * what stops a delayed anchor from buying a fresh scoring window.
+       */
+      const ceiling = (attemptedAtRef.current ?? performance.now()) + STARTUP_GRACE_MS;
+      startedAtRef.current = Math.min(performance.now(), ceiling);
+      onPlayingRef.current = null;
+      setStarted(true);
+      setPhase("playing");
+      rafRef.current = requestAnimationFrame(loop);
     };
 
+    onPlayingRef.current = onPlaying;
     audio.addEventListener("playing", onPlaying, { once: true });
 
     try {
@@ -324,9 +449,85 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
       await audio.play();
     } catch {
       audio.removeEventListener("playing", onPlaying);
+      onPlayingRef.current = null;
       setError("playback-blocked");
     }
-  }, []);
+  }, [loop]);
+
+  /**
+   * Keeps a backgrounded tab from leaking the whole song, and puts the round back
+   * together on return.
+   *
+   * The reveal beats are enforced from inside the animation loop — it is the loop that
+   * calls `pause()` once the clip reaches the end of what the current beat has unlocked.
+   * `requestAnimationFrame` does not run in a hidden tab, so that pause never happened: a
+   * player who switched apps mid-round heard all thirty seconds of the track while their
+   * opponent heard one. Backgrounding was, accidentally, the strongest move in the game.
+   *
+   * The clock is deliberately left alone. The player was away and the time is spent —
+   * the same UI-only posture the rest of this hook takes. Voiding it here would make
+   * hiding the tab worth something again.
+   */
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const element = audioRef.current;
+    if (!element) return;
+
+    if (!visible) {
+      element.pause();
+      return;
+    }
+
+    // iOS parks the context on the way out; ask for it back before anything plays.
+    void resumeAudioContext();
+
+    /**
+     * Forces the next tick to treat the current beat as new, so it replays from 0:00 with
+     * exactly the right amount unlocked. Reuses the loop's own beat-change branch rather
+     * than repeating the playback rules here, so the two cannot drift.
+     */
+    stageRef.current = -1;
+
+    // A pending frame can be dropped rather than merely deferred across a bfcache
+    // restore, so the loop may need re-arming rather than simply resuming.
+    if (rafRef.current === null && startedAtRef.current !== null) {
+      rafRef.current = requestAnimationFrame(loop);
+    }
+  }, [visible, phase, loop]);
+
+  const start = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    // Guard against a double start — the round would otherwise restart its clock. Note
+    // this tests the CLOCK, not whether an attempt has been made: a round that was
+    // attempted and blocked has to stay startable, or the failure is terminal.
+    if (startedAtRef.current !== null) return;
+
+    // Stamped once per round. A retry deliberately does not move it, so the time a
+    // failure cost stays spent — see STARTUP_GRACE_MS.
+    if (attemptedAtRef.current === null) attemptedAtRef.current = performance.now();
+
+    // Attach the analyser on first play, not at load: an AudioContext created before a
+    // user gesture starts suspended. Guarded on the context actually running, because
+    // routing the element through a suspended graph is silent with no error anywhere.
+    if (!analyserRef.current) {
+      const ctx = getAudioContext();
+      if (ctx?.state === "running") {
+        analyserRef.current = createAnalyser(audio);
+        setAnalyser(analyserRef.current);
+      } else {
+        /**
+         * The round plays on without a visualiser, which is the correct trade — but this
+         * is worth counting. It means the unlock in unlock.ts did not land before the
+         * round opened, and if it fires often the gesture coverage needs widening rather
+         * than the degradation being accepted.
+         */
+        track("audio_context_suspended", { state: ctx?.state ?? "none" });
+      }
+    }
+
+    await beginPlayback();
+  }, [beginPlayback]);
 
   /**
    * Re-attempt a clip that failed.
@@ -337,24 +538,43 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
    * which is a scoring exploit rather than a courtesy. A genuine failure costs the time it
    * cost — this only buys back the ability to play at all.
    *
-   * Covers both shapes of failure. A blocked playback needs nothing but another `play()`,
-   * and because this runs inside the retry button's click handler it carries the user
-   * gesture the autoplay policy is asking for — which is the one thing the automatic path
-   * could never provide. A failed load needs the element re-fetched; the `canplay`
-   * listeners from the load effect are still attached, so a successful reload resolves
-   * through them as normal.
+   * Covers both shapes of failure, and they need opposite treatment — which is the bug
+   * this used to have. The old version guarded the replay on `startedAtRef !== null`, a
+   * condition a blocked playback can never satisfy, because that ref is only written once
+   * playback has actually begun. So the one failure the button existed for was the one it
+   * silently did nothing about: it reloaded the clip, `canplay` cleared the error, the
+   * error card unmounted, and the round sat at a frozen 30.0 with no way back.
+   *
+   * A blocked playback needs nothing but another `play()`, called synchronously here so it
+   * carries the click's user activation — the one thing the automatic path could never
+   * provide. Reloading it would be actively harmful: the buffer is already good, and
+   * re-fetching spends round seconds solving a problem the player does not have.
+   *
+   * A failed load does need the element re-fetched. The `canplay` listeners from the load
+   * effect are still attached, so a successful reload resolves through them as normal and
+   * the round-start effect picks it up from there.
    */
   const retry = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
+    const wasBlocked = error === "playback-blocked";
     setError(null);
+
+    if (wasBlocked) {
+      /**
+       * Fired first and deliberately not awaited. This is a real click, so it is the best
+       * chance the app gets to wake a suspended context — but playback must not wait on
+       * it, because the element does not need the context unless it has been routed
+       * through one, and awaiting here would spend the activation `play()` needs.
+       */
+      void ensureAudioRunning();
+      void beginPlayback();
+      return;
+    }
+
     setLoaded(false);
     audio.load();
-
-    if (startedAtRef.current !== null) {
-      void audio.play().catch(() => setError("playback-blocked"));
-    }
 
     /**
      * The load effect's timeout has already fired and will not re-arm, so without this a
@@ -367,11 +587,12 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     setTimeout(() => {
       if (audioRef.current === audio && audio.readyState < 3) setError("audio-timeout");
     }, LOAD_TIMEOUT_MS);
-  }, []);
+  }, [error, beginPlayback]);
 
   return {
     phase,
     ready: loaded && error === null,
+    started,
     elapsedMs,
     revealStage,
     displayMs,

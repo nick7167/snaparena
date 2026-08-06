@@ -52,7 +52,18 @@ export type EventName =
    * on the assumption that genuine failures are rare. If this fires often, that assumption
    * was wrong and the server-side round-voiding is worth building after all.
    */
-  | "audio_error";
+  | "audio_error"
+  /**
+   * A round opened while the shared AudioContext was not running. Carries `state`
+   * ("suspended", "interrupted", "closed" or "none").
+   *
+   * The round still plays — it just loses the visualiser, because routing an element
+   * through a dead context is irreversible and silences it outright. This counts how
+   * often the gesture unlock fails to land before the first round, which is the number
+   * that says whether the tap coverage in unlock.ts is wide enough or whether the flow
+   * needs an explicit "enable sound" step after all.
+   */
+  | "audio_context_suspended";
 
 /** Properties allowed on an event. Deliberately narrow — no objects, no PII. */
 export type EventProps = Record<string, string | number | boolean | null | undefined>;

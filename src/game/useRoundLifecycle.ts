@@ -5,6 +5,7 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { useRoundAudio } from "./useRoundAudio";
+import { useOnForeground } from "./usePageLifecycle";
 
 /**
  * The client half of the round protocol, shared by the duel and the daily.
@@ -44,7 +45,7 @@ export function useRoundLifecycle({
   const startedRoundRef = useRef<string | null>(null);
   const reportedRoundRef = useRef<string | null>(null);
 
-  const { ready: audioReady, start: startAudio, stop: stopAudio } = audio;
+  const { ready: audioReady, started: audioStarted, start: startAudio, stop: stopAudio } = audio;
 
   // Held in a ref so a caller passing an inline arrow does not re-arm the effect on
   // every render and restart the clip mid-round.
@@ -67,15 +68,28 @@ export function useRoundLifecycle({
     void reportReady({ matchId, roundIndex: currentRound, guestToken });
   }, [audioReady, currentRound, matchId, reportReady, guestToken]);
 
+  /**
+   * Starts the round's audio once the server has opened the round and the clip is buffered.
+   *
+   * The guard exists to stop a RUNNING round being restarted — which would reset its
+   * clock — and not to make a single failed attempt terminal. It used to do both, because
+   * it was set before the attempt and never cleared: one blocked `play()` and the round
+   * could never start again, so the clock sat at a frozen 30.0 with the guess field live
+   * and every submission rejected by the timing check. Re-entry stays open for exactly as
+   * long as playback has never actually begun.
+   */
   useEffect(() => {
     if (!isGuessing || !audioReady) return;
     const key = `${matchId}:${currentRound}`;
-    if (startedRoundRef.current === key) return;
+    const isNewRound = startedRoundRef.current !== key;
+    if (!isNewRound && audioStarted) return;
 
     startedRoundRef.current = key;
-    onRoundStartRef.current?.();
+    // Only on a genuinely new round. This clears the feedback line, and re-firing it on a
+    // recovery would wipe the message explaining why the last guess was refused.
+    if (isNewRound) onRoundStartRef.current?.();
     void startAudio();
-  }, [isGuessing, audioReady, startAudio, matchId, currentRound]);
+  }, [isGuessing, audioReady, audioStarted, startAudio, matchId, currentRound]);
 
   useEffect(() => {
     if (!isGuessing) stopAudio();
@@ -108,6 +122,19 @@ export function useRoundLifecycle({
     }, 2_000);
     return () => clearInterval(id);
   }, [phaseEndsAt, nudge, matchId]);
+
+  /**
+   * The same recovery, without waiting for the next tick of an interval that was frozen.
+   *
+   * A hidden tab stops timers entirely, so a player coming back to an overdue phase would
+   * otherwise sit through up to another two seconds of a match that has already stalled —
+   * on top of however long they were away. Guarded identically to the interval, so this
+   * still cannot be used to hurry an opponent along.
+   */
+  useOnForeground(() => {
+    if (!phaseEndsAt) return;
+    if (Date.now() > phaseEndsAt + 1_500) void nudge({ matchId });
+  });
 }
 
 /** Shared rejection copy, so the duel and the daily explain a refusal identically. */

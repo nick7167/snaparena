@@ -73,7 +73,7 @@ export default defineConfig({
       // rather than signing in per spec.
       name: "authed",
       // DEV ONLY — drop `dev-rank-bots` from this list with convex/devbots.ts.
-      testMatch: /(shell|new-player|sweep|ladder|dev-rank-bots)\.spec\.ts/,
+      testMatch: /(shell|new-player|sweep|ladder|dev-rank-bots|audio-recovery)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

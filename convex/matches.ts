@@ -487,8 +487,7 @@ export async function applyGuess(
   /**
    * The round is objectively over, whatever the client says its clock reads.
    *
-   * Phase transitions are driven by client nudges, so a round nobody is watching never
-   * advances — and `validateClientClock` cannot catch what that enables. It bounds a claim
+   * `validateClientClock` cannot catch a stale round on its own. It bounds a claim
    * against `now - roundStartedAt`, which only ever GROWS, so it rejects claiming to be
    * faster than the server's window and happily accepts a fresh clock reading 2s against a
    * window an hour wide. Hear a song, close the tab, come back later, score a SNAP on a

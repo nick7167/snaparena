@@ -34,6 +34,23 @@ export function createAnalyser(element: HTMLMediaElement): Analyser | null {
   const ctx = getAudioContext();
   if (!ctx) return null;
 
+  /**
+   * Refuse to route the element through a context that is not running, because routing
+   * it is IRREVERSIBLE.
+   *
+   * `getMediaSource` caches one source node per element and a second
+   * `createMediaElementSource` on the same element throws, so there is no undo — and once
+   * an element's output has been replaced by a graph connection, its audibility depends
+   * entirely on that graph being live. A suspended or interrupted context therefore turns
+   * a perfectly good clip completely silent while `play()` resolves, the `playing` event
+   * fires and the score clock runs: thirty seconds of confident-looking UI with no sound
+   * and no error of any kind. That was the "one player can't hear it" bug.
+   *
+   * Callers already have to handle a null analyser (see the docblock above), and a
+   * non-reactive waveform is a far smaller loss than an inaudible round.
+   */
+  if (ctx.state !== "running") return null;
+
   const source = getMediaSource(element);
   if (!source) return null;
 

@@ -124,6 +124,32 @@ export async function hideDevOverlay(page: Page): Promise<void> {
 }
 
 /**
+ * Turns on the win / lose / random bar over a live duel.
+ *
+ * The bar is gated twice: `DEV_RANK_BOTS` on the deployment licenses it to exist, and a
+ * per-browser toggle decides whether it renders. Only the first is set up for this suite —
+ * the second lives in localStorage and is off by default, deliberately, so a dev tool
+ * cannot wander into a screenshot. Nothing was switching it on, which is why any spec
+ * reaching for "Random" waited out its timeout against a bar that was never going to
+ * appear.
+ *
+ * Must be called BEFORE the first navigation: `addInitScript` applies to subsequent loads,
+ * and the toggle is read once when the component mounts.
+ */
+export async function enableResolveBar(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem(
+        "songrace:dev-tools",
+        JSON.stringify({ resolveBar: true, layoutOutlines: false }),
+      );
+    } catch {
+      // A browser without storage just does without the fast path.
+    }
+  });
+}
+
+/**
  * Fails fast if the account was never taken through the welcome flow.
  *
  * `WelcomeGate` redirects to /welcome rather than rendering an overlay, which makes this a

@@ -13,6 +13,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { VETO_PHASE_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { Avatar, BotBadge, PhaseTimer, nameFor } from "./ui";
+import { useOnForeground } from "./usePageLifecycle";
 import { Button } from "@/ui/Button";
 import { RoundRunner } from "./RoundRunner";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -54,6 +55,19 @@ export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeav
     const id = setInterval(() => void heartbeat({ matchId }), 5000);
     return () => clearInterval(id);
   }, [live, matchId, heartbeat]);
+
+  /**
+   * Report back the instant the tab is visible again, rather than up to five seconds later.
+   *
+   * The interval above is frozen while the page is hidden, so the entire twenty-second
+   * reconnect grace can be spent before the first beat lands — which is how glancing at a
+   * notification turned into losing a rated match. This cannot forfeit the returning
+   * player: `heartbeat` writes presence before it sweeps, so the first call back refreshes
+   * this player's own timestamp before anything looks at it.
+   */
+  useOnForeground(() => {
+    if (live) void heartbeat({ matchId });
+  });
 
   if (!match) return <p className="text-body text-muted px-4">Loading…</p>;
 

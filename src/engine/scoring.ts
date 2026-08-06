@@ -105,6 +105,14 @@ export type ClockValidation =
  * decide who wins — otherwise a 200ms player structurally cannot beat a 40ms
  * player, and Elo partly measures geography. The trade is that the value is
  * self-reported, so it is bounded from both directions here.
+ *
+ * The lower bound is an ABSOLUTE floor, not one relative to the round's start, and that is
+ * deliberate. `serverObservedElapsedMs` is measured from the moment `enterPhase("guessing")`
+ * committed — before the subscription reached the client, before the clip decoded — so on a
+ * slow mobile connection an honest first guess legitimately sits seconds behind it. A
+ * relative lower bound here would reject real players. What it therefore cannot catch is a
+ * player who delays the START of their own clock; that is bounded on the client instead, by
+ * STARTUP_GRACE_MS in useRoundAudio, where the delay is actually observable.
  */
 export function validateClientClock(input: ClockValidationInput): ClockValidation {
   const { clientElapsedMs, serverObservedElapsedMs, previousClientElapsedMs } = input;
@@ -136,10 +144,14 @@ export function validateClientClock(input: ClockValidationInput): ClockValidatio
  * catches a client claiming to be faster than physically possible, and waves through a
  * client claiming a fresh two seconds against a window an hour wide.
  *
- * That gap was reachable: phase transitions are driven by client nudges, so a round nobody
- * is watching never advances. Hear the song, close the tab, come back later, and the round
- * is still open with the audio clock starting again from zero — full marks for a track you
- * already knew. Measuring from the server's clock closes it for every way of leaving.
+ * That gap was reachable whenever a round outlived the transition meant to close it. Hear
+ * the song, close the tab, come back later, and the round is still open with the audio
+ * clock starting again from zero — full marks for a track you already knew. Measuring from
+ * the server's clock closes it for every way of leaving.
+ *
+ * Note this bounds only the round as a whole. A late FIRST anchor inside a still-live round
+ * is a different move through the same door, and is bounded on the client by
+ * STARTUP_GRACE_MS in useRoundAudio — see the note on the lower bound below.
  */
 export function roundHasExpired(serverObservedElapsedMs: number): boolean {
   return serverObservedElapsedMs > ROUND_DURATION_MS + CLIENT_CLOCK_TOLERANCE_MS;

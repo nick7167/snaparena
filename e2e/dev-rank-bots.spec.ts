@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { SCREENSHOTS, assertOnboarded } from "./helpers";
+import { SCREENSHOTS, assertOnboarded, enableResolveBar } from "./helpers";
 
 /**
  * DEV ONLY — delete with convex/devbots.ts.
@@ -25,6 +25,7 @@ test.describe("ranked against a dev rank bot", () => {
      */
     test.setTimeout(180_000);
 
+    await enableResolveBar(page);
     await page.goto("/ranked");
     await assertOnboarded(page);
 
@@ -204,6 +205,7 @@ test.describe("ranked against a dev rank bot", () => {
     test.setTimeout(180_000);
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await enableResolveBar(page);
     await page.goto("/ranked");
     await assertOnboarded(page);
 
