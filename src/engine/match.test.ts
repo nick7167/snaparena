@@ -1,6 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { checkGuess, damerauLevenshtein, distanceThresholdFor } from "./match";
+import {
+  checkGuess as checkGuessWith,
+  damerauLevenshtein,
+  distanceThresholdFor as distanceThresholdForWith,
+} from "./match";
+import { mergeConfig } from "./config-merge";
 import { normalizeTitle } from "./normalize";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const distanceThresholdFor = (length: number) => distanceThresholdForWith(length, config);
+const checkGuess = (
+  rawGuess: string,
+  target: Parameters<typeof checkGuessWith>[1],
+) => checkGuessWith(rawGuess, target, config);
+
 
 const target = (title: string, ...aliases: string[]) => ({
   titleNormalized: normalizeTitle(title),

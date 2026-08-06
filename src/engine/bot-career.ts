@@ -25,15 +25,7 @@
 
 import { evaluateBadges } from "./badges";
 import { chooseBotBan, planBotRound, type BotPersona, type Rng } from "./bots";
-import {
-  DUEL_STARTING_HP,
-  ELO_FLOOR,
-  MAX_DUEL_ROUNDS,
-  ROUND_DURATION_MS,
-  STARTING_ELO,
-  VETO_BANS_PER_PLAYER,
-  VETO_POOL_SIZE,
-} from "./config";
+import type { ResolvedConfig } from "./config-merge";
 import {
   damageMultiplier,
   duelDamage,
@@ -268,6 +260,15 @@ export function simulateRoster(params: {
   tracks: readonly TrackSample[];
   now: number;
   tailLength?: number;
+  /**
+   * The rules these fictional careers were "played" under.
+   *
+   * Threaded rather than imported for the same reason as everywhere else in the engine,
+   * though the stakes are lower here: this is a synthetic past, so the only thing it
+   * affects is whether a seeded bot's record reads consistently with how the game
+   * currently plays.
+   */
+  config: ResolvedConfig;
 }): Map<string, BotCareer> {
   const careers = new Map<string, BotCareer>();
 
@@ -280,11 +281,12 @@ export function simulateRoster(params: {
         tracks: params.tracks,
         now: params.now,
         tailLength: params.tailLength,
+        config: params.config,
       }),
     );
   }
 
-  return backfillOpponentProgression(careers);
+  return backfillOpponentProgression(careers, params.config);
 }
 
 /**
@@ -297,6 +299,7 @@ export function simulateRoster(params: {
  */
 function backfillOpponentProgression(
   careers: Map<string, BotCareer>,
+  config: ResolvedConfig,
 ): Map<string, BotCareer> {
   const filled = new Map<string, BotCareer>();
 
@@ -316,8 +319,8 @@ function backfillOpponentProgression(
             match.players[0],
             {
               ...match.players[1],
-              levelBefore: levelForXp(xpBefore).level,
-              levelAfter: levelForXp(xpAfter).level,
+              levelBefore: levelForXp(xpBefore, config).level,
+              levelAfter: levelForXp(xpAfter, config).level,
               xpAfter,
             },
           ] as const,
@@ -350,8 +353,9 @@ export function simulateCareer(params: {
   now: number;
   tailLength?: number;
   rng?: Rng;
+  config: ResolvedConfig;
 }): BotCareer {
-  const { persona, roster, tracks, now } = params;
+  const { persona, roster, tracks, now, config } = params;
   const tailLength = params.tailLength ?? CAREER_TAIL_LENGTH;
 
   if (tracks.length === 0) {
@@ -392,12 +396,13 @@ export function simulateCareer(params: {
       // opponent with a profile to link to.
       named: game >= targetGames - tailLength,
       rng,
+      config,
     });
 
-    played.push(playCareerMatch({ persona, opponent, tracks, state, rng }));
+    played.push(playCareerMatch({ persona, opponent, tracks, state, rng, config }));
   }
 
-  const settled = settleOnAnchor(played, persona.elo);
+  const settled = settleOnAnchor(played, persona.elo, config);
   const tail = settled.slice(Math.max(0, settled.length - tailLength));
 
   return {
@@ -406,7 +411,7 @@ export function simulateCareer(params: {
     gamesPlayed: state.gamesPlayed,
     rankedWins: state.rankedWins,
     xp: state.xp,
-    level: levelForXp(state.xp).level,
+    level: levelForXp(state.xp, config).level,
     snapGuesses: state.snapGuesses,
     createdAt: accountCreatedAt(now, state.gamesPlayed),
     categoryRatings: [...state.categoryRatings.entries()]
@@ -469,6 +474,7 @@ function pickOpponent(params: {
   targetElo: number;
   named: boolean;
   rng: Rng;
+  config: ResolvedConfig;
 }): BotPersona {
   const candidates = params.roster.filter((entry) => entry.id !== params.persona.id);
   const pool = (candidates.length > 0 ? candidates : params.roster)
@@ -482,7 +488,7 @@ function pickOpponent(params: {
   // A peer at the matched rating. Rating is the only thing the duel engine reads as
   // skill, so overriding it *is* fielding a different player; the strengths and
   // weaknesses come along so the category ratings still develop a shape.
-  const rating = Math.max(ELO_FLOOR, Math.round(params.targetElo));
+  const rating = Math.max(params.config.ELO_FLOOR, Math.round(params.targetElo));
   return { ...nearest, id: `peer:${rating}`, handle: `peer_${rating}`, elo: rating };
 }
 
@@ -493,12 +499,13 @@ function playCareerMatch(params: {
   tracks: readonly TrackSample[];
   state: CareerState;
   rng: Rng;
+  config: ResolvedConfig;
 }): SimulatedMatch {
-  const { persona, opponent, tracks, state, rng } = params;
+  const { persona, opponent, tracks, state, rng, config } = params;
 
-  const bannedCategorySlugs = draftBans(persona, opponent, tracks, rng);
-  const trackIndices = pickMatchTracks(tracks, bannedCategorySlugs, rng);
-  const duel = simulateDuel({ persona, opponent, tracks, trackIndices, rng });
+  const bannedCategorySlugs = draftBans(persona, opponent, tracks, rng, config);
+  const trackIndices = pickMatchTracks(tracks, bannedCategorySlugs, rng, config);
+  const duel = simulateDuel({ persona, opponent, tracks, trackIndices, rng, config });
 
   // Mirrors `applyRanked`: the winner recorded on the match decides the outcome, and only
   // a match with no winner falls back to comparing points.
@@ -510,12 +517,15 @@ function playCareerMatch(params: {
         : LOSS;
 
   const ratingBefore = state.rating;
-  const update = applyMatchResult({
-    rating: ratingBefore,
-    opponentRating: opponent.elo,
-    outcome,
-    gamesPlayed: state.gamesPlayed,
-  });
+  const update = applyMatchResult(
+    {
+      rating: ratingBefore,
+      opponentRating: opponent.elo,
+      outcome,
+      gamesPlayed: state.gamesPlayed,
+    },
+    config,
+  );
 
   const won = outcome === WIN;
 
@@ -523,39 +533,48 @@ function playCareerMatch(params: {
   state.gamesPlayed = update.gamesPlayed;
   if (won) state.rankedWins += 1;
 
-  const xp = awardMatchXp({
-    mode: "ranked",
-    won,
-    roundsWon: duel.sides[0].roundsWon,
-    correctGuesses: duel.sides[0].correctGuesses,
-    snapGuesses: duel.sides[0].snapGuesses,
-  });
+  const xp = awardMatchXp(
+    {
+      mode: "ranked",
+      won,
+      roundsWon: duel.sides[0].roundsWon,
+      correctGuesses: duel.sides[0].correctGuesses,
+      snapGuesses: duel.sides[0].snapGuesses,
+    },
+    config,
+  );
 
   const xpBefore = state.xp;
   state.xp += xp.total;
   state.snapGuesses += duel.sides[0].snapGuesses;
 
-  applyCareerCategoryRatings({ state, opponent, tracks, duel });
+  applyCareerCategoryRatings({ state, opponent, tracks, duel, config });
 
-  const badgesEarned = awardCareerBadges({ state, opponent, duel, won, ratingBefore });
+  const badgesEarned = awardCareerBadges({ state, opponent, duel, won, ratingBefore, config });
 
   // The opponent's own line. Its rating moves against ours from its anchor, which is where
   // a settled bot sits; its level and XP total are filled in later by the roster pass.
-  const opponentXp = awardMatchXp({
-    mode: "ranked",
-    won: outcome === LOSS,
-    roundsWon: duel.sides[1].roundsWon,
-    correctGuesses: duel.sides[1].correctGuesses,
-    snapGuesses: duel.sides[1].snapGuesses,
-  });
-  const opponentUpdate = applyMatchResult({
-    rating: opponent.elo,
-    opponentRating: ratingBefore,
-    outcome: outcome === WIN ? LOSS : outcome === LOSS ? WIN : DRAW,
-    // Established: these are settled accounts, so the opponent moves at the low K rather
-    // than the placement K a zero here would imply.
-    gamesPlayed: Number.MAX_SAFE_INTEGER,
-  });
+  const opponentXp = awardMatchXp(
+    {
+      mode: "ranked",
+      won: outcome === LOSS,
+      roundsWon: duel.sides[1].roundsWon,
+      correctGuesses: duel.sides[1].correctGuesses,
+      snapGuesses: duel.sides[1].snapGuesses,
+    },
+    config,
+  );
+  const opponentUpdate = applyMatchResult(
+    {
+      rating: opponent.elo,
+      opponentRating: ratingBefore,
+      outcome: outcome === WIN ? LOSS : outcome === LOSS ? WIN : DRAW,
+      // Established: these are settled accounts, so the opponent moves at the low K rather
+      // than the placement K a zero here would imply.
+      gamesPlayed: Number.MAX_SAFE_INTEGER,
+    },
+    config,
+  );
 
   return {
     players: [
@@ -569,8 +588,8 @@ function playCareerMatch(params: {
         ratingDelta: update.delta,
         xpEarned: xp.total,
         xpBreakdown: xp.breakdown.map((entry) => ({ ...entry })),
-        levelBefore: levelForXp(xpBefore).level,
-        levelAfter: levelForXp(state.xp).level,
+        levelBefore: levelForXp(xpBefore, config).level,
+        levelAfter: levelForXp(state.xp, config).level,
         xpAfter: state.xp,
         badgesEarned,
       },
@@ -638,10 +657,11 @@ function simulateDuel(params: {
   tracks: readonly TrackSample[];
   trackIndices: readonly number[];
   rng: Rng;
+  config: ResolvedConfig;
 }): DuelResult {
   const sides: [DuelSide, DuelSide] = [
-    freshSide(params.persona),
-    freshSide(params.opponent),
+    freshSide(params.persona, params.config),
+    freshSide(params.opponent, params.config),
   ];
 
   const rounds: SimulatedRound[] = [];
@@ -666,7 +686,7 @@ function simulateDuel(params: {
 
       return {
         slot: slot as 0 | 1,
-        points: scoreForGuess(plan.correctAtMs).points,
+        points: scoreForGuess(plan.correctAtMs, params.config).points,
         elapsedMs: plan.correctAtMs,
         solved: true,
       };
@@ -678,10 +698,10 @@ function simulateDuel(params: {
     const scores: RoundScore[] = results.map((result) => ({
       userId: String(result.slot),
       points: result.points,
-      elapsedMs: result.elapsedMs ?? ROUND_DURATION_MS,
+      elapsedMs: result.elapsedMs ?? params.config.ROUND_DURATION_MS,
     }));
 
-    const resolution = duelDamage(scores, roundIndex);
+    const resolution = duelDamage(scores, roundIndex, params.config);
     const damage: SimulatedRoundDamage[] = [];
 
     for (const entry of resolution.damage) {
@@ -703,7 +723,7 @@ function simulateDuel(params: {
       side.totalPoints += result.points;
       if (result.solved && result.elapsedMs !== null) {
         side.correctGuesses += 1;
-        if (tierForElapsed(result.elapsedMs).id === "snap") side.snapGuesses += 1;
+        if (tierForElapsed(result.elapsedMs, params.config).id === "snap") side.snapGuesses += 1;
       }
       const others = results.filter((other) => other.slot !== result.slot).map((o) => o.points);
       if (wonRound(result.points, others)) side.roundsWon += 1;
@@ -716,12 +736,12 @@ function simulateDuel(params: {
       winnerSlot:
         resolution.winnerId === undefined ? undefined : (Number(resolution.winnerId) as 0 | 1),
       timeGapMs: resolution.timeGapMs,
-      multiplier: damageMultiplier(roundIndex),
+      multiplier: damageMultiplier(roundIndex, params.config),
       damage,
       results,
     });
 
-    const status = resolveDuel(duelStates(sides), roundIndex + 1);
+    const status = resolveDuel(duelStates(sides), roundIndex + 1, params.config);
 
     if (status.kind === "complete") {
       winnerSlot = status.winnerId === undefined ? undefined : (Number(status.winnerId) as 0 | 1);
@@ -745,11 +765,11 @@ function simulateDuel(params: {
   return { sides, rounds, winnerSlot, suddenDeath };
 }
 
-function freshSide(persona: BotPersona): DuelSide {
+function freshSide(persona: BotPersona, config: ResolvedConfig): DuelSide {
   return {
     persona,
-    hp: DUEL_STARTING_HP,
-    lowestHp: DUEL_STARTING_HP,
+    hp: config.DUEL_STARTING_HP,
+    lowestHp: config.DUEL_STARTING_HP,
     totalPoints: 0,
     eliminatedAtRound: null,
     correctGuesses: 0,
@@ -783,16 +803,17 @@ function draftBans(
   opponent: BotPersona,
   tracks: readonly TrackSample[],
   rng: Rng,
+  config: ResolvedConfig,
 ): string[] {
   const all = allCategorySlugs(tracks);
   if (all.length === 0) return [];
 
-  const pool = shuffle(all, rng).slice(0, Math.min(VETO_POOL_SIZE, all.length));
+  const pool = shuffle(all, rng).slice(0, Math.min(config.VETO_POOL_SIZE, all.length));
   const banned: string[] = [];
   // Lower rating opens the draft, as it does in ranked.
   const order = persona.elo <= opponent.elo ? [persona, opponent] : [opponent, persona];
 
-  for (let turn = 0; turn < VETO_BANS_PER_PLAYER * 2; turn++) {
+  for (let turn = 0; turn < config.VETO_BANS_PER_PLAYER * 2; turn++) {
     const available = pool.filter((slug) => !banned.includes(slug));
     if (available.length === 0) break;
     const slug = chooseBotBan(order[turn % 2], available, rng);
@@ -813,6 +834,7 @@ function pickMatchTracks(
   tracks: readonly TrackSample[],
   bannedCategorySlugs: readonly string[],
   rng: Rng,
+  config: ResolvedConfig,
 ): number[] {
   const allowed = tracks.filter(
     (track) => !track.categorySlugs.some((slug) => bannedCategorySlugs.includes(slug)),
@@ -820,7 +842,7 @@ function pickMatchTracks(
   const pool = allowed.length >= MIN_MATCH_TRACKS ? allowed : tracks;
 
   return shuffle(pool, rng)
-    .slice(0, Math.min(MAX_DUEL_ROUNDS, pool.length))
+    .slice(0, Math.min(config.MAX_DUEL_ROUNDS, pool.length))
     .map((track) => track.index);
 }
 
@@ -849,8 +871,9 @@ function applyCareerCategoryRatings(params: {
   opponent: BotPersona;
   tracks: readonly TrackSample[];
   duel: DuelResult;
+  config: ResolvedConfig;
 }): void {
-  const { state, opponent, tracks, duel } = params;
+  const { state, opponent, tracks, duel, config } = params;
 
   const results: CategoryRoundResult[] = [];
 
@@ -872,12 +895,15 @@ function applyCareerCategoryRatings(params: {
 
   if (results.length === 0) return;
 
-  const updates = applyCategoryResults({
-    results,
-    currentRatings: Object.fromEntries(state.categoryRatings),
-    opponentRatings: opponentCategoryRatings(opponent, results),
-    defaultRating: STARTING_ELO,
-  });
+  const updates = applyCategoryResults(
+    {
+      results,
+      currentRatings: Object.fromEntries(state.categoryRatings),
+      opponentRatings: opponentCategoryRatings(opponent, results),
+      defaultRating: config.STARTING_ELO,
+    },
+    config,
+  );
 
   for (const update of updates) {
     state.categoryRatings.set(update.categoryId, {
@@ -923,6 +949,7 @@ function awardCareerBadges(params: {
   won: boolean;
   /** The rating held going in, matching how production measures the upset. */
   ratingBefore: number;
+  config: ResolvedConfig;
 }): string[] {
   const { state, opponent, duel, won, ratingBefore } = params;
   const side = duel.sides[0];
@@ -933,8 +960,8 @@ function awardCareerBadges(params: {
     totalRankedWins: state.rankedWins,
     totalRankedMatches: state.gamesPlayed,
     totalSnapGuesses: state.snapGuesses,
-    tookNoDamage: side.hp >= DUEL_STARTING_HP,
-    wonFromCritical: side.lowestHp < DUEL_STARTING_HP * 0.25,
+    tookNoDamage: side.hp >= params.config.DUEL_STARTING_HP,
+    wonFromCritical: side.lowestHp < params.config.DUEL_STARTING_HP * 0.25,
     wonSuddenDeath: won && duel.suddenDeath,
     opponentEloAdvantage: Math.max(0, opponent.elo - ratingBefore),
   });
@@ -971,15 +998,19 @@ function awardCareerBadges(params: {
  * the clamped pair, which is the same thing `applyMatchResult` does for a floored loss:
  * report the drop actually taken rather than the one the formula asked for.
  */
-function settleOnAnchor(matches: SimulatedMatch[], anchorElo: number): SimulatedMatch[] {
+function settleOnAnchor(
+  matches: SimulatedMatch[],
+  anchorElo: number,
+  config: ResolvedConfig,
+): SimulatedMatch[] {
   if (matches.length === 0) return matches;
 
   const drift = matches[matches.length - 1].players[0].ratingAfter - anchorElo;
   if (drift === 0) return matches;
 
   return matches.map((match) => {
-    const ratingBefore = Math.max(ELO_FLOOR, match.players[0].ratingBefore - drift);
-    const ratingAfter = Math.max(ELO_FLOOR, match.players[0].ratingAfter - drift);
+    const ratingBefore = Math.max(config.ELO_FLOOR, match.players[0].ratingBefore - drift);
+    const ratingAfter = Math.max(config.ELO_FLOOR, match.players[0].ratingAfter - drift);
 
     return {
       ...match,

@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { DUEL_STARTING_HP, ROOM_STARTING_HP, STARTING_ELO } from "../src/engine/config";
+import { resolveConfig } from "./config";
+import type { ResolvedConfig } from "../src/engine/config-merge";
 import {
   applyCategoryResults,
   applyMatchResult,
@@ -41,13 +42,21 @@ export const finalizeMatch = internalMutation({
       .withIndex("by_match_round", (q) => q.eq("matchId", args.matchId))
       .collect();
 
+    /**
+     * The rules this match was PLAYED under, not the ones in force now.
+     *
+     * Resolved once here and threaded down, so a config saved between the last round and
+     * this scheduled mutation cannot pay out XP the players were never told about.
+     */
+    const config = await resolveConfig(ctx, match.configVersionId);
+
     // Ranked rating first, so XP and badges can see the post-match rating.
     if (match.mode === "ranked" && players.length === 2) {
-      await applyRanked(ctx, match, players);
+      await applyRanked(ctx, match, players, config);
     }
 
     for (const player of players) {
-      await applyProgression(ctx, match, player, guesses);
+      await applyProgression(ctx, match, player, guesses, config);
     }
   },
 });
@@ -57,6 +66,7 @@ async function applyRanked(
   ctx: MutationCtx,
   match: Doc<"matches">,
   players: Doc<"matchPlayers">[],
+  config: ResolvedConfig,
 ): Promise<void> {
   if (players.some((player) => player.ratingAfter !== undefined)) return;
 
@@ -77,18 +87,24 @@ async function applyRanked(
         : outcomeFromScores(a.totalPoints, b.totalPoints);
   const outcomeB: Outcome = (1 - outcomeA) as Outcome;
 
-  const updateA = applyMatchResult({
-    rating: userA.elo,
-    opponentRating: userB.elo,
-    outcome: outcomeA,
-    gamesPlayed: userA.gamesPlayed,
-  });
-  const updateB = applyMatchResult({
-    rating: userB.elo,
-    opponentRating: userA.elo,
-    outcome: outcomeB,
-    gamesPlayed: userB.gamesPlayed,
-  });
+  const updateA = applyMatchResult(
+    {
+      rating: userA.elo,
+      opponentRating: userB.elo,
+      outcome: outcomeA,
+      gamesPlayed: userA.gamesPlayed,
+    },
+    config,
+  );
+  const updateB = applyMatchResult(
+    {
+      rating: userB.elo,
+      opponentRating: userA.elo,
+      outcome: outcomeB,
+      gamesPlayed: userB.gamesPlayed,
+    },
+    config,
+  );
 
   await ctx.db.patch(userA._id, {
     elo: updateA.rating,
@@ -106,7 +122,7 @@ async function applyRanked(
   await ctx.db.patch(a._id, { ratingAfter: updateA.rating, ratingDelta: updateA.delta });
   await ctx.db.patch(b._id, { ratingAfter: updateB.rating, ratingDelta: updateB.delta });
 
-  await applyPerCategoryRatings(ctx, match, a.userId, b.userId);
+  await applyPerCategoryRatings(ctx, match, a.userId, b.userId, config);
 }
 
 /** XP, level and badges for one player. */
@@ -115,6 +131,7 @@ async function applyProgression(
   match: Doc<"matches">,
   player: Doc<"matchPlayers">,
   guesses: Doc<"guesses">[],
+  config: ResolvedConfig,
 ): Promise<void> {
   const user = await ctx.db.get(player.userId);
   if (!user) return;
@@ -130,19 +147,22 @@ async function applyProgression(
     (guess) => guess.userId === player.userId && guess.correct,
   );
   const snapGuesses = mine.filter(
-    (guess) => tierForElapsed(guess.clientElapsedMs).id === "snap",
+    (guess) => tierForElapsed(guess.clientElapsedMs, config).id === "snap",
   ).length;
 
   const won = match.winnerId === player.userId;
   const roundsWon = countRoundsWon(match, player.userId, guesses);
 
-  const xpAward = awardMatchXp({
-    mode: match.mode,
-    won,
-    roundsWon,
-    correctGuesses: mine.length,
-    snapGuesses,
-  });
+  const xpAward = awardMatchXp(
+    {
+      mode: match.mode,
+      won,
+      roundsWon,
+      correctGuesses: mine.length,
+      snapGuesses,
+    },
+    config,
+  );
 
   const xpBefore = user.xp ?? 0;
   const totalXp = xpBefore + xpAward.total;
@@ -151,8 +171,8 @@ async function applyProgression(
   // Captured either side of the patch below: once `users.xp` moves, the level the
   // player held going in is unrecoverable, and that is exactly what the results screen
   // needs to animate from and to detect a level-up against.
-  const levelBefore = levelForXp(xpBefore).level;
-  const levelAfter = levelForXp(totalXp).level;
+  const levelBefore = levelForXp(xpBefore, config).level;
+  const levelAfter = levelForXp(totalXp, config).level;
 
   await ctx.db.patch(user._id, {
     xp: totalXp,
@@ -160,15 +180,22 @@ async function applyProgression(
     snapGuesses: totalSnaps,
   });
 
-  const badges = await awardBadges(ctx, match, player, user, {
-    won,
-    totalSnapGuesses: totalSnaps,
-    // Finishing on full health means the opponent never once out-scored them.
-    tookNoDamage: (player.hp ?? 0) >= startingHpFor(match.mode),
-    wonFromCritical:
-      (player.lowestHp ?? player.hp ?? 0) < startingHpFor(match.mode) * 0.25,
-    wonSuddenDeath: won && match.suddenDeath === true,
-  });
+  const badges = await awardBadges(
+    ctx,
+    match,
+    player,
+    user,
+    {
+      won,
+      totalSnapGuesses: totalSnaps,
+      // Finishing on full health means the opponent never once out-scored them.
+      tookNoDamage: (player.hp ?? 0) >= startingHpFor(match.mode, config),
+      wonFromCritical:
+        (player.lowestHp ?? player.hp ?? 0) < startingHpFor(match.mode, config) * 0.25,
+      wonSuddenDeath: won && match.suddenDeath === true,
+    },
+    config,
+  );
 
   await ctx.db.patch(player._id, {
     xpEarned: xpAward.total,
@@ -181,8 +208,8 @@ async function applyProgression(
 }
 
 /** Starting health for the mode, so badge thresholds compare against the right baseline. */
-function startingHpFor(mode: Doc<"matches">["mode"]): number {
-  return mode === "room" ? ROOM_STARTING_HP : DUEL_STARTING_HP;
+function startingHpFor(mode: Doc<"matches">["mode"], config: ResolvedConfig): number {
+  return mode === "room" ? config.ROOM_STARTING_HP : config.DUEL_STARTING_HP;
 }
 
 /**
@@ -225,6 +252,7 @@ async function awardBadges(
     wonFromCritical: boolean;
     wonSuddenDeath: boolean;
   },
+  config: ResolvedConfig,
 ): Promise<string[]> {
   const opponent = match.playerIds.find((id) => id !== player.userId);
   const opponentDoc = opponent ? await ctx.db.get(opponent) : null;
@@ -239,8 +267,8 @@ async function awardBadges(
     wonFromCritical: facts.wonFromCritical,
     wonSuddenDeath: facts.wonSuddenDeath,
     // Compare against the rating the opponent held going in, not after this match.
-    opponentEloAdvantage: (player.ratingBefore ?? STARTING_ELO) < (opponentDoc?.elo ?? 0)
-      ? (opponentDoc?.elo ?? 0) - (player.ratingBefore ?? STARTING_ELO)
+    opponentEloAdvantage: (player.ratingBefore ?? config.STARTING_ELO) < (opponentDoc?.elo ?? 0)
+      ? (opponentDoc?.elo ?? 0) - (player.ratingBefore ?? config.STARTING_ELO)
       : 0,
   });
 
@@ -276,6 +304,7 @@ async function applyPerCategoryRatings(
   match: Doc<"matches">,
   userAId: Id<"users">,
   userBId: Id<"users">,
+  config: ResolvedConfig,
 ): Promise<void> {
   const guesses = await ctx.db
     .query("guesses")
@@ -314,8 +343,8 @@ async function applyPerCategoryRatings(
     }
   }
 
-  await persistCategoryRatings(ctx, userAId, userBId, resultsA);
-  await persistCategoryRatings(ctx, userBId, userAId, resultsB);
+  await persistCategoryRatings(ctx, userAId, userBId, resultsA, config);
+  await persistCategoryRatings(ctx, userBId, userAId, resultsB, config);
 }
 
 async function persistCategoryRatings(
@@ -323,6 +352,7 @@ async function persistCategoryRatings(
   userId: Id<"users">,
   opponentId: Id<"users">,
   results: CategoryRoundResult[],
+  config: ResolvedConfig,
 ): Promise<void> {
   if (results.length === 0) return;
 
@@ -336,12 +366,15 @@ async function persistCategoryRatings(
     );
   };
 
-  const updates = applyCategoryResults({
-    results,
-    currentRatings: await load(userId),
-    opponentRatings: await load(opponentId),
-    defaultRating: STARTING_ELO,
-  });
+  const updates = applyCategoryResults(
+    {
+      results,
+      currentRatings: await load(userId),
+      opponentRatings: await load(opponentId),
+      defaultRating: config.STARTING_ELO,
+    },
+    config,
+  );
 
   for (const update of updates) {
     const categoryId = update.categoryId as Id<"categories">;

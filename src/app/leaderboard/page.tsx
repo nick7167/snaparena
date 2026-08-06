@@ -14,6 +14,8 @@ import { Button } from "@/ui/Button";
 import { Card, Empty, SectionLabel, Skeleton } from "@/ui/Surface";
 import { RankEmblem } from "@/ui/RankEmblem";
 import { Avatar } from "@/game/ui";
+import { useConfig } from "../config";
+import type { ResolvedConfig } from "@/engine/config-merge";
 
 /** Rows each tier band shows before it has to be expanded. */
 const PER_BAND = 10;
@@ -47,6 +49,7 @@ export default function LeaderboardPage() {
    * index to insert yourself at.
    */
   const standing = useQuery(api.users.myStanding, {});
+  const config = useConfig();
 
   /**
    * Your own row, placed by your live rating rather than by the snapshot's.
@@ -61,7 +64,7 @@ export default function LeaderboardPage() {
    * IS your position — the same figure the pinned rail, the dashboard chip and your profile
    * all show.
    */
-  const board = spliceOwnRow(stored, me, standing?.position ?? null);
+  const board = spliceOwnRow(stored, me, standing?.position ?? null, config);
 
   const myRow = board?.find((entry) => entry.userId === me?._id);
   const myAccent = me ? rankForElo(me.elo).tier.accent : undefined;
@@ -483,6 +486,7 @@ function spliceOwnRow(
   stored: BoardRow[] | undefined,
   me: Me | null | undefined,
   position: number | null,
+  config: ResolvedConfig,
 ): BoardRow[] | undefined {
   if (!stored || !me || !position) return stored;
   if (position > stored.length) return stored;
@@ -497,7 +501,7 @@ function spliceOwnRow(
     avatarUrl: me.avatarUrl,
     elo: me.elo,
     gamesPlayed: me.gamesPlayed,
-    level: levelForXp(me.xp ?? 0).level,
+    level: levelForXp(me.xp ?? 0, config).level,
   };
 
   const spliced = [...without];

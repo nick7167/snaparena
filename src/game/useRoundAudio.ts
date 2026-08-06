@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { REVEAL_BEATS, ROUND_DURATION_MS } from "@/engine/config";
 import { revealStageAt } from "@/engine/scoring";
+import { useConfig } from "@/app/config";
 import { createAnalyser, type Analyser } from "@/audio/visualizer";
 import {
   getAudioContext,
@@ -104,6 +104,15 @@ export interface UseRoundAudioResult {
 }
 
 export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
+  /**
+   * The reveal beats and round length, live.
+   *
+   * Presentation only: this drives when the clip replays with more of the song unlocked
+   * and when the local clock stops. What a guess actually SCORES is decided server-side
+   * against the config the match was created under, so a value arriving a beat late here
+   * cannot change anybody's points.
+   */
+  const config = useConfig();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -382,15 +391,15 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     const elapsed = performance.now() - startedAtRef.current;
     setDisplayMs(elapsed);
 
-    if (elapsed >= ROUND_DURATION_MS) {
+    if (elapsed >= config.ROUND_DURATION_MS) {
       element.pause();
       setPhase("ended");
       rafRef.current = null;
       return;
     }
 
-    const stage = revealStageAt(elapsed);
-    const beat = REVEAL_BEATS[stage];
+    const stage = revealStageAt(elapsed, config);
+    const beat = config.REVEAL_BEATS[stage];
 
     if (stage !== stageRef.current) {
       // A new beat: replay from the top with more of the song unlocked.
@@ -404,7 +413,7 @@ export function useRoundAudio(previewUrl: string | null): UseRoundAudioResult {
     }
 
     rafRef.current = requestAnimationFrame(loop);
-  }, []);
+  }, [config]);
 
   /**
    * Attempts playback. Idempotent, and safe to call again after a failure.

@@ -2,15 +2,9 @@ import { v } from "convex/values";
 import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  MILESTONE_EVERY_ROUNDS,
-  PHASE_DURATIONS_MS,
-  READY_TIMEOUT_MS,
-  ROUND_DURATION_MS,
-  VETO_PHASE_MS,
-  VS_READY_COUNTDOWN_MS,
-  type MatchPhase,
-} from "../src/engine/config";
+import type { MatchPhase } from "../src/engine/config";
+import { resolveConfig } from "./config";
+import type { ResolvedConfig } from "../src/engine/config-merge";
 import {
   damageMultiplier,
   duelDamage,
@@ -47,10 +41,9 @@ import { startDuelIfDraftDone } from "./draft";
  */
 const WATCHDOG_SLACK_MS = 1_000;
 
-function durationFor(phase: MatchPhase): number | null {
-  return phase in PHASE_DURATIONS_MS
-    ? PHASE_DURATIONS_MS[phase as keyof typeof PHASE_DURATIONS_MS]
-    : null;
+function durationFor(phase: MatchPhase, config: ResolvedConfig): number | null {
+  const durations = config.PHASE_DURATIONS_MS;
+  return phase in durations ? durations[phase as keyof typeof durations] : null;
 }
 
 /**
@@ -65,7 +58,17 @@ export async function enterPhase(
   phase: MatchPhase,
   patch: Partial<Doc<"matches">> = {},
 ): Promise<void> {
-  const duration = durationFor(phase);
+  /**
+   * Read from the match rather than from what is current.
+   *
+   * Every timer in a duel is scheduled from here, so resolving the LIVE config would let a
+   * save between two rounds change how long the next one lasts — the clients would already
+   * be counting down against the old figure.
+   */
+  const existing = await ctx.db.get(matchId);
+  const config = await resolveConfig(ctx, existing?.configVersionId);
+
+  const duration = durationFor(phase, config);
   const now = Date.now();
 
   await ctx.db.patch(matchId, {
@@ -104,7 +107,7 @@ export async function enterPhase(
        * costs a handful of no-op calls and buys independence.
        */
       await ctx.scheduler.runAfter(
-        VETO_PHASE_MS + WATCHDOG_SLACK_MS,
+        config.VETO_PHASE_MS + WATCHDOG_SLACK_MS,
         internal.phases.draftWatchdog,
         { matchId },
       );
@@ -169,7 +172,8 @@ export const waitForReady = internalMutation({
     const everyoneReady = humanPlayers.every(
       (player) => (player.readyForRound ?? -1) >= args.roundIndex,
     );
-    const timedOut = Date.now() - args.startedWaitingAt >= READY_TIMEOUT_MS;
+    const config = await resolveConfig(ctx, match.configVersionId);
+    const timedOut = Date.now() - args.startedWaitingAt >= config.READY_TIMEOUT_MS;
 
     if (everyoneReady || timedOut) {
       await enterPhase(ctx, args.matchId, "guessing");
@@ -220,9 +224,12 @@ export const draftWatchdog = internalMutation({
      * watchdog.
      */
     if (match.vetoDeadline === undefined) {
-      await ctx.db.patch(args.matchId, { vetoDeadline: Date.now() + VETO_PHASE_MS });
+      const config = await resolveConfig(ctx, match.configVersionId);
+      await ctx.db.patch(args.matchId, {
+        vetoDeadline: Date.now() + config.VETO_PHASE_MS,
+      });
       await ctx.scheduler.runAfter(
-        VETO_PHASE_MS + WATCHDOG_SLACK_MS,
+        config.VETO_PHASE_MS + WATCHDOG_SLACK_MS,
         internal.phases.draftWatchdog,
         args,
       );
@@ -304,7 +311,8 @@ export const advance = internalMutation({
          * Cannot double-fire: the first rescue moves the phase, and every later call
          * bails on the `match.phase !== args.expectedPhase` guard above.
          */
-        if (Date.now() < (match.phaseEndsAt ?? 0) + READY_TIMEOUT_MS) return;
+        const config = await resolveConfig(ctx, match.configVersionId);
+        if (Date.now() < (match.phaseEndsAt ?? 0) + config.READY_TIMEOUT_MS) return;
         await enterPhase(ctx, match._id, "guessing");
         return;
       }
@@ -351,12 +359,13 @@ export async function armVsCountdown(
   ctx: MutationCtx,
   match: Doc<"matches">,
 ): Promise<void> {
-  const endsAt = Date.now() + VS_READY_COUNTDOWN_MS;
+  const config = await resolveConfig(ctx, match.configVersionId);
+  const endsAt = Date.now() + config.VS_READY_COUNTDOWN_MS;
   if (match.phaseEndsAt !== undefined && match.phaseEndsAt <= endsAt) return;
 
   await ctx.db.patch(match._id, { phaseEndsAt: endsAt });
 
-  await ctx.scheduler.runAfter(VS_READY_COUNTDOWN_MS, internal.phases.advance, {
+  await ctx.scheduler.runAfter(config.VS_READY_COUNTDOWN_MS, internal.phases.advance, {
     matchId: match._id,
     expectedPhase: "vs_reveal",
     expectedRound: match.currentRound,
@@ -405,8 +414,9 @@ export const skipVsIfNoHumans = internalMutation({
  */
 export async function leaveVsReveal(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
   if ((match.vetoPoolIds?.length ?? 0) > 0) {
+    const config = await resolveConfig(ctx, match.configVersionId);
     await enterPhase(ctx, match._id, "veto", {
-      vetoDeadline: Date.now() + VETO_PHASE_MS,
+      vetoDeadline: Date.now() + config.VETO_PHASE_MS,
     });
     return;
   }
@@ -421,11 +431,13 @@ export async function startCountdown(
 ): Promise<void> {
   await enterPhase(ctx, matchId, "countdown", { currentRound: roundIndex });
 
-  await ctx.scheduler.runAfter(PHASE_DURATIONS_MS.countdown, internal.phases.waitForReady, {
-    matchId,
-    roundIndex,
-    startedWaitingAt: Date.now(),
-  });
+  const config = await resolveConfig(ctx, (await ctx.db.get(matchId))?.configVersionId);
+
+  await ctx.scheduler.runAfter(
+    config.PHASE_DURATIONS_MS.countdown,
+    internal.phases.waitForReady,
+    { matchId, roundIndex, startedWaitingAt: Date.now() },
+  );
 
   /**
    * An independent backstop for the readiness chain armed above.
@@ -442,7 +454,7 @@ export async function startCountdown(
    * no-ops at the phase guard.
    */
   await ctx.scheduler.runAfter(
-    PHASE_DURATIONS_MS.countdown + READY_TIMEOUT_MS + WATCHDOG_SLACK_MS,
+    config.PHASE_DURATIONS_MS.countdown + config.READY_TIMEOUT_MS + WATCHDOG_SLACK_MS,
     internal.phases.advance,
     { matchId, expectedPhase: "countdown", expectedRound: roundIndex },
   );
@@ -452,6 +464,7 @@ export async function startCountdown(
 async function roundScores(
   ctx: MutationCtx,
   match: Doc<"matches">,
+  config: ResolvedConfig,
 ): Promise<RoundScore[]> {
   const guesses = await ctx.db
     .query("guesses")
@@ -467,7 +480,7 @@ async function roundScores(
       points: solved?.points ?? 0,
       // Unsolved contributes the full round, so failing to answer never ranks above
       // answering slowly.
-      elapsedMs: solved?.clientElapsedMs ?? ROUND_DURATION_MS,
+      elapsedMs: solved?.clientElapsedMs ?? config.ROUND_DURATION_MS,
     };
   });
 }
@@ -478,7 +491,8 @@ async function roundScores(
  * The daily has no opponent and therefore no damage — it simply advances.
  */
 async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
-  const scores = await roundScores(ctx, match);
+  const config = await resolveConfig(ctx, match.configVersionId);
+  const scores = await roundScores(ctx, match, config);
   const guesses = await ctx.db
     .query("guesses")
     .withIndex("by_match_round", (q) =>
@@ -501,8 +515,8 @@ async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promis
     match.mode === "daily"
       ? { outcome: "song" as const, winnerId: undefined, damage: [], timeGapMs: undefined }
       : match.mode === "room"
-        ? roomDamage(scores, match.currentRound)
-        : duelDamage(scores, match.currentRound);
+        ? roomDamage(scores, match.currentRound, config)
+        : duelDamage(scores, match.currentRound, config);
 
   const applied: { userId: Id<"users">; damage: number; hpAfter: number }[] = [];
 
@@ -536,7 +550,7 @@ async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promis
     outcome: resolution.outcome,
     winnerId: toPlayerId(match, resolution.winnerId),
     timeGapMs: resolution.timeGapMs,
-    multiplier: damageMultiplier(match.currentRound),
+    multiplier: damageMultiplier(match.currentRound, config),
     damage: applied,
     results,
   };
@@ -562,6 +576,7 @@ async function applyRoundDamage(ctx: MutationCtx, match: Doc<"matches">): Promis
 
 /** Decides after the standings beat whether the match continues, and to which phase. */
 async function continueOrFinish(ctx: MutationCtx, match: Doc<"matches">): Promise<void> {
+  const config = await resolveConfig(ctx, match.configVersionId);
   const roundsPlayed = match.currentRound + 1;
 
   if (match.mode === "daily") {
@@ -587,8 +602,8 @@ async function continueOrFinish(ctx: MutationCtx, match: Doc<"matches">): Promis
 
   const status =
     match.mode === "room"
-      ? resolveRoom(states, roundsPlayed)
-      : resolveDuel(states, roundsPlayed);
+      ? resolveRoom(states, roundsPlayed, config)
+      : resolveDuel(states, roundsPlayed, config);
 
   if (status.kind === "complete") {
     await finishMatch(ctx, match, toPlayerId(match, status.winnerId));
@@ -611,7 +626,7 @@ async function continueOrFinish(ctx: MutationCtx, match: Doc<"matches">): Promis
 
   // A longer momentum beat every few rounds, which also announces the multiplier
   // stepping up.
-  if (isMilestoneRound(match.currentRound, MILESTONE_EVERY_ROUNDS)) {
+  if (isMilestoneRound(match.currentRound, config.MILESTONE_EVERY_ROUNDS)) {
     await enterPhase(ctx, match._id, "milestone", { currentRound: roundsPlayed });
     return;
   }

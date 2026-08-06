@@ -5,12 +5,10 @@
  * but the authoritative call always happens inside a Convex mutation.
  */
 
-import {
-  FUZZY_EXACT_MAX_LEN,
-  FUZZY_LENGTH_DIVISOR,
-  MIN_GUESS_LENGTH,
-} from "./config";
+import type { ResolvedConfig } from "./config-merge";
 import { normalizeTitle } from "./normalize";
+
+/** Config is a parameter, not an import — see the note in `xp.ts`. */
 
 export interface MatchTarget {
   /** Output of normalizeTitle() on the track's real title, stored at ingest. */
@@ -86,9 +84,9 @@ export function damerauLevenshtein(a: string, b: string, maxDistance = Infinity)
  * Short titles demand an exact match — the budget would otherwise be a larger
  * fraction of the word than any real typo.
  */
-export function distanceThresholdFor(length: number): number {
-  if (length <= FUZZY_EXACT_MAX_LEN) return 0;
-  return Math.max(1, Math.floor(length / FUZZY_LENGTH_DIVISOR));
+export function distanceThresholdFor(length: number, config: ResolvedConfig): number {
+  if (length <= config.FUZZY_EXACT_MAX_LEN) return 0;
+  return Math.max(1, Math.floor(length / config.FUZZY_LENGTH_DIVISOR));
 }
 
 /**
@@ -96,10 +94,14 @@ export function distanceThresholdFor(length: number): number {
  *
  * Only the title is matched — artist is never required, per the v1 answer rules.
  */
-export function checkGuess(rawGuess: string, target: MatchTarget): MatchResult {
+export function checkGuess(
+  rawGuess: string,
+  target: MatchTarget,
+  config: ResolvedConfig,
+): MatchResult {
   const normalizedGuess = normalizeTitle(rawGuess);
 
-  if (normalizedGuess.length < MIN_GUESS_LENGTH) {
+  if (normalizedGuess.length < config.MIN_GUESS_LENGTH) {
     return { correct: false, reason: "too-short", distance: Infinity, normalizedGuess };
   }
 
@@ -121,7 +123,7 @@ export function checkGuess(rawGuess: string, target: MatchTarget): MatchResult {
   let bestDistance = Infinity;
   for (const candidate of candidates) {
     if (!candidate) continue;
-    const threshold = distanceThresholdFor(candidate.length);
+    const threshold = distanceThresholdFor(candidate.length, config);
     const distance = damerauLevenshtein(normalizedGuess, candidate, threshold);
     if (distance < bestDistance) bestDistance = distance;
     if (distance <= threshold) {

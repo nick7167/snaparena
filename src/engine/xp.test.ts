@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { PRACTICE_XP_MULTIPLIER, XP_AWARDS } from "./config";
-import { awardMatchXp, levelForXp, xpForLevel } from "./xp";
+import {
+  awardMatchXp as awardMatchXpWith,
+  levelForXp as levelForXpWith,
+  xpForLevel as xpForLevelWith,
+} from "./xp";
+import { mergeConfig } from "./config-merge";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const xpForLevel = (level: number) => xpForLevelWith(level, config);
+const levelForXp = (totalXp: number) => levelForXpWith(totalXp, config);
+const awardMatchXp = (params: Parameters<typeof awardMatchXpWith>[0]) =>
+  awardMatchXpWith(params, config);
+
 
 describe("xpForLevel", () => {
   it("starts level 1 at zero", () => {

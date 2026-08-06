@@ -11,6 +11,7 @@ import { rankForElo } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
 // DEV ONLY — delete with convex/devbots.ts.
 import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
+import { resolveConfig } from "./config";
 
 /**
  * The ladder: who is on it, where they stand, and the periodic snapshot of the field.
@@ -372,6 +373,8 @@ export const rebuild = internalMutation({
     const truncated = ladder.length > SNAPSHOT_MAX_ENTRIES;
     const kept = truncated ? ladder.slice(0, SNAPSHOT_MAX_ENTRIES) : ladder;
 
+    const config = await resolveConfig(ctx);
+
     // No JS sort. The index already returns (elo desc, _creationTime desc); re-sorting
     // here is where a subtly different comparator would creep in and reopen the drift bug.
     const entries: Entry[] = kept.map((user) => ({
@@ -385,7 +388,7 @@ export const rebuild = internalMutation({
       displayName: user.displayName,
       avatarUrl: publicAvatarUrl(user),
       gamesPlayed: user.gamesPlayed,
-      level: levelForXp(user.xp ?? 0).level,
+      level: levelForXp(user.xp ?? 0, config).level,
     }));
 
     const byTier = new Map<string, number>(RANK_TIERS.map((tier) => [tier.id, 0]));

@@ -28,6 +28,7 @@ import {
 // DEV ONLY — delete with convex/devbots.ts. See the single call site in `tryMatchmake`.
 import { pickDevOpponent } from "./devbots";
 import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
+import { currentVersionId } from "./config";
 
 export const queueStatus = query({
   args: {},
@@ -239,6 +240,14 @@ async function pairFor(
   const pool = await pickVetoPool(ctx);
 
   const matchId = await ctx.db.insert("matches", {
+    /**
+     * Freeze the rules this match will be played under.
+     *
+     * Everything downstream — scoring, damage, phase durations, the XP paid at the end —
+     * resolves through this id rather than through whatever is current, so a config saved
+     * mid-match cannot change the game underneath the players. Undefined means stock.
+     */
+    configVersionId: await currentVersionId(ctx),
     mode: "ranked",
     status: "veto",
     playerIds: [user._id, opponent._id],

@@ -3,15 +3,15 @@
  * rating derived from head-to-head performance on individual tracks.
  */
 
-import {
-  ELO_FLOOR,
-  ESTABLISHED_AFTER_GAMES,
-  K_CATEGORY,
-  K_EARLY,
-  K_ESTABLISHED,
-  K_PLACEMENT,
-  PLACEMENT_MATCHES,
-} from "./config";
+import type { ResolvedConfig } from "./config-merge";
+
+/**
+ * Config is a parameter, not an import — see the note in `xp.ts`.
+ *
+ * These particular values are locked in the admin console for now, because rating already
+ * awarded cannot be recomputed. The plumbing is here so unlocking them later is a change
+ * to one registry flag rather than a second pass through this file.
+ */
 
 /** Outcome from one player's perspective. */
 export type Outcome = 1 | 0.5 | 0;
@@ -29,10 +29,10 @@ export function expectedScore(rating: number, opponentRating: number): number {
  * K-factor for a player's next match. High during placements so ratings converge
  * quickly from the starting value, then progressively damped.
  */
-export function kFactor(gamesPlayed: number): number {
-  if (gamesPlayed < PLACEMENT_MATCHES) return K_PLACEMENT;
-  if (gamesPlayed < ESTABLISHED_AFTER_GAMES) return K_EARLY;
-  return K_ESTABLISHED;
+export function kFactor(gamesPlayed: number, config: ResolvedConfig): number {
+  if (gamesPlayed < config.PLACEMENT_MATCHES) return config.K_PLACEMENT;
+  if (gamesPlayed < config.ESTABLISHED_AFTER_GAMES) return config.K_EARLY;
+  return config.K_ESTABLISHED;
 }
 
 export interface RatingUpdate {
@@ -49,20 +49,23 @@ export interface RatingUpdate {
  * A forfeit (disconnect) is passed through as a normal LOSS — without full Elo
  * loss on disconnect, players simply close the tab when behind.
  */
-export function applyMatchResult(params: {
-  rating: number;
-  opponentRating: number;
-  outcome: Outcome;
-  gamesPlayed: number;
-}): RatingUpdate {
+export function applyMatchResult(
+  params: {
+    rating: number;
+    opponentRating: number;
+    outcome: Outcome;
+    gamesPlayed: number;
+  },
+  config: ResolvedConfig,
+): RatingUpdate {
   const { rating, opponentRating, outcome, gamesPlayed } = params;
 
-  const k = kFactor(gamesPlayed);
+  const k = kFactor(gamesPlayed, config);
   const expected = expectedScore(rating, opponentRating);
   const rawDelta = k * (outcome - expected);
 
   const unflooredRating = rating + rawDelta;
-  const nextRating = Math.max(ELO_FLOOR, Math.round(unflooredRating));
+  const nextRating = Math.max(config.ELO_FLOOR, Math.round(unflooredRating));
   const nextGamesPlayed = gamesPlayed + 1;
 
   return {
@@ -71,7 +74,7 @@ export function applyMatchResult(params: {
     // drop the player never took.
     delta: nextRating - rating,
     gamesPlayed: nextGamesPlayed,
-    placementsRemaining: Math.max(0, PLACEMENT_MATCHES - nextGamesPlayed),
+    placementsRemaining: Math.max(0, config.PLACEMENT_MATCHES - nextGamesPlayed),
   };
 }
 
@@ -97,12 +100,15 @@ export interface CategoryRatingUpdate {
  * track is a tiny sample, so these ratings are deliberately slow to move. Several
  * tracks in a match may share a category; each contributes an update in sequence.
  */
-export function applyCategoryResults(params: {
-  results: readonly CategoryRoundResult[];
-  currentRatings: Readonly<Record<string, { rating: number; games: number }>>;
-  opponentRatings: Readonly<Record<string, { rating: number; games: number }>>;
-  defaultRating: number;
-}): CategoryRatingUpdate[] {
+export function applyCategoryResults(
+  params: {
+    results: readonly CategoryRoundResult[];
+    currentRatings: Readonly<Record<string, { rating: number; games: number }>>;
+    opponentRatings: Readonly<Record<string, { rating: number; games: number }>>;
+    defaultRating: number;
+  },
+  config: ResolvedConfig,
+): CategoryRatingUpdate[] {
   const { results, currentRatings, opponentRatings, defaultRating } = params;
 
   const working = new Map<string, { rating: number; games: number; startRating: number }>();
@@ -131,7 +137,10 @@ export function applyCategoryResults(params: {
           : DRAW;
 
     const expected = expectedScore(existing.rating, opponentRating);
-    existing.rating = Math.max(ELO_FLOOR, existing.rating + K_CATEGORY * (outcome - expected));
+    existing.rating = Math.max(
+      config.ELO_FLOOR,
+      existing.rating + config.K_CATEGORY * (outcome - expected),
+    );
     existing.games += 1;
   }
 

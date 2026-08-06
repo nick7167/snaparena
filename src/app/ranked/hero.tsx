@@ -22,6 +22,7 @@ import { GlobalRank } from "../dashboard/global-rank";
 import { Beat, CountUp } from "../dashboard/motion";
 import { RankProgress } from "./rank-progress";
 import { SearchPanel } from "./search-panel";
+import { useConfig } from "../config";
 
 /**
  * The ranked hero.
@@ -57,6 +58,7 @@ export function RankedHero() {
    */
   const queue = useQueue();
   const reduced = usePrefersReducedMotion();
+  const config = useConfig();
 
   // Shaped like what is coming, at the width it will arrive at, inside the same viewport
   // box — so the card and button do not jump sideways or upward on settle.
@@ -86,13 +88,16 @@ export function RankedHero() {
    */
   const rival = neighbours?.above.at(-1);
 
-  const stakes = stakesFor({
-    elo: me.elo,
-    gamesPlayed: me.gamesPlayed,
-    placementsRemaining: me.placementsRemaining,
-    rivalGap: rival?.gap,
-    rivalHandle: rival?.handle,
-  });
+  const stakes = stakesFor(
+    {
+      elo: me.elo,
+      gamesPlayed: me.gamesPlayed,
+      placementsRemaining: me.placementsRemaining,
+      rivalGap: rival?.gap,
+      rivalHandle: rival?.handle,
+    },
+    config,
+  );
 
   return (
     <HeroViewport>

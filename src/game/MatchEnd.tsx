@@ -17,6 +17,7 @@ import { Card, Chip, Meter, SectionLabel } from "@/ui/Surface";
 import { BadgeMark, Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
 import type { PlayerCardData } from "./stages";
+import { useConfig } from "@/app/config";
 
 /**
  * The results screen.
@@ -480,13 +481,15 @@ function DeltaText({ delta, shown }: { delta: number; shown: number }) {
  */
 function XpPanel({ player }: { player: MatchEndPlayer }) {
   const reduced = usePrefersReducedMotion();
+  const config = useConfig();
   const earned = player.xpEarned ?? 0;
 
   // Null while `progression.finalizeMatch` is still settling. Falling back to the
   // earned amount alone would print the old lie, so the bar simply waits.
   const xpAfter = player.xpAfter;
-  const after = xpAfter === null ? null : levelForXp(xpAfter);
-  const before = xpAfter === null ? null : levelForXp(Math.max(0, xpAfter - earned));
+  const after = xpAfter === null ? null : levelForXp(xpAfter, config);
+  const before =
+    xpAfter === null ? null : levelForXp(Math.max(0, xpAfter - earned), config);
 
   // Within a single level the bar travels from the old position; across a level-up it
   // starts at the floor of the new one, because the old position is on a bar that no

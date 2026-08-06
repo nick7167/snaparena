@@ -12,6 +12,7 @@ import { Avatar } from "@/game/ui";
 import { CountUp } from "./motion";
 import { GlobalRank } from "./global-rank";
 import { StreakRow } from "./streak-row";
+import { useConfig } from "../config";
 
 /**
  * The career card.
@@ -34,13 +35,14 @@ export function PlayerBanner() {
   const me = useQuery(api.users.me, {});
   const standing = useQuery(api.users.myStanding, {});
   const streak = useQuery(api.users.dailyStreak, {});
+  const config = useConfig();
 
   if (me === undefined) return <Skeleton className="h-56 w-full" />;
   if (!me) return null;
 
   const rank = rankForElo(me.elo);
   const placing = me.placementsRemaining > 0;
-  const level = levelForXp(me.xp ?? 0);
+  const level = levelForXp(me.xp ?? 0, config);
   const played = Math.max(0, PLACEMENT_MATCHES - me.placementsRemaining);
 
   return (

@@ -12,6 +12,7 @@ import {
 import { BOT_PERSONAS, type BotPersona } from "../src/engine/bots";
 import { DEV_RANK_BOT_PERSONAS } from "../src/engine/dev-rank-bots";
 import { AVATAR_COLOURS } from "../src/engine/config";
+import { resolveConfig } from "./config";
 
 /**
  * Bot profiles — the stats, avatar, badges and match history that make a bot account
@@ -71,7 +72,8 @@ export async function seedBotProfiles(
   const { tracks, trackIds } = await loadTrackPool(ctx);
   const categoryIdBySlug = await loadCategories(ctx);
 
-  const careers = simulateRoster({ personas, tracks, now: Date.now() });
+  const config = await resolveConfig(ctx);
+  const careers = simulateRoster({ personas, tracks, now: Date.now(), config });
 
   // Clear first, so a re-seed cannot leave one bot carrying two overlapping histories.
   await clearSeededMatches(ctx, [...bots.values()].map((bot) => bot._id));

@@ -12,6 +12,7 @@ import type * as admin from "../admin.js";
 import type * as avatar from "../avatar.js";
 import type * as botprofiles from "../botprofiles.js";
 import type * as bots from "../bots.js";
+import type * as config from "../config.js";
 import type * as crons from "../crons.js";
 import type * as daily from "../daily.js";
 import type * as devbots from "../devbots.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   avatar: typeof avatar;
   botprofiles: typeof botprofiles;
   bots: typeof bots;
+  config: typeof config;
   crons: typeof crons;
   daily: typeof daily;
   devbots: typeof devbots;

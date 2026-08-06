@@ -10,19 +10,43 @@ import {
 } from "./config";
 import {
   canSurrender,
-  damageMultiplier,
-  duelDamage,
+  damageMultiplier as damageMultiplierWith,
+  duelDamage as duelDamageWith,
   isMilestoneRound,
   medianOf,
-  resolveDuel,
-  resolveRoom,
-  roomDamage,
+  resolveDuel as resolveDuelWith,
+  resolveRoom as resolveRoomWith,
+  roomDamage as roomDamageWith,
   roomPlacings,
-  tieDamage,
+  tieDamage as tieDamageWith,
   wonRound,
   type DuelPlayerState,
   type RoundScore,
 } from "./duel";
+import { mergeConfig } from "./config-merge";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const damageMultiplier = (roundIndex: number) => damageMultiplierWith(roundIndex, config);
+const duelDamage = (scores: readonly RoundScore[], roundIndex: number) =>
+  duelDamageWith(scores, roundIndex, config);
+const roomDamage = (scores: readonly RoundScore[], roundIndex: number) =>
+  roomDamageWith(scores, roundIndex, config);
+const tieDamage = (timeGapMs: number, multiplier: number) =>
+  tieDamageWith(timeGapMs, multiplier, config);
+const resolveDuel = (players: readonly DuelPlayerState[], roundsPlayed: number) =>
+  resolveDuelWith(players, roundsPlayed, config);
+const resolveRoom = (players: readonly DuelPlayerState[], roundsPlayed: number) =>
+  resolveRoomWith(players, roundsPlayed, config);
+
 
 const score = (userId: string, points: number, elapsedMs = 5_000): RoundScore => ({
   userId,

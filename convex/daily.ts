@@ -14,6 +14,7 @@ import { pickTracksForMatch } from "./tracks";
 import { startCountdown } from "./phases";
 import { DAILY_SONGS, PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
 import type { Doc } from "./_generated/dataModel";
+import { currentVersionId } from "./config";
 
 /** UTC date key. The daily challenge rolls over at midnight UTC for everyone. */
 export function todayKey(now: number = Date.now()): string {
@@ -110,6 +111,14 @@ export const start = mutation({
     }
 
     const matchId = await ctx.db.insert("matches", {
+      /**
+       * Freeze the rules this match will be played under.
+       *
+       * Everything downstream — scoring, damage, phase durations, the XP paid at the end —
+       * resolves through this id rather than through whatever is current, so a config saved
+       * mid-match cannot change the game underneath the players. Undefined means stock.
+       */
+      configVersionId: await currentVersionId(ctx),
       mode: "daily",
       status: "active",
       playerIds: [user._id],

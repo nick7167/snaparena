@@ -9,6 +9,7 @@ import { TierChip } from "./ui";
 import { tierForElapsed } from "@/engine/scoring";
 import type { ScoreTierId } from "@/engine/config";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
+import { useConfig } from "@/app/config";
 
 /** A capability cannot change mid-session, so there is nothing to subscribe to. */
 const NEVER_CHANGES = () => () => {};
@@ -59,6 +60,7 @@ export function DailyResult({
     xpEarned?: number | null;
   };
 }) {
+  const config = useConfig();
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -95,7 +97,7 @@ export function DailyResult({
   const shareText = [
     `SNAP — ${run.totalPoints} pts`,
     run.perRoundMs
-      .map((ms) => (ms < 0 ? "⬜" : SHARE_SQUARE[tierForElapsed(ms).id]))
+      .map((ms) => (ms < 0 ? "⬜" : SHARE_SQUARE[tierForElapsed(ms, config).id]))
       .join(""),
     `#${run.rank} of ${run.totalPlayers}`,
     typeof window === "undefined" ? "" : `${window.location.origin}/daily`,
@@ -131,7 +133,7 @@ export function DailyResult({
                 <span className="text-muted">missed</span>
               ) : (
                 <span className="flex items-center gap-3">
-                  <TierChip tierId={tierForElapsed(ms).id} size="sm" />
+                  <TierChip tierId={tierForElapsed(ms, config).id} size="sm" />
                   <span className="font-display text-secondary font-bold tabular-nums">
                     {(ms / 1000).toFixed(2)}s
                   </span>

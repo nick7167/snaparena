@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BADGES } from "./badges";
+import { mergeConfig } from "./config-merge";
 import { BOT_PERSONAS, type BotPersona } from "./bots";
 import {
   CAREER_TAIL_LENGTH,
@@ -14,6 +15,10 @@ import { ELO_FLOOR } from "./config";
 import { DEV_RANK_BOT_PERSONAS } from "./dev-rank-bots";
 import { levelForXp } from "./xp";
 import { rankForElo } from "./ranks";
+
+/** These simulations are run against the shipped defaults. */
+const config = mergeConfig();
+
 
 /**
  * A stand-in catalogue.
@@ -46,19 +51,21 @@ const TRACKS = trackPool();
 const NOW = Date.UTC(2026, 6, 1);
 
 function careerFor(persona: BotPersona, roster: readonly BotPersona[]): BotCareer {
-  return simulateCareer({ persona, roster, tracks: TRACKS, now: NOW });
+  return simulateCareer({ persona, roster, tracks: TRACKS, now: NOW, config });
 }
 
 const devCareers = simulateRoster({
   personas: DEV_RANK_BOT_PERSONAS,
   tracks: TRACKS,
   now: NOW,
+  config,
 });
 
 const practiceCareers = simulateRoster({
   personas: BOT_PERSONAS,
   tracks: TRACKS,
   now: NOW,
+  config,
 });
 
 const allCareers = [...devCareers.values(), ...practiceCareers.values()];
@@ -101,6 +108,7 @@ describe("simulateCareer", () => {
         roster: BOT_PERSONAS,
         tracks: [],
         now: NOW,
+        config,
       }),
     ).toThrow(/track/i);
   });
@@ -121,7 +129,7 @@ describe("simulateCareer", () => {
 
   it("keeps level and XP in agreement, which the profile and sidebar both read", () => {
     for (const career of allCareers) {
-      expect(career.level).toBe(levelForXp(career.xp).level);
+      expect(career.level).toBe(levelForXp(career.xp, config).level);
       expect(career.level).toBeGreaterThan(1);
     }
   });
@@ -369,7 +377,7 @@ describe("the persisted tail", () => {
           );
           expect(player.levelAfter).toBeGreaterThanOrEqual(player.levelBefore);
           expect(player.xpAfter).toBeGreaterThanOrEqual(player.xpEarned);
-          expect(levelForXp(player.xpAfter).level).toBe(player.levelAfter);
+          expect(levelForXp(player.xpAfter, config).level).toBe(player.levelAfter);
         }
         expect(match.players[0].personaId).not.toBe(match.players[1].personaId);
       }

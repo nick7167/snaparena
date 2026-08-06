@@ -6,15 +6,37 @@ import {
   SCORE_TIERS,
 } from "./config";
 import {
-  revealBeatAt,
-  revealStageAt,
-  roundHasExpired,
-  scoreForGuess,
-  shazamMarginReport,
-  tierById,
-  tierForElapsed,
-  validateClientClock,
+  revealBeatAt as revealBeatAtWith,
+  revealStageAt as revealStageAtWith,
+  roundHasExpired as roundHasExpiredWith,
+  scoreForGuess as scoreForGuessWith,
+  shazamMarginReport as shazamMarginReportWith,
+  tierById as tierByIdWith,
+  tierForElapsed as tierForElapsedWith,
+  validateClientClock as validateClientClockWith,
 } from "./scoring";
+import { mergeConfig } from "./config-merge";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const revealBeatAt = (ms: number) => revealBeatAtWith(ms, config);
+const revealStageAt = (ms: number) => revealStageAtWith(ms, config);
+const roundHasExpired = (ms: number) => roundHasExpiredWith(ms, config);
+const scoreForGuess = (ms: number) => scoreForGuessWith(ms, config);
+const shazamMarginReport = (lookupMs?: number) => shazamMarginReportWith(config, lookupMs);
+const tierById = (id: Parameters<typeof tierByIdWith>[0]) => tierByIdWith(id, config);
+const tierForElapsed = (ms: number) => tierForElapsedWith(ms, config);
+const validateClientClock = (input: Parameters<typeof validateClientClockWith>[0]) =>
+  validateClientClockWith(input, config);
+
 
 describe("scoreForGuess", () => {
   it("awards the top tier on the 1-second clip", () => {

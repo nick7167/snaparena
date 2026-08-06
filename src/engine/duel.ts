@@ -10,14 +10,9 @@
  * instead of a single opponent, so eliminations are gradual rather than a bloodbath.
  */
 
-import {
-  DAMAGE_RAMP_EVERY,
-  DAMAGE_RAMP_STEP,
-  MAX_DUEL_ROUNDS,
-  SONG_WINS_DAMAGE,
-  TIE_DAMAGE_CAP,
-  TIE_DAMAGE_PER_SECOND,
-} from "./config";
+import type { ResolvedConfig } from "./config-merge";
+
+/** Config is a parameter, not an import — see the note in `xp.ts`. */
 
 /** One player's result for a single round. */
 export interface RoundScore {
@@ -33,9 +28,9 @@ export interface RoundScore {
  * Rounds 1-2 are x1.0, 3-4 are x1.5, 5-6 are x2.0 and so on. Applied equally to
  * both players, so it escalates the stakes without favouring whoever is ahead.
  */
-export function damageMultiplier(roundIndex: number): number {
-  const steps = Math.floor(Math.max(0, roundIndex) / DAMAGE_RAMP_EVERY);
-  return 1 + steps * DAMAGE_RAMP_STEP;
+export function damageMultiplier(roundIndex: number, config: ResolvedConfig): number {
+  const steps = Math.floor(Math.max(0, roundIndex) / config.DAMAGE_RAMP_EVERY);
+  return 1 + steps * config.DAMAGE_RAMP_STEP;
 }
 
 export interface DamageResult {
@@ -73,6 +68,7 @@ export interface RoundResolution {
 export function duelDamage(
   scores: readonly RoundScore[],
   roundIndex: number,
+  config: ResolvedConfig,
 ): RoundResolution {
   if (scores.length !== 2) {
     return {
@@ -83,11 +79,11 @@ export function duelDamage(
   }
 
   const [a, b] = scores;
-  const multiplier = damageMultiplier(roundIndex);
+  const multiplier = damageMultiplier(roundIndex, config);
 
   // Nobody answered. The song is the only winner; both players pay.
   if (a.points === 0 && b.points === 0) {
-    const toll = songWinsDamage(multiplier);
+    const toll = songWinsDamage(multiplier, config);
     return {
       outcome: "song",
       winnerId: undefined,
@@ -122,7 +118,7 @@ export function duelDamage(
     timeGapMs,
     damage: [
       { userId: faster.userId, damage: 0 },
-      { userId: slower.userId, damage: tieDamage(timeGapMs, multiplier) },
+      { userId: slower.userId, damage: tieDamage(timeGapMs, multiplier, config) },
     ],
   };
 }
@@ -133,8 +129,15 @@ export function duelDamage(
  * Capped before the multiplier is applied, so the cap describes the base severity
  * and late rounds still escalate like every other kind of damage.
  */
-export function tieDamage(timeGapMs: number, multiplier: number): number {
-  const base = Math.min(TIE_DAMAGE_CAP, (Math.max(0, timeGapMs) / 1_000) * TIE_DAMAGE_PER_SECOND);
+export function tieDamage(
+  timeGapMs: number,
+  multiplier: number,
+  config: ResolvedConfig,
+): number {
+  const base = Math.min(
+    config.TIE_DAMAGE_CAP,
+    (Math.max(0, timeGapMs) / 1_000) * config.TIE_DAMAGE_PER_SECOND,
+  );
   return Math.round(base * multiplier);
 }
 
@@ -144,8 +147,8 @@ export function tieDamage(timeGapMs: number, multiplier: number): number {
  * Scaled like every other kind of damage — a dead round late in a duel costs what the
  * round is worth, otherwise a run of hard tracks stalls the match.
  */
-export function songWinsDamage(multiplier: number): number {
-  return Math.round(SONG_WINS_DAMAGE * multiplier);
+export function songWinsDamage(multiplier: number, config: ResolvedConfig): number {
+  return Math.round(config.SONG_WINS_DAMAGE * multiplier);
 }
 
 /**
@@ -158,16 +161,17 @@ export function songWinsDamage(multiplier: number): number {
 export function roomDamage(
   scores: readonly RoundScore[],
   roundIndex: number,
+  config: ResolvedConfig,
 ): RoundResolution {
   if (scores.length === 0) {
     return { outcome: "song", winnerId: undefined, damage: [] };
   }
 
-  const multiplier = damageMultiplier(roundIndex);
+  const multiplier = damageMultiplier(roundIndex, config);
 
   // Nobody scored: the song beats the whole room rather than the round stalling.
   if (scores.every((score) => score.points === 0)) {
-    const toll = songWinsDamage(multiplier);
+    const toll = songWinsDamage(multiplier, config);
     return {
       outcome: "song",
       winnerId: undefined,
@@ -198,7 +202,7 @@ export function roomDamage(
       const fastestAtMedian = ranked.find((entry) => entry.points === median)!;
       return {
         userId: score.userId,
-        damage: tieDamage(score.elapsedMs - fastestAtMedian.elapsedMs, multiplier),
+        damage: tieDamage(score.elapsedMs - fastestAtMedian.elapsedMs, multiplier, config),
       };
     }),
   };
@@ -237,6 +241,7 @@ export type DuelStatus =
 export function resolveDuel(
   players: readonly DuelPlayerState[],
   roundsPlayed: number,
+  config: ResolvedConfig,
 ): DuelStatus {
   const alive = players.filter((player) => player.hp > 0);
 
@@ -246,7 +251,7 @@ export function resolveDuel(
   // Both hit zero in the same round — fall through to the tiebreak below.
   if (alive.length === 0) return decideOnTiebreak(players);
 
-  if (roundsPlayed >= MAX_DUEL_ROUNDS) return decideOnTiebreak(players);
+  if (roundsPlayed >= config.MAX_DUEL_ROUNDS) return decideOnTiebreak(players);
 
   return { kind: "continue" };
 }
@@ -270,12 +275,16 @@ function decideOnTiebreak(players: readonly DuelPlayerState[]): DuelStatus {
  * Eliminated players keep guessing for placing, so "over" means one survivor rather
  * than everyone else having left.
  */
-export function resolveRoom(players: readonly DuelPlayerState[], roundsPlayed: number): DuelStatus {
+export function resolveRoom(
+  players: readonly DuelPlayerState[],
+  roundsPlayed: number,
+  config: ResolvedConfig,
+): DuelStatus {
   const alive = players.filter((player) => player.hp > 0);
 
   if (alive.length === 1) return { kind: "complete", winnerId: alive[0].userId };
   if (alive.length === 0) return decideOnTiebreak(players);
-  if (roundsPlayed >= MAX_DUEL_ROUNDS) return decideOnTiebreak(players);
+  if (roundsPlayed >= config.MAX_DUEL_ROUNDS) return decideOnTiebreak(players);
 
   return { kind: "continue" };
 }

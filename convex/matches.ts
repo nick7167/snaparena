@@ -3,7 +3,8 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Doc, Id } from "./_generated/dataModel";
 import { actingUser, currentUser, globalPosition, publicAvatarUrl } from "./users";
 import { endGuessingEarly } from "./phases";
-import { MAX_GUESSES_PER_ROUND, WRONG_GUESS_LOCKOUT_MS } from "../src/engine/config";
+import { resolveConfig } from "./config";
+import type { ResolvedConfig } from "../src/engine/config-merge";
 import { checkGuess } from "../src/engine/match";
 import { normalizeTitle } from "../src/engine/normalize";
 import {
@@ -39,6 +40,7 @@ type RankSource = { kind: "live" } | { kind: "frozen"; position: number | null }
 async function playerCard(
   ctx: QueryCtx,
   userId: Id<"users">,
+  config: ResolvedConfig,
   rankSource: RankSource = { kind: "live" },
 ) {
   const user = await ctx.db.get(userId);
@@ -90,7 +92,7 @@ async function playerCard(
     rankAccent: rank.tier.accent,
     rankProgress: rank.progress,
     placementsRemaining: user.placementsRemaining,
-    level: levelForXp(user.xp ?? 0).level,
+    level: levelForXp(user.xp ?? 0, config).level,
     wins: user.rankedWins ?? 0,
     losses: Math.max(0, user.gamesPlayed - (user.rankedWins ?? 0)),
     bestCategory: bestCategory?.name ?? null,
@@ -143,6 +145,14 @@ export const state = query({
     const match = await ctx.db.get(args.matchId);
     if (!match) return null;
 
+    /**
+     * The rules THIS match is being played under, not the ones in force now.
+     *
+     * Both clients render from this, so a save mid-duel cannot leave the two of them
+     * disagreeing about the multiplier or the reveal beat between rounds.
+     */
+    const config = await resolveConfig(ctx, match.configVersionId);
+
     // A token is only honoured for the daily, so it can never surface another
     // player's `isMe` in a ranked or room match.
     const me = await actingUser(ctx, dailyOnly(match.mode, args.guestToken));
@@ -162,7 +172,7 @@ export const state = query({
      */
     const cards = await Promise.all(
       players.map((player) =>
-        playerCard(ctx, player.userId, {
+        playerCard(ctx, player.userId, config, {
           kind: "frozen",
           position: player.globalRankAtStart ?? null,
         }),
@@ -290,12 +300,12 @@ export const state = query({
       lastRoundDamage: (match.roundLog ?? []).at(-1)?.damage ?? [],
       lastRoundOutcome: (match.roundLog ?? []).at(-1)?.outcome ?? null,
       lastRoundTimeGapMs: (match.roundLog ?? []).at(-1)?.timeGapMs ?? null,
-      multiplier: damageMultiplier(match.currentRound),
-      nextMultiplier: damageMultiplier(match.currentRound + 1),
+      multiplier: damageMultiplier(match.currentRound, config),
+      nextMultiplier: damageMultiplier(match.currentRound + 1, config),
       suddenDeath: match.suddenDeath === true,
       roundStartedAt: match.roundStartedAt ?? null,
       roundElapsedMs,
-      revealBeat: revealBeatAt(roundElapsedMs),
+      revealBeat: revealBeatAt(roundElapsedMs, config),
       winnerId: match.winnerId ?? null,
 
       /** Audio is needed to play; the title never is until the reveal. */
@@ -416,6 +426,8 @@ export const myRoundStatus = query({
     const match = await ctx.db.get(args.matchId);
     if (!match) return null;
 
+    const config = await resolveConfig(ctx, match.configVersionId);
+
     const user = await actingUser(ctx, dailyOnly(match.mode, args.guestToken));
     if (!user) return null;
 
@@ -428,16 +440,18 @@ export const myRoundStatus = query({
 
     const solved = guesses.find((guess) => guess.correct);
     const lastWrong = guesses.filter((guess) => !guess.correct).at(-1);
-    const lockedUntil = lastWrong ? lastWrong.serverReceivedAt + WRONG_GUESS_LOCKOUT_MS : 0;
+    const lockedUntil = lastWrong
+      ? lastWrong.serverReceivedAt + config.WRONG_GUESS_LOCKOUT_MS
+      : 0;
 
     return {
       solved: solved !== undefined,
       attempts: guesses.length,
-      attemptsRemaining: Math.max(0, MAX_GUESSES_PER_ROUND - guesses.length),
+      attemptsRemaining: Math.max(0, config.MAX_GUESSES_PER_ROUND - guesses.length),
       lockedUntil,
       lockedNow: solved === undefined && Date.now() < lockedUntil,
       pointsThisRound: solved?.points ?? 0,
-      tierThisRound: solved ? scoreForGuess(solved.clientElapsedMs).tier.id : null,
+      tierThisRound: solved ? scoreForGuess(solved.clientElapsedMs, config).tier.id : null,
     };
   },
 });
@@ -470,6 +484,9 @@ export async function applyGuess(
 
   const match = await ctx.db.get(matchId);
   if (!match) return { status: "rejected", reason: "no-such-match" };
+
+  // Scored under the config the match started with, so the curve cannot move mid-duel.
+  const config = await resolveConfig(ctx, match.configVersionId);
   if (match.status !== "active") return { status: "rejected", reason: "match-not-active" };
   // Guessing is only open during its own phase — a guess landing during the
   // reveal or countdown must not score.
@@ -497,7 +514,7 @@ export async function applyGuess(
    * button, the back button, a force-quit, a dead battery. Cannot affect a live player:
    * their client nudges every two seconds, so a round they are in never sits stale.
    */
-  if (roundHasExpired(now - match.roundStartedAt)) {
+  if (roundHasExpired(now - match.roundStartedAt, config)) {
     return { status: "rejected", reason: "round-expired" };
   }
 
@@ -511,20 +528,23 @@ export async function applyGuess(
   if (priorGuesses.some((guess) => guess.correct)) {
     return { status: "rejected", reason: "already-solved" };
   }
-  if (priorGuesses.length >= MAX_GUESSES_PER_ROUND) {
+  if (priorGuesses.length >= config.MAX_GUESSES_PER_ROUND) {
     return { status: "rejected", reason: "too-many-attempts" };
   }
 
   const lastWrong = priorGuesses.at(-1);
-  if (lastWrong && now < lastWrong.serverReceivedAt + WRONG_GUESS_LOCKOUT_MS) {
+  if (lastWrong && now < lastWrong.serverReceivedAt + config.WRONG_GUESS_LOCKOUT_MS) {
     return { status: "rejected", reason: "locked-out" };
   }
 
-  const clock = validateClientClock({
-    clientElapsedMs,
-    serverObservedElapsedMs: now - match.roundStartedAt,
-    previousClientElapsedMs: priorGuesses.at(-1)?.clientElapsedMs,
-  });
+  const clock = validateClientClock(
+    {
+      clientElapsedMs,
+      serverObservedElapsedMs: now - match.roundStartedAt,
+      previousClientElapsedMs: priorGuesses.at(-1)?.clientElapsedMs,
+    },
+    config,
+  );
 
   if (!clock.valid) {
     await ctx.db.insert("guesses", {
@@ -551,12 +571,16 @@ export async function applyGuess(
     .withIndex("by_track", (q) => q.eq("trackId", track._id))
     .collect();
 
-  const verdict = checkGuess(text, {
-    titleNormalized: track.titleNormalized,
-    aliasesNormalized: aliases.map((alias) => alias.aliasNormalized),
-  });
+  const verdict = checkGuess(
+    text,
+    {
+      titleNormalized: track.titleNormalized,
+      aliasesNormalized: aliases.map((alias) => alias.aliasNormalized),
+    },
+    config,
+  );
 
-  const score = scoreForGuess(clock.elapsedMs);
+  const score = scoreForGuess(clock.elapsedMs, config);
   const points = verdict.correct ? score.points : 0;
 
   await ctx.db.insert("guesses", {
@@ -573,7 +597,7 @@ export async function applyGuess(
   });
 
   if (!verdict.correct) {
-    return { status: "wrong", lockedUntil: now + WRONG_GUESS_LOCKOUT_MS };
+    return { status: "wrong", lockedUntil: now + config.WRONG_GUESS_LOCKOUT_MS };
   }
 
   const player = await ctx.db
@@ -782,7 +806,7 @@ export const summary = query({
 /** Public profile card, reused by the lobby roster and profile pages. */
 export const card = query({
   args: { userId: v.id("users") },
-  handler: async (ctx, args) => playerCard(ctx, args.userId),
+  handler: async (ctx, args) => playerCard(ctx, args.userId, await resolveConfig(ctx)),
 });
 
 /** Recent matches shown on a profile before the list asks for more. */
@@ -894,9 +918,10 @@ export const recap = query({
       .collect();
 
     const players = [];
+    const config = await resolveConfig(ctx, match.configVersionId);
 
     for (const row of rows) {
-      const card = await playerCard(ctx, row.userId);
+      const card = await playerCard(ctx, row.userId, config);
       if (!card) continue;
 
       players.push({

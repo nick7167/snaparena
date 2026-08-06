@@ -12,6 +12,7 @@ import {
 import { startCountdown } from "./phases";
 import { rankForElo } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
+import { currentVersionId, resolveConfig } from "./config";
 
 /**
  * Rooms run until one player survives, so reserve the worst case rather than a
@@ -151,6 +152,7 @@ export const state = query({
 
     if (!room) return null;
 
+    const config = await resolveConfig(ctx);
     const members = await Promise.all(room.memberIds.map((id) => ctx.db.get(id)));
     const ready = new Set(room.readyIds ?? []);
 
@@ -184,7 +186,7 @@ export const state = query({
             isHost: member!._id === room.hostId,
             isReady: ready.has(member!._id),
             elo: member!.elo,
-            level: levelForXp(member!.xp ?? 0).level,
+            level: levelForXp(member!.xp ?? 0, config).level,
             placementsRemaining: member!.placementsRemaining,
             rankLabel: rank.label,
             rankTierId: rank.tier.id,
@@ -294,6 +296,14 @@ export const start = mutation({
     if (trackIds.length < ROOM_TRACK_COUNT) throw new Error("Not enough tracks in the catalogue");
 
     const matchId = await ctx.db.insert("matches", {
+      /**
+       * Freeze the rules this match will be played under.
+       *
+       * Everything downstream — scoring, damage, phase durations, the XP paid at the end —
+       * resolves through this id rather than through whatever is current, so a config saved
+       * mid-match cannot change the game underneath the players. Undefined means stock.
+       */
+      configVersionId: await currentVersionId(ctx),
       mode: "room",
       status: "active",
       playerIds: room.memberIds,

@@ -5,6 +5,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import type { ReactNode } from "react";
 import { AnalyticsProvider } from "@/analytics/Provider";
+import { ConfigProvider } from "./config";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
@@ -65,7 +66,9 @@ export function Providers({ children }: { children: ReactNode }) {
             not the Clerk one — every other system in the app keys on that id. Renders
             nothing, and is inert unless NEXT_PUBLIC_POSTHOG_KEY is set. */}
         <AnalyticsProvider />
-        {children}
+        {/* Tuning values, live from the deployment. Falls back to the shipped defaults
+            until the query lands rather than holding the first paint — see config.tsx. */}
+        <ConfigProvider>{children}</ConfigProvider>
       </ConvexProviderWithClerk>
     </ClerkProvider>
   );

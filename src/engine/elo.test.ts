@@ -9,15 +9,33 @@ import {
   STARTING_ELO,
 } from "./config";
 import {
-  applyCategoryResults,
-  applyMatchResult,
+  applyCategoryResults as applyCategoryResultsWith,
+  applyMatchResult as applyMatchResultWith,
   DRAW,
   expectedScore,
-  kFactor,
+  kFactor as kFactorWith,
   LOSS,
   outcomeFromScores,
   WIN,
 } from "./elo";
+import { mergeConfig } from "./config-merge";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const kFactor = (gamesPlayed: number) => kFactorWith(gamesPlayed, config);
+const applyMatchResult = (params: Parameters<typeof applyMatchResultWith>[0]) =>
+  applyMatchResultWith(params, config);
+const applyCategoryResults = (params: Parameters<typeof applyCategoryResultsWith>[0]) =>
+  applyCategoryResultsWith(params, config);
+
 
 describe("expectedScore", () => {
   it("is 0.5 between equal ratings", () => {

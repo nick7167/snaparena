@@ -37,6 +37,7 @@ import {
   subscribeSidebarCollapsed,
 } from "@/ui/sidebar-collapsed";
 import { useIsTabletBand } from "@/ui/viewport-band";
+import { useConfig } from "./config";
 
 /**
  * The application shell.
@@ -623,9 +624,10 @@ function Labelled({
  */
 function LevelBlock() {
   const me = useQuery(api.users.me, {});
+  const config = useConfig();
   if (!me) return null;
 
-  const level = levelForXp(me.xp ?? 0);
+  const level = levelForXp(me.xp ?? 0, config);
   const remaining = Math.max(0, level.xpForNextLevel - level.xpIntoLevel);
 
   return (

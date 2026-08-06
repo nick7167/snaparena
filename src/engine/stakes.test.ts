@@ -8,7 +8,21 @@ import {
   RANK_TIERS,
 } from "./config";
 import { rankForElo } from "./ranks";
-import { openingRange, stakesFor } from "./stakes";
+import { openingRange, stakesFor as stakesForWith } from "./stakes";
+import { mergeConfig } from "./config-merge";
+
+/**
+ * These tests exercise the SHIPPED defaults.
+ *
+ * Each engine function now takes its config as a parameter, so rather than threading it
+ * through every call the module-level bindings below curry it in once. The tests then read
+ * as tests of behaviour rather than of plumbing, and a test that wants different values
+ * can still call the underlying function directly with its own config.
+ */
+const config = mergeConfig();
+
+const stakesFor = (input: Parameters<typeof stakesForWith>[0]) => stakesForWith(input, config);
+
 
 /** An established player: past placements, past the K drop. */
 function established(elo: number, extra: Partial<Parameters<typeof stakesFor>[0]> = {}) {

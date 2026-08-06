@@ -26,6 +26,7 @@ import {
 } from "../src/engine/bots";
 import { DUEL_STARTING_HP } from "../src/engine/config";
 import { seedBotProfiles } from "./botprofiles";
+import { currentVersionId } from "./config";
 
 /**
  * Bot opponents.
@@ -157,6 +158,14 @@ async function createBotMatch(
   if (available.length < DUEL_TRACK_COUNT) return { status: "catalogue-too-small" };
 
   const matchId = await ctx.db.insert("matches", {
+    /**
+     * Freeze the rules this match will be played under.
+     *
+     * Everything downstream — scoring, damage, phase durations, the XP paid at the end —
+     * resolves through this id rather than through whatever is current, so a config saved
+     * mid-match cannot change the game underneath the players. Undefined means stock.
+     */
+    configVersionId: await currentVersionId(ctx),
     mode: "practice",
     status: "veto",
     playerIds: [user._id, bot._id],

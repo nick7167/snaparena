@@ -24,6 +24,7 @@ import { Button } from "@/ui/Button";
 import { Card, Meter } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
+import { useConfig } from "@/app/config";
 
 /**
  * The coached rounds of the welcome flow.
@@ -114,6 +115,7 @@ function CoachedRound({
 }) {
   const audio = useRoundAudio(track.previewUrl);
   const reduced = usePrefersReducedMotion();
+  const config = useConfig();
 
   const [started, setStarted] = useState(false);
   const [solvedMs, setSolvedMs] = useState<number | null>(null);
@@ -179,17 +181,17 @@ function CoachedRound({
         return { status: "wrong" };
       }
 
-      const tier = tierForElapsed(elapsed);
+      const tier = tierForElapsed(elapsed, config);
       play(tier.id === "snap" ? "snap" : "correct");
       setSolvedMs(elapsed);
       setFeedback(null);
       audio.stop();
       return { status: "correct" };
     },
-    [audio, track.title],
+    [audio, track.title, config],
   );
 
-  const tier = solvedMs === null ? null : tierForElapsed(solvedMs);
+  const tier = solvedMs === null ? null : tierForElapsed(solvedMs, config);
 
   /**
    * The rival's time, derived from the player's.
@@ -211,7 +213,12 @@ function CoachedRound({
   const damage =
     solvedMs === null || rivalMs === null
       ? 0
-      : Math.max(1, Math.round(tierForElapsed(solvedMs).points - tierForElapsed(rivalMs).points));
+      : Math.max(
+          1,
+          Math.round(
+            tierForElapsed(solvedMs, config).points - tierForElapsed(rivalMs, config).points,
+          ),
+        );
 
   return (
     <motion.div

@@ -24,6 +24,7 @@ import {
   onBoardDoc,
   positionIn,
 } from "./ladder";
+import { resolveConfig } from "./config";
 
 // Re-exported so `matches.ts` and friends keep importing it from here.
 export { globalPosition };
@@ -539,6 +540,16 @@ export const leaderboard = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     /**
+     * Still impersonal, so the shared cache entry does not fork.
+     *
+     * This reads the settings row and the current version row — both global documents, the
+     * same for every viewer — rather than anything about the caller. A config save does
+     * now invalidate the board, which is correct: the levels it renders would be stale
+     * otherwise.
+     */
+    const config = await resolveConfig(ctx);
+
+    /**
      * 500, raised from 200.
      *
      * The board is banded by rank tier and each band pages independently, so the ceiling
@@ -604,7 +615,7 @@ export const leaderboard = query({
       gamesPlayed: user.gamesPlayed,
       // Free — the row is already loaded, and a ladder showing only rating says
       // nothing about how much of the game someone has actually played.
-      level: levelForXp(user.xp ?? 0).level,
+      level: levelForXp(user.xp ?? 0, config).level,
     }));
   },
 });

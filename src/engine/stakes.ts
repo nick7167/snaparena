@@ -23,7 +23,9 @@
 import { rankForElo, type Rank } from "./ranks";
 import { expectedScore, kFactor } from "./elo";
 import { eloBandFor } from "./matchmaking";
-import { ESTABLISHED_AFTER_GAMES } from "./config";
+import type { ResolvedConfig } from "./config-merge";
+
+/** Config is a parameter, not an import — see the note in `xp.ts`. */
 
 /**
  * The band the queue opens at, and the edge case it implies.
@@ -106,11 +108,11 @@ export interface StakesInput {
  * and disappears depending on how close a player happens to be to a boundary is worse than
  * one that always states the same shape of fact.
  */
-export function stakesFor(input: StakesInput): Stakes {
+export function stakesFor(input: StakesInput, config: ResolvedConfig): Stakes {
   const { elo, gamesPlayed, placementsRemaining } = input;
 
   const rank = rankForElo(elo);
-  const k = kFactor(gamesPlayed);
+  const k = kFactor(gamesPlayed, config);
   const evenSwing = Math.round(k / 2);
   const reach = Math.round(k * BAND_EDGE);
 
@@ -125,7 +127,7 @@ export function stakesFor(input: StakesInput): Stakes {
     k,
     evenSwing,
     reach,
-    headline: pickHeadline(input, rank, reach, gamesPlayed),
+    headline: pickHeadline(input, rank, reach, gamesPlayed, config),
     atRisk: pickRisk(elo, rank, reach),
   };
 }
@@ -146,6 +148,7 @@ function pickHeadline(
   rank: Rank,
   reach: number,
   gamesPlayed: number,
+  config: ResolvedConfig,
 ): Headline {
   const { elo, rivalGap, rivalHandle } = input;
 
@@ -179,7 +182,7 @@ function pickHeadline(
 
   // The rating is about to stop moving as fast as it does now. Only worth saying when it
   // is close — "25 games until your swings shrink" is not news.
-  const untilSettled = ESTABLISHED_AFTER_GAMES - gamesPlayed;
+  const untilSettled = config.ESTABLISHED_AFTER_GAMES - gamesPlayed;
   if (untilSettled > 0 && untilSettled <= SETTLING_NOTICE_GAMES) {
     return { kind: "settling", games: untilSettled };
   }
