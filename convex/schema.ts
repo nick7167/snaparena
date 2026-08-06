@@ -344,6 +344,19 @@ export default defineSchema({
     winnerId: v.optional(v.id("users")),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    /**
+     * The config this match is played under, frozen when it was created.
+     *
+     * A duel reads its rules through this rather than through whatever is current, so
+     * saving a new config mid-match cannot change scoring, HP or damage underneath two
+     * players who are halfway through a round.
+     *
+     * Optional, and absent means the code defaults: matches created before configuration
+     * existed have no version to point at, and `resolveConfig` treats that as "stock"
+     * rather than as an error. Same reasoning as `lastRoundDamage` above — a field that
+     * ages out does not need a migration.
+     */
+    configVersionId: v.optional(v.id("configVersions")),
   })
     .index("by_status", ["status"])
     .index("by_room", ["roomId"]),
@@ -648,4 +661,59 @@ export default defineSchema({
      * `undefined` — so `eq("isBot", undefined)` is exactly the old filter.
      */
     .index("by_isBot", ["isBot"]),
+
+  /**
+   * One saved config, immutable once written.
+   *
+   * OVERRIDES ONLY, never a whole config. `src/engine/config.ts` stays the shipped
+   * baseline and these rows carry the differences from it, which is what lets a value
+   * added to the code later resolve correctly for a version row written before it
+   * existed — the row simply does not mention it. See `mergeConfig`.
+   *
+   * Append-only. A revert writes a NEW row holding the old values rather than mutating
+   * or deleting one, because matches point at these by id: editing a version in place
+   * would retroactively change the rules a finished match was played under.
+   *
+   * `values` is an array of key/value pairs rather than a record keyed by the setting
+   * name. The keys are dotted paths (`XP_AWARDS.rankedWin`), and a dot inside a dynamic
+   * object key is exactly the character Convex uses for nested field access elsewhere —
+   * an array sidesteps the question entirely. It is bounded by the size of the registry,
+   * not by anything a user controls, so it cannot grow into the document size limit.
+   */
+  configVersions: defineTable({
+    values: v.array(
+      v.object({
+        /** Dotted path into ResolvedConfig, e.g. "DUEL_STARTING_HP" or "XP_AWARDS.rankedWin". */
+        key: v.string(),
+        /** Null only where the registry marks the entry nullable. */
+        value: v.union(v.number(), v.null()),
+      }),
+    ),
+    createdAt: v.number(),
+    /** Optional so the seeded baseline version has an author of "the code". */
+    createdBy: v.optional(v.id("users")),
+    /** Free text: why this change was made. Shown in the history list. */
+    note: v.optional(v.string()),
+  }).index("by_created", ["createdAt"]),
+
+  /**
+   * Deployment-wide operator state. Exactly one row.
+   *
+   * A singleton table rather than a key/value table because everything here is read
+   * together, on paths that run per round — one document read is the cheapest form that
+   * question can take.
+   *
+   * `devFeaturesEnabled` replaces the DEV_RANK_BOTS environment variable. A Convex
+   * function cannot write its own environment, so a flag that an operator flips from the
+   * app has to live in the database; the variable could only ever be changed from a
+   * terminal, and on this project's single shared deployment that meant local development
+   * and the live site were switched together.
+   */
+  settings: defineTable({
+    /** Null until the first save; resolves to the code defaults. */
+    currentVersionId: v.optional(v.id("configVersions")),
+    devFeaturesEnabled: v.boolean(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.id("users")),
+  }),
 });
