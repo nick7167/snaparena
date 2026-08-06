@@ -5,13 +5,13 @@
  * Characterization tests for ranked pairing.
  *
  * `tryMatchmake` is the only thing in the app that pairs two players, and until now the
- * only exercise it got was one Playwright spec that requires `DEV_RANK_BOTS` to be set —
+ * only exercise it got was one Playwright spec that requires the dev roster enabled —
  * so the PRODUCTION branch (`others.sort(by enqueuedAt)[0]`) had no coverage at all.
  * These pin it before the pairing body is lifted out into a helper the server-side
  * sweeper shares.
  *
- * `devRankBotsEnabled()` reads `process.env` at call time, so `vi.stubEnv` can drive both
- * branches from here.
+ * The dev-roster branch is driven by `settings.devFeaturesEnabled`, a database row, so
+ * `enableDevFeatures` below writes it rather than stubbing an environment variable.
  */
 
 import { convexTest } from "convex-test";
@@ -28,6 +28,25 @@ function harness() {
   return convexTest(schema, modules);
 }
 type Harness = ReturnType<typeof harness>;
+
+/**
+ * Turns the operator surfaces on for a test.
+ *
+ * The switch used to be the `DEV_RANK_BOTS` environment variable, which `vi.stubEnv`
+ * could drive from here. It is a database row now — `settings.devFeaturesEnabled` — so
+ * enabling it means writing that row.
+ */
+async function enableDevFeatures(t: Harness) {
+  await t.run(async (ctx) => {
+    const existing = await ctx.db.query("settings").first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { devFeaturesEnabled: true });
+      return;
+    }
+    await ctx.db.insert("settings", { devFeaturesEnabled: true, updatedAt: Date.now() });
+  });
+}
+
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -208,9 +227,8 @@ describe("tryMatchmake — production branch", () => {
 
 describe("tryMatchmake — dev rank bots", () => {
   test("14. a queued human is preferred over a bot, and bots wait out the floor", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     const ids = await seedQueue(t, [
       // No wait at all, so the bot floor has definitely not elapsed.
       { handle: "seeker", elo: 1000 },
@@ -226,9 +244,8 @@ describe("tryMatchmake — dev rank bots", () => {
   });
 
   test("14b. with only bots available, none is offered until the floor has passed", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedQueue(t, [
       { handle: "seeker", elo: 1000 },
       { handle: "bot-a", elo: 1000, isBot: true },
@@ -404,9 +421,8 @@ describe("ranked.sweep — bots never initiate", () => {
     // that floor gates picking a bot, not being one. A bot's queue row is also hours old,
     // so its band is maxed. If bots initiated, the human's search would end on the first
     // sweep instead of running its course.
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedQueue(t, [
       { handle: "bot-a", elo: 1000, isBot: true, waitingMs: 3_600_000 },
       { handle: "bot-b", elo: 1100, isBot: true, waitingMs: 3_600_000 },
@@ -419,9 +435,8 @@ describe("ranked.sweep — bots never initiate", () => {
   });
 
   test("a bot is still offered once the human has waited out the floor", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     const ids = await seedQueue(t, [
       { handle: "bot-a", elo: 1000, isBot: true, waitingMs: 3_600_000 },
       { handle: "searcher", elo: 1000, waitingMs: 60_000 },
@@ -435,9 +450,8 @@ describe("ranked.sweep — bots never initiate", () => {
   });
 
   test("two humans still pair with bots sitting in the pool", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     const ids = await seedQueue(t, [
       { handle: "bot-a", elo: 1000, isBot: true, waitingMs: 3_600_000 },
       { handle: "one", elo: 1000, waitingMs: 5_000 },

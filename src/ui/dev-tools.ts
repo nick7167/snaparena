@@ -4,11 +4,10 @@
  * Which developer tools are switched on, per browser.
  *
  * THE PROBLEM THIS SOLVES: this project runs one shared Convex deployment — local
- * development and the live app talk to the same backend. So `DEV_RANK_BOTS`, the flag that
- * licenses every dev-only control, is a property of the DEPLOYMENT rather than of a person.
- * Changing it meant `npx convex env set` from a terminal, it applied to everyone at once,
- * and it was all-or-nothing: the instant-win bar sat over the match screen whether or not
- * you were currently using it.
+ * development and the live app talk to the same backend. So the flag that licenses every
+ * dev-only control is a property of the DEPLOYMENT rather than of a person. It applies to
+ * everyone at once, and it is all-or-nothing: the instant-win bar sat over the match screen
+ * whether or not you were currently using it.
  *
  * The fix is two gates rather than one. The server flag stays the master switch and still
  * decides whether dev tools may exist AT ALL; these local toggles decide which of them are

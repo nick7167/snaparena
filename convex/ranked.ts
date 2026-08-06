@@ -27,8 +27,8 @@ import {
 } from "./draft";
 // DEV ONLY — delete with convex/devbots.ts. See the single call site in `tryMatchmake`.
 import { pickDevOpponent } from "./devbots";
-import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
-import { currentVersionId } from "./config";
+
+import { devFeaturesEnabled, currentVersionId } from "./config";
 
 export const queueStatus = query({
   args: {},
@@ -222,7 +222,7 @@ async function pairFor(
   // DEV ONLY — the branch: with the rank bots seeded, "longest waiting" would return
   // the same bot every time. See `pickDevOpponent`; it still prefers a queued human,
   // so this line is the only thing to revert.
-  const opponentEntry = devRankBotsEnabled()
+  const opponentEntry = await devFeaturesEnabled(ctx)
     ? await pickDevOpponent(ctx, user, others, waitMs)
     : others.sort((a, b) => a.enqueuedAt - b.enqueuedAt)[0];
 

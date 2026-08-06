@@ -131,7 +131,8 @@ export async function hideDevOverlay(page: Page): Promise<void> {
 /**
  * Turns on the win / lose / random bar over a live duel.
  *
- * The bar is gated twice: `DEV_RANK_BOTS` on the deployment licenses it to exist, and a
+ * The bar is gated three times: developer features on the deployment license it to exist,
+ * the admin role decides who may use it, and a
  * per-browser toggle decides whether it renders. Only the first is set up for this suite —
  * the second lives in localStorage and is off by default, deliberately, so a dev tool
  * cannot wander into a screenshot. Nothing was switching it on, which is why any spec

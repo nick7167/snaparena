@@ -28,6 +28,25 @@ function harness() {
 }
 type Harness = ReturnType<typeof harness>;
 
+/**
+ * Turns the operator surfaces on for a test.
+ *
+ * The switch used to be the `DEV_RANK_BOTS` environment variable, which `vi.stubEnv`
+ * could drive from here. It is a database row now — `settings.devFeaturesEnabled` — so
+ * enabling it means writing that row.
+ */
+async function enableDevFeatures(t: Harness) {
+  await t.run(async (ctx) => {
+    const existing = await ctx.db.query("settings").first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { devFeaturesEnabled: true });
+      return;
+    }
+    await ctx.db.insert("settings", { devFeaturesEnabled: true, updatedAt: Date.now() });
+  });
+}
+
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -143,9 +162,8 @@ describe("ladder eligibility", () => {
 
 describe("ladder eligibility — dev rank bots", () => {
   test("a rank_ persona is listed, a practice persona still is not", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedUsers(t, MIXED);
 
     const board = await t.query(api.users.leaderboard, { limit: 500 });
@@ -158,9 +176,8 @@ describe("ladder eligibility — dev rank bots", () => {
   });
 
   test("count and board still agree with the flag on", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedUsers(t, MIXED);
 
     const board = await t.query(api.users.leaderboard, { limit: 500 });
@@ -171,9 +188,8 @@ describe("ladder eligibility — dev rank bots", () => {
   });
 
   test("positions shift to account for the listed bot", async () => {
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedUsers(t, MIXED);
 
     // middle was #2 with the flag off; the rank bot at 1450 now sits between them.
@@ -331,9 +347,8 @@ describe("snapshot builder", () => {
     // The snapshot is always the production board; dev deployments read past it via the
     // live walk instead. A snapshot that sometimes contained bots would be a second
     // ladder to keep straight.
-    vi.stubEnv("DEV_RANK_BOTS", "1");
-
     const t = harness();
+    await enableDevFeatures(t);
     await seedUsers(t, MIXED);
     await rebuild(t);
 

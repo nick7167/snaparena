@@ -29,26 +29,18 @@ import type { BotPersona } from "./bots";
 export const DEV_RANK_BOT_PREFIX = "rank_";
 
 /**
- * The one switch. Server-side only.
+ * THE SWITCH MOVED. It is now `settings.devFeaturesEnabled` in the database, read through
+ * `devFeaturesEnabled(ctx)` in `convex/config.ts`.
  *
- * Read from the deployment environment rather than a NEXT_PUBLIC_ flag, because local
- * dev and the Vercel deployment share a single Convex deployment — a client-side flag
- * would have to be kept in sync in two places and could go half-on. The client reads it
- * back through the `devbots.enabled` query instead, so there is no Vercel config at all.
+ * It used to be the `DEV_RANK_BOTS` deployment variable, which could only be changed with
+ * `npx convex env set` from a terminal. A Convex function cannot write its own
+ * environment, so an operator toggle in the admin console was impossible while it lived
+ * there — and on this project's single shared deployment, setting it for local
+ * development set it for the live site at the same moment.
  *
- * Lives here rather than in `convex/devbots.ts` purely to break an import cycle:
- * `convex/users.ts` needs the flag, and `devbots.ts` needs `requireUser` from `users.ts`.
- * Nothing in this module has any other dependency.
- *
- * Turn on:  npx convex env set DEV_RANK_BOTS 1
- * Turn off: npx convex env remove DEV_RANK_BOTS
+ * Nothing reads the environment variable any more. It can be removed from the deployment
+ * at leisure; leaving it set does nothing.
  */
-export function devRankBotsEnabled(): boolean {
-  const raw = process.env.DEV_RANK_BOTS;
-  if (raw === undefined) return false;
-  const value = raw.trim().toLowerCase();
-  return value !== "" && value !== "0" && value !== "false";
-}
 
 /**
  * One persona per rank, anchored mid-band.

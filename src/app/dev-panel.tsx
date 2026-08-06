@@ -21,7 +21,7 @@ import {
  * The developer tools drawer.
  *
  * TWO GATES, and both have to be open for anything here to exist. `devbots.enabled` is the
- * deployment's master switch, so on the live app with `DEV_RANK_BOTS` unset this component
+ * deployment's master switch, so with developer features off this component
  * returns null before rendering a single pixel — there is no way for a player to reach it,
  * and no toggle in localStorage can change that. The per-tool switches below are the second
  * gate, and they are local to one browser.
@@ -202,21 +202,21 @@ export function DevPanel() {
             {/*
              * Reported rather than offered.
              *
-             * Rank bots on the ladder are decided by `devRankBotsEnabled()` on the server,
+             * Rank bots on the ladder are decided by `devFeaturesEnabled(ctx)` on the server,
              * and `users.leaderboard` makes no per-viewer call so it stays one shared cache
              * entry. A switch here could not change it without forking that cache per
              * identity — so this states the fact instead of pretending to control it.
              */}
             <p className="text-label text-muted border-line mt-1 border-t px-2 pt-2">
-              Rank bots are on the ladder for everyone while{" "}
-              <span className="font-mono">DEV_RANK_BOTS</span> is set — that one is a
-              deployment setting, not a browser one.
+              Rank bots are on the ladder for everyone while developer features are on —
+              that one is a deployment setting, not a browser one. Change it in{" "}
+              <span className="font-mono">/admin</span>.
             </p>
 
             <p className="text-label text-muted px-2">
               Everything above is stored in this browser only. Players never see this panel:
-              it is absent entirely unless{" "}
-              <span className="font-mono">DEV_RANK_BOTS</span> is set on the deployment.
+              it needs developer features on for the deployment AND the admin role on your
+              account.
             </p>
           </motion.div>
         )}

@@ -93,9 +93,9 @@ export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeav
  * path, so rating, placements, XP, badges and the results screen all behave exactly as
  * if it had been played out.
  *
- * Renders nothing at all unless DEV_RANK_BOTS is set on the Convex deployment — the flag
- * is read from the server rather than a NEXT_PUBLIC_ variable, so there is nothing to
- * keep in sync with Vercel.
+ * Renders nothing unless developer features are on for the deployment AND the caller
+ * holds the admin role. The flag is a database row read from the server rather than a
+ * NEXT_PUBLIC_ variable, so there is nothing to keep in sync with Vercel.
  */
 function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
   const dev = useQuery(api.devbots.enabled, {});

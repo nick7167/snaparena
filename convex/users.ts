@@ -12,7 +12,7 @@ import {
 import { computeStreak, dayKey } from "../src/engine/streak";
 import { levelForXp } from "../src/engine/xp";
 // DEV ONLY — delete with convex/devbots.ts. Call sites: `leaderboard` and `tierCounts`.
-import { devRankBotsEnabled } from "../src/engine/dev-rank-bots";
+
 import {
   POSITION_CEILING,
   POSITION_EXACT_TO,
@@ -24,7 +24,7 @@ import {
   onBoardDoc,
   positionIn,
 } from "./ladder";
-import { resolveConfig } from "./config";
+import { devFeaturesEnabled, resolveConfig } from "./config";
 
 // Re-exported so `matches.ts` and friends keep importing it from here.
 export { globalPosition };
@@ -589,7 +589,7 @@ export const leaderboard = query({
     // DEV ONLY — delete with convex/devbots.ts. The sixteen rank bots exist to make this
     // board show every rank at once; the twelve shipping practice bots stay hidden either
     // way, which is why the relaxed path still filters on the persona prefix below.
-    const showRankBots = devRankBotsEnabled();
+    const showRankBots = await devFeaturesEnabled(ctx);
 
     const ranked = await ladderQuery(ctx, showRankBots)
       .order("desc")
@@ -718,7 +718,7 @@ export const tierCounts = query({
       }));
     }
 
-    const showRankBots = devRankBotsEnabled();
+    const showRankBots = await devFeaturesEnabled(ctx);
 
     return await Promise.all(
       RANK_TIERS.map(async (tier, index) => {
@@ -770,7 +770,7 @@ const LADDER_COUNT_CAP = 5_000;
 export const rankedPlayerCount = query({
   args: {},
   handler: async (ctx) => {
-    const showRankBots = devRankBotsEnabled();
+    const showRankBots = await devFeaturesEnabled(ctx);
 
     // The builder already counted, exactly, over the same population the board lists.
     const field = await ladderField(ctx);
@@ -993,7 +993,7 @@ export const ladderNeighbours = query({
       };
     }
 
-    const showRankBots = devRankBotsEnabled();
+    const showRankBots = await devFeaturesEnabled(ctx);
 
     /** The last NEIGHBOUR_REACH players ahead, oldest-first once the walk stops. */
     const above: Doc<"users">[] = [];

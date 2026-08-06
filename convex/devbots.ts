@@ -8,9 +8,9 @@ import { PLACEMENT_MATCHES, STARTING_ELO } from "../src/engine/config";
 import {
   DEV_BOT_MIN_WAIT_MS,
   DEV_RANK_BOT_PERSONAS,
-  devRankBotsEnabled,
   isDevRankBotPersona,
 } from "../src/engine/dev-rank-bots";
+import { devFeaturesEnabled } from "./config";
 
 /**
  * DEV ONLY — sixteen rated bot opponents, one per rank. DELETE BEFORE PUBLISHING.
@@ -26,22 +26,41 @@ import {
  * the entire point: the placement gate, promotions and a populated leaderboard cannot be
  * tested against a `mode: "practice"` opponent that by design cannot move rating.
  *
- * The safety property that replaces `bots.ts`'s "always practice" is the flag below plus
- * `purge`: nothing here does anything unless DEV_RANK_BOTS is set on the deployment.
+ * The safety property that replaces `bots.ts`'s "always practice" is the deployment flag
+ * plus `purge`: nothing here does anything unless `settings.devFeaturesEnabled` is on, and
+ * everything reachable from a browser also requires the admin role.
  */
 
 /** Lets the client show dev-only controls without a second flag to keep in sync. */
 export const enabled = query({
   args: {},
-  handler: async () => {
-    return { enabled: devRankBotsEnabled() };
+  handler: async (ctx) => {
+    return { enabled: await devFeaturesEnabled(ctx) };
   },
 });
 
-function assertAdmin(secret: string): void {
-  const expected = process.env.ADMIN_IMPORT_SECRET;
-  if (!expected) throw new Error("ADMIN_IMPORT_SECRET is not configured on the deployment");
-  if (secret !== expected) throw new Error("Bad admin secret");
+/**
+ * Two ways in, because there are two legitimate callers.
+ *
+ * `npm run dev-bots` runs from a terminal with no Clerk session, so it authenticates with
+ * the deployment secret. The admin console runs as a signed-in operator with no access to
+ * that secret. Accepting either keeps the script working while the page stops needing a
+ * value copied out of the deployment environment.
+ *
+ * Not "either is fine": each is a full check on its own, and a caller with neither is
+ * refused. The secret path is deliberately first so a script never depends on a session.
+ */
+async function assertAdminOrSecret(ctx: MutationCtx, secret?: string): Promise<void> {
+  if (secret !== undefined) {
+    const expected = process.env.ADMIN_IMPORT_SECRET;
+    if (!expected) {
+      throw new Error("ADMIN_IMPORT_SECRET is not configured on the deployment");
+    }
+    if (secret !== expected) throw new Error("Bad admin secret");
+    return;
+  }
+
+  await requireAdmin(ctx);
 }
 
 async function userByHandle(ctx: MutationCtx, handle: string): Promise<Doc<"users"> | null> {
@@ -65,9 +84,9 @@ function isDevRankBot(user: Doc<"users"> | null): boolean {
  * re-running puts every bot back on its anchor.
  */
 export const seed = mutation({
-  args: { secret: v.string() },
+  args: { secret: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    assertAdmin(args.secret);
+    await assertAdminOrSecret(ctx, args.secret);
 
     let created = 0;
     let updated = 0;
@@ -132,9 +151,9 @@ export const seed = mutation({
  * its level and its badges, and leaving a Diamond account reading `0W · 0L`.
  */
 export const resetRoster = mutation({
-  args: { secret: v.string() },
+  args: { secret: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    assertAdmin(args.secret);
+    await assertAdminOrSecret(ctx, args.secret);
 
     let reset = 0;
 
@@ -243,7 +262,7 @@ async function inLiveMatch(ctx: MutationCtx, userId: Id<"users">): Promise<boole
 export const refillQueue = internalMutation({
   args: {},
   handler: async (ctx) => {
-    if (!devRankBotsEnabled()) return { skipped: true as const };
+    if (!await devFeaturesEnabled(ctx)) return { skipped: true as const };
 
     const reaped = await reapStaleBotMatches(ctx);
 
@@ -350,7 +369,7 @@ export async function pickDevOpponent(
  * ADMIN ONLY, and the deployment flag is not enough on its own.
  *
  * This project points local development and the live site at ONE Convex deployment, so
- * `DEV_RANK_BOTS` being set means it is set in production too. With only that check, any
+ * the dev flag being on means it is on in production too. With only that check, any
  * signed-in player could call this mutation directly — the UI is irrelevant, a public
  * mutation is reachable from a console — and hand themselves a rated win through the
  * genuine rating path, while the opponent took a real loss. The role is the check that
@@ -362,8 +381,8 @@ export const resolveNow = mutation({
     outcome: v.union(v.literal("win"), v.literal("loss"), v.literal("random")),
   },
   handler: async (ctx, args) => {
-    if (!devRankBotsEnabled()) {
-      throw new Error("DEV_RANK_BOTS is not enabled on this deployment");
+    if (!await devFeaturesEnabled(ctx)) {
+      throw new Error("Developer features are switched off for this deployment");
     }
 
     const user = await requireAdmin(ctx);
@@ -419,9 +438,9 @@ const PURGE_MATCH_BATCH = 25;
  * level or badge earned against a bot survives into launch.
  */
 export const purge = mutation({
-  args: { secret: v.string(), resetHandle: v.optional(v.string()) },
+  args: { secret: v.optional(v.string()), resetHandle: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    assertAdmin(args.secret);
+    await assertAdminOrSecret(ctx, args.secret);
 
     const bots: Doc<"users">[] = [];
     for (const persona of DEV_RANK_BOT_PERSONAS) {
@@ -555,7 +574,7 @@ async function resetAccount(ctx: MutationCtx, handle: string): Promise<boolean> 
  * REMOVAL CHECKLIST — what this file cannot delete for you.
  *
  *   npm run dev-bots purge <your-handle>   # repeat until it reports done
- *   npx convex env remove DEV_RANK_BOTS
+ *   turn "developer features" off in /admin  (settings.devFeaturesEnabled)
  *   rm convex/devbots.ts
  *   rm src/engine/dev-rank-bots.ts src/engine/dev-rank-bots.test.ts
  *   rm scripts/dev-rank-bots.ts            # and its "dev-bots" package.json script

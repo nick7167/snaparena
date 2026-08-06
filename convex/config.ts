@@ -60,6 +60,50 @@ export async function resolveConfig(
   return mergeConfig(toOverrides(await ctx.db.get(settings.currentVersionId)));
 }
 
+/**
+ * Whether the operator surfaces exist on this deployment at all.
+ *
+ * The rank-bot roster, the instant-win bar and the developer tools drawer all hang off
+ * this. It replaces the `DEV_RANK_BOTS` environment variable, which could only be changed
+ * from a terminal because a Convex function cannot write its own environment.
+ *
+ * DEFAULTS TO FALSE, including on a deployment that still has the old variable set. There
+ * is deliberately no fallback to it: two sources of truth for a switch that decides
+ * whether players can hand themselves a rated win is worse than one that has to be turned
+ * on explicitly after the migration.
+ *
+ * This is a deployment-wide switch, not a permission. Who may USE these surfaces is still
+ * the admin role — see `requireAdmin` in roles.ts, which every one of them also checks.
+ */
+export async function devFeaturesEnabled(ctx: QueryCtx | MutationCtx): Promise<boolean> {
+  return (await getSettings(ctx))?.devFeaturesEnabled ?? false;
+}
+
+/** Turns the operator surfaces on or off for the whole deployment. */
+export const setDevFeatures = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx);
+
+    const settings = await getSettings(ctx);
+    if (settings) {
+      await ctx.db.patch(settings._id, {
+        devFeaturesEnabled: args.enabled,
+        updatedAt: Date.now(),
+        updatedBy: admin._id,
+      });
+    } else {
+      await ctx.db.insert("settings", {
+        devFeaturesEnabled: args.enabled,
+        updatedAt: Date.now(),
+        updatedBy: admin._id,
+      });
+    }
+
+    return { enabled: args.enabled };
+  },
+});
+
 /** The version new matches should be stamped with. Null means "stock". */
 export async function currentVersionId(
   ctx: QueryCtx | MutationCtx,

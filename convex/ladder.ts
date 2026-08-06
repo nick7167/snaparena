@@ -10,8 +10,8 @@ import { RANK_TIERS } from "../src/engine/config";
 import { rankForElo } from "../src/engine/ranks";
 import { levelForXp } from "../src/engine/xp";
 // DEV ONLY — delete with convex/devbots.ts.
-import { devRankBotsEnabled, isDevRankBotPersona } from "../src/engine/dev-rank-bots";
-import { resolveConfig } from "./config";
+import { isDevRankBotPersona } from "../src/engine/dev-rank-bots";
+import { devFeaturesEnabled, resolveConfig } from "./config";
 
 /**
  * The ladder: who is on it, where they stand, and the periodic snapshot of the field.
@@ -156,7 +156,7 @@ export type FieldDoc = Doc<"ladderSnapshot"> & { kind: "field" };
  * and lists from the live walk is the drift bug all over again.
  */
 export async function ladderField(ctx: QueryCtx): Promise<FieldDoc | null> {
-  if (devRankBotsEnabled()) return null;
+  if (await devFeaturesEnabled(ctx)) return null;
 
   const doc = await ctx.db
     .query("ladderSnapshot")
@@ -275,7 +275,7 @@ export async function globalPosition(
   const field = await ladderField(ctx);
   if (field) return positionIn(field, user);
 
-  const showRankBots = devRankBotsEnabled();
+  const showRankBots = await devFeaturesEnabled(ctx);
   let ahead = 0;
 
   // Reads no more than the old count did: the range starts at the player's own Elo, so
@@ -466,7 +466,7 @@ export const rebuild = internalMutation({
 export const status = query({
   args: {},
   handler: async (ctx) => {
-    if (devRankBotsEnabled()) return null;
+    if (await devFeaturesEnabled(ctx)) return null;
 
     const doc = await ctx.db
       .query("ladderSnapshot")
