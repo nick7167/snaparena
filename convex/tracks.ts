@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   AUTOCOMPLETE_MIN_CHARS,
@@ -72,40 +72,118 @@ export const autocomplete = query({
 export const titleIndex = query({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("tracks").take(TITLE_INDEX_MAX);
-
-    // Several recordings share one title. Keep the most popular of each so the client's
-    // tie-breaking has something meaningful to order by.
-    const best = new Map<string, Doc<"tracks">>();
-    for (const track of rows) {
-      const held = best.get(track.titleNormalized);
-      if (
-        !held ||
-        track.popularity > held.popularity ||
-        (track.popularity === held.popularity && track.title.length < held.title.length)
-      ) {
-        best.set(track.titleNormalized, track);
-      }
+    /**
+     * One document, not a table scan.
+     *
+     * This is the single hottest read in the app — one per browser session that reaches a
+     * guess input, so it scales with players. Building it here meant reading all 2,244
+     * track documents (1.54 MB) to return a 39 KB list of strings, every time. The list
+     * only changes when the catalogue is imported, so it is precomputed instead.
+     */
+    const stored = await ctx.db.query("trackIndex").first();
+    if (stored) {
+      return { titles: stored.titles, truncated: stored.truncated };
     }
 
-    // Popularity order is the payload's second channel: the client ranks ties by array
-    // position, so this buys better suggestions for zero extra bytes. Title breaks
-    // remaining ties so the ordering is stable between deployments.
-    const ordered = [...best.values()].sort(
-      (a, b) => b.popularity - a.popularity || a.title.localeCompare(b.title),
-    );
-
-    return {
-      titles: ordered.map((track) => track.title),
-      /**
-       * True when the read hit its ceiling and the tail of the catalogue is missing.
-       * The client keeps the server-side search armed when this is set, so growing past
-       * the cap degrades to slower suggestions rather than to absent ones.
-       */
-      truncated: rows.length === TITLE_INDEX_MAX,
-    };
+    /**
+     * Nothing built yet — fall back to the live scan.
+     *
+     * Costs what the old implementation cost, and only until the first import or rebuild
+     * lands. Correctness must not depend on a precomputed row existing: a deployment
+     * restored from a snapshot, or one imported before this table did, would otherwise
+     * serve an empty suggestion list, which reads to a player as a broken feature rather
+     * than as a missing cache.
+     */
+    const built = await buildTitleIndex(ctx);
+    // Deliberately not spreading: `scanned` is a build detail for the rebuild's bookkeeping
+    // and must not reach the client, or the two branches of this query would return
+    // different shapes depending on whether the row happens to exist.
+    return { titles: built.titles, truncated: built.truncated };
   },
 });
+
+/** The list itself. Shared by the fallback above and the rebuild below. */
+async function buildTitleIndex(
+  ctx: QueryCtx,
+): Promise<{ titles: string[]; truncated: boolean; scanned: number }> {
+  const rows = await ctx.db.query("tracks").take(TITLE_INDEX_MAX);
+
+  // Several recordings share one title. Keep the most popular of each so the client's
+  // tie-breaking has something meaningful to order by.
+  const best = new Map<string, Doc<"tracks">>();
+  for (const track of rows) {
+    const held = best.get(track.titleNormalized);
+    if (
+      !held ||
+      track.popularity > held.popularity ||
+      (track.popularity === held.popularity && track.title.length < held.title.length)
+    ) {
+      best.set(track.titleNormalized, track);
+    }
+  }
+
+  // Popularity order is the payload's second channel: the client ranks ties by array
+  // position, so this buys better suggestions for zero extra bytes. Title breaks
+  // remaining ties so the ordering is stable between deployments.
+  const ordered = [...best.values()].sort(
+    (a, b) => b.popularity - a.popularity || a.title.localeCompare(b.title),
+  );
+
+  return {
+    titles: ordered.map((track) => track.title),
+    /**
+     * True when the read hit its ceiling and the tail of the catalogue is missing.
+     * The client keeps the server-side search armed when this is set, so growing past
+     * the cap degrades to slower suggestions rather than to absent ones.
+     */
+    truncated: rows.length === TITLE_INDEX_MAX,
+    scanned: rows.length,
+  };
+}
+
+/**
+ * Recomputes the stored list. Idempotent, and safe to schedule more than once.
+ *
+ * Internal: the only legitimate callers are `admin.upsertTracks` (which schedules it after
+ * an import) and the admin console. A public rebuild would be a way for anyone to spend
+ * 1.5 MB of database I/O per call.
+ */
+export const rebuildTitleIndex = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const built = await buildTitleIndex(ctx);
+
+    const existing = await ctx.db.query("trackIndex").first();
+    const next = {
+      titles: built.titles,
+      truncated: built.truncated,
+      trackCount: built.scanned,
+      builtAt: Date.now(),
+    };
+
+    /**
+     * Write only when the list actually changed.
+     *
+     * An import re-upserts every track and schedules this from each batch, so most runs
+     * find nothing new. Writing regardless would invalidate every subscriber's cached
+     * `titleIndex` and make them all re-read — turning a saving into a stampede.
+     */
+    if (existing && sameTitles(existing.titles, built.titles)) {
+      return { titles: built.titles.length, changed: false as const };
+    }
+
+    if (existing) await ctx.db.replace(existing._id, next);
+    else await ctx.db.insert("trackIndex", next);
+
+    return { titles: built.titles.length, changed: true as const };
+  },
+});
+
+function sameTitles(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 /**
  * Fisher-Yates shuffle.

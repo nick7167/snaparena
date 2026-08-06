@@ -520,15 +520,36 @@ export const beaten = query({
     let played = 0;
 
     for (const row of rows) {
-      const match = await ctx.db.get(row.matchId);
-      if (!match || match.mode !== "practice" || match.status !== "complete") continue;
+      /**
+       * Decided from the row wherever possible.
+       *
+       * This scanned 200 match documents per call — 3.3 KB each, 71% of that an embedded
+       * round log this function never looks at — to test `mode` and `status`. Both now
+       * live on the row. The `db.get` below runs only for rows written before that was
+       * true, and only until `admin.backfillMatchSummary` has been run.
+       */
+      let mode: Doc<"matches">["mode"] | undefined = row.mode;
+      let won: boolean;
+      let opponentIds: Id<"users">[];
+
+      if (mode !== undefined && row.completedAt !== undefined) {
+        won = row.outcome === "win";
+        opponentIds = row.opponentId ? [row.opponentId] : [];
+      } else {
+        const match = await ctx.db.get(row.matchId);
+        if (!match || match.status !== "complete") continue;
+        mode = match.mode;
+        won = match.winnerId === user._id;
+        opponentIds = match.playerIds.filter((id) => id !== user._id);
+      }
+
+      if (mode !== "practice") continue;
       played++;
-      if (match.winnerId !== user._id) continue;
+      if (!won) continue;
 
       // The opponent's persona id is the roster key — bots are ordinary user rows carrying
       // `botPersonaId`, which is what `pickPracticePersona` selects on.
-      for (const playerId of match.playerIds) {
-        if (playerId === user._id) continue;
+      for (const playerId of opponentIds) {
         const opponent = await ctx.db.get(playerId);
         if (opponent?.isBot && opponent.botPersonaId) beaten.add(opponent.botPersonaId);
       }

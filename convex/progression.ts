@@ -204,6 +204,19 @@ async function applyProgression(
     levelAfter,
     xpAfter: totalXp,
     badgesEarned: badges,
+    /**
+     * Denormalised so the history and practice-roster readers never open the match.
+     * See the note on these fields in `schema.ts`. Written here because this runs exactly
+     * once per player per finished match, next to writes that already happen.
+     */
+    mode: match.mode,
+    completedAt: match.completedAt ?? Date.now(),
+    outcome: match.winnerId === undefined ? ("draw" as const) : won ? ("win" as const) : ("loss" as const),
+    // Only meaningful head-to-head. A room has several opponents and the daily none.
+    opponentId:
+      match.playerIds.length === 2
+        ? match.playerIds.find((id) => id !== player.userId)
+        : undefined,
   });
 }
 

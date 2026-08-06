@@ -1,7 +1,9 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { internalMutation, mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { releaseDailyCount } from "./daily";
+import { internal } from "./_generated/api";
+import { requireAdmin } from "./roles";
 
 /**
  * Content-import mutations, called by `scripts/import-tracks.ts`.
@@ -126,6 +128,16 @@ export const upsertTracks = mutation({
       }
     }
 
+    /**
+     * Keep the autocomplete list in step with the catalogue.
+     *
+     * Scheduled rather than inlined so the import's own transaction stays small, and
+     * scheduled from every batch rather than left to the caller so an import cannot
+     * finish with a stale index. The rebuild writes only when the list actually changed,
+     * so the repeated scheduling across ~20 batches costs one write, not twenty.
+     */
+    await ctx.scheduler.runAfter(0, internal.tracks.rebuildTitleIndex, {});
+
     return { created, updated, unknownSlugs: [...unknownSlugs] };
   },
 });
@@ -186,3 +198,76 @@ export const purgeTestUser = mutation({
 
 /** Handles the e2e suite is allowed to create, and therefore allowed to purge. */
 export const TEST_HANDLE_PREFIX = "e2e";
+
+// ---------------------------------------------------------------------------
+// Backfill
+// ---------------------------------------------------------------------------
+
+/** Rows per batch. Convex mutations are transactions with read and write limits. */
+const BACKFILL_BATCH = 100;
+
+/**
+ * Fills in the denormalised match summary on historical `matchPlayers` rows.
+ *
+ * `matches.history` and `bots.beaten` read `mode`, `completedAt`, `outcome` and
+ * `opponentId` straight off the row and only open the match when they are absent. New
+ * rows get them from `progression.finalizeMatch`; this is what retires the fallback for
+ * everything written before that existed.
+ *
+ * Self-scheduling rather than one pass: it walks every row in the table, and a single
+ * transaction cannot. Idempotent — a row that already has the fields is skipped, so
+ * running it twice is harmless and running it after a partial failure resumes.
+ */
+export const backfillMatchSummary = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("matchPlayers")
+      .paginate({ numItems: BACKFILL_BATCH, cursor: args.cursor ?? null });
+
+    let filled = 0;
+
+    for (const row of page.page) {
+      if (row.mode !== undefined && row.completedAt !== undefined) continue;
+
+      const match = await ctx.db.get(row.matchId);
+      // An orphaned row: the match was purged out from under it. Nothing to copy, and
+      // leaving it untouched keeps the readers' fallback in charge of skipping it.
+      if (!match || match.status !== "complete") continue;
+
+      await ctx.db.patch(row._id, {
+        mode: match.mode,
+        completedAt: match.completedAt ?? match._creationTime,
+        outcome:
+          match.winnerId === undefined
+            ? ("draw" as const)
+            : match.winnerId === row.userId
+              ? ("win" as const)
+              : ("loss" as const),
+        opponentId:
+          match.playerIds.length === 2
+            ? match.playerIds.find((id) => id !== row.userId)
+            : undefined,
+      });
+      filled++;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.admin.backfillMatchSummary, {
+        cursor: page.continueCursor,
+      });
+    }
+
+    return { filled, done: page.isDone };
+  },
+});
+
+/** Kicks the backfill off from the admin console. */
+export const startBackfill = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    await ctx.scheduler.runAfter(0, internal.admin.backfillMatchSummary, {});
+    return { started: true as const };
+  },
+});

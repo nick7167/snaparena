@@ -452,6 +452,36 @@ export default defineSchema({
      * for the players involved. An unread optional field costs nothing.
      */
     lastSeenAt: v.optional(v.number()),
+
+    /**
+     * The match's mode and result, copied onto the row when the match is finalised.
+     *
+     * DENORMALISED TO AVOID READING THE MATCH AT ALL. `matches.history` and `bots.beaten`
+     * both walk this table by user and then had to `db.get` every match just to test
+     * `mode` and `status` — 120 and 200 full match documents per call respectively, each
+     * 3.3 KB because 71% of it is the embedded round log. Between them that was ~150 MB
+     * of database I/O in six days, and it scales with every profile view.
+     *
+     * Written ONCE, by `progression.finalizeMatch`, alongside the XP fields it already
+     * patches here — so there is no mutable field to keep in sync and no second write
+     * path to forget. A match that never finalises (abandoned, or forfeited before the
+     * end) never gets these, which is exactly what both readers want to exclude.
+     *
+     * Optional because rows written before this existed do not have them; both readers
+     * fall back to opening the match for those. `admin.backfillMatchSummary` fills them
+     * in, after which the fallback costs nothing.
+     */
+    mode: v.optional(matchMode),
+    completedAt: v.optional(v.number()),
+    /** Win / loss / draw from THIS row's point of view. A draw is `winnerId` absent. */
+    outcome: v.optional(
+      v.union(v.literal("win"), v.literal("loss"), v.literal("draw")),
+    ),
+    /**
+     * The other player, so a history row can name them without opening the match.
+     * Absent in a room (more than one opponent) and in the daily (none).
+     */
+    opponentId: v.optional(v.id("users")),
   })
     .index("by_match", ["matchId"])
     .index("by_match_user", ["matchId", "userId"])
@@ -695,6 +725,33 @@ export default defineSchema({
     /** Free text: why this change was made. Shown in the history list. */
     note: v.optional(v.string()),
   }).index("by_created", ["createdAt"]),
+
+  /**
+   * The autocomplete title list, precomputed. Exactly one row.
+   *
+   * WHY THIS TABLE EXISTS: `tracks.titleIndex` used to build this on every call by reading
+   * the whole `tracks` table — 2,244 documents and 1.54 MB of database I/O to return a
+   * 39 KB list of strings, a 41x read amplification. Every browser session that reaches a
+   * guess input triggers one, so the cost scaled with players while the ANSWER changed only
+   * when the catalogue was imported. Measured at 98 MB in six days on a deployment with a
+   * single player; at a thousand sessions a day it would be 1.5 GB a day.
+   *
+   * Rebuilt by `tracks.rebuildTitleIndex`, which `admin.upsertTracks` schedules — so an
+   * import cannot leave it stale, and nobody has to remember a step.
+   *
+   * Titles only, exactly as before. The anti-cheat rule in `titleIndex` governs this row
+   * too: the suggestion set is the whole catalogue and carries nothing but the title, so a
+   * suggestion can never confirm a guess or narrow the current round.
+   */
+  trackIndex: defineTable({
+    /** Deduplicated by normalized title, most popular first. */
+    titles: v.array(v.string()),
+    /** True when the build hit its read ceiling and the tail is missing. */
+    truncated: v.boolean(),
+    /** Documents scanned to build this, for the staleness readout in /admin. */
+    trackCount: v.number(),
+    builtAt: v.number(),
+  }),
 
   /**
    * Deployment-wide operator state. Exactly one row.

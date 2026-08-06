@@ -845,20 +845,59 @@ export const history = query({
     const entries = [];
 
     for (const row of rows) {
-      const match = await ctx.db.get(row.matchId);
-      if (!match || match.status !== "complete" || match.mode === "daily") continue;
+      // Enough already, and the rows arrive newest-first — so stop rather than keep
+      // opening documents for results that will be sliced off at the end anyway.
+      if (entries.length >= limit) break;
 
-      const opponentId = match.playerIds.find((id) => id !== args.userId);
-      const opponent = opponentId ? await ctx.db.get(opponentId) : null;
+      /**
+       * The summary the row carries, or the match if this row predates it.
+       *
+       * The fallback is what makes the denormalisation safe to deploy without a backfill
+       * first, and it is the ONLY branch that opens a match document. Every row written
+       * since `finalizeMatch` started stamping these costs nothing but the row itself —
+       * which is the whole point: this used to read up to 120 match documents at 3.3 KB
+       * each, per profile view, to test two fields.
+       */
+      let summary: {
+        mode: Doc<"matches">["mode"];
+        completedAt: number;
+        won: boolean;
+        drawn: boolean;
+        opponentId: Id<"users"> | undefined;
+      };
+
+      if (row.mode !== undefined && row.completedAt !== undefined) {
+        summary = {
+          mode: row.mode,
+          completedAt: row.completedAt,
+          won: row.outcome === "win",
+          drawn: row.outcome === "draw",
+          opponentId: row.opponentId,
+        };
+      } else {
+        const match = await ctx.db.get(row.matchId);
+        if (!match || match.status !== "complete") continue;
+        summary = {
+          mode: match.mode,
+          // Falls back to creation time for the handful of older rows finalised before
+          // `completedAt` was being written.
+          completedAt: match.completedAt ?? match._creationTime,
+          won: match.winnerId === args.userId,
+          drawn: match.winnerId === undefined,
+          opponentId: match.playerIds.find((id) => id !== args.userId),
+        };
+      }
+
+      if (summary.mode === "daily") continue;
+
+      const opponent = summary.opponentId ? await ctx.db.get(summary.opponentId) : null;
 
       entries.push({
-        matchId: match._id,
-        mode: match.mode,
-        // Falls back to creation time for the handful of older rows finalised before
-        // `completedAt` was being written.
-        completedAt: match.completedAt ?? match._creationTime,
-        won: match.winnerId === args.userId,
-        drawn: match.winnerId === undefined,
+        matchId: row.matchId,
+        mode: summary.mode,
+        completedAt: summary.completedAt,
+        won: summary.won,
+        drawn: summary.drawn,
         totalPoints: row.totalPoints,
         hp: row.hp ?? null,
         ratingDelta: row.ratingDelta ?? null,
