@@ -6,6 +6,9 @@ import { Empty } from "@/ui/Surface";
 import { ButtonLink } from "@/ui/Button";
 import { AdminDashboard } from "./dashboard";
 import { RoleManager } from "./roles";
+import { ConfigEditor } from "./config-editor";
+import { ConfigHistory } from "./config-history";
+import { DevControls } from "./dev-controls";
 import { PageHeader } from "../page-header";
 
 /**
@@ -55,6 +58,11 @@ export function AdminGate() {
       <PageHeader parent={{ href: "/", label: "Home" }} title="Admin" />
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10">
         <RoleManager />
+        {/* Dev features first: it is the switch most likely to be the reason someone
+            opened this page, and it gates surfaces the rest of the screen describes. */}
+        <DevControls />
+        <ConfigEditor />
+        <ConfigHistory />
         <AdminDashboard />
       </div>
     </>

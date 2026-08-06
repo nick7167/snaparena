@@ -680,6 +680,7 @@ function UserMenu({
   compact?: boolean;
 }) {
   const me = useQuery(api.users.me, {});
+  const isAdmin = useQuery(api.roles.amIAdmin, {});
   const { openUserProfile, signOut } = useClerk();
   const muted = useSyncExternalStore(subscribeMute, getMuteSnapshot, getMuteServerSnapshot);
 
@@ -762,6 +763,18 @@ function UserMenu({
       <MenuItem glyph="rank" onSelect={() => openUserProfile()}>
         Manage account
       </MenuItem>
+
+      {/*
+        The only route into /admin. The page has existed since the role landed and nothing
+        linked to it, so it could only be reached by typing the URL — which made a working
+        screen look missing. Gated on the role rather than merely hidden: `amIAdmin` returns
+        a bare boolean and every query behind the page checks it again server-side.
+      */}
+      {isAdmin?.admin && (
+        <MenuItem glyph="settings" href="/admin">
+          Admin
+        </MenuItem>
+      )}
 
       <MenuSeparator />
 

@@ -880,16 +880,24 @@ export function entryFor(key: string): ConfigEntry | undefined {
   return BY_KEY.get(key);
 }
 
-/** The default value for one entry, read through the same dotted path the console uses. */
-export function defaultFor(key: string): number | null | undefined {
+/** Reads one entry out of a config by its dotted path. */
+export function readValue(
+  config: ResolvedConfig,
+  key: string,
+): number | null | undefined {
   const [head, leaf] = key.split(".");
-  const top = (DEFAULT_CONFIG as unknown as Record<string, unknown>)[head];
+  const top = (config as unknown as Record<string, unknown>)[head];
   if (leaf === undefined) {
     return typeof top === "number" || top === null ? top : undefined;
   }
   if (top === null || typeof top !== "object") return undefined;
   const value = (top as Record<string, unknown>)[leaf];
   return typeof value === "number" ? value : undefined;
+}
+
+/** The shipped default for one entry. What "reset this field" restores. */
+export function defaultFor(key: string): number | null | undefined {
+  return readValue(DEFAULT_CONFIG, key);
 }
 
 /**
