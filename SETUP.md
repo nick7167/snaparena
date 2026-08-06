@@ -57,6 +57,40 @@ export ADMIN_IMPORT_SECRET="$(openssl rand -hex 24)"
 npx convex env set ADMIN_IMPORT_SECRET "$ADMIN_IMPORT_SECRET"
 ```
 
+### PostHog (product analytics)
+
+The code is already complete — `src/analytics/` plus 18 call sites. The only thing
+that switches it on is one variable, and it belongs in the **hosting environment**,
+not in `.env.local`:
+
+```
+NEXT_PUBLIC_POSTHOG_KEY=phc_...        # Project settings -> Project token
+```
+
+Project: **SNAP ARENA**, id `241582`, **EU Cloud** — which is why
+`NEXT_PUBLIC_POSTHOG_HOST` stays unset. `src/analytics/index.ts` already defaults to
+`https://eu.i.posthog.com`, and pointing it at the US region would return HTTP 200 on
+every event and record none of them.
+
+Two things that make this look broken when it isn't:
+
+- **`NEXT_PUBLIC_*` is inlined at build time.** Adding the variable in Vercel does
+  nothing to the deployment already running; it needs a rebuild before a single event
+  is sent.
+- **Everywhere else is silent on purpose.** Without the key `track()` is a no-op and
+  no request leaves the browser, so local dev, CI and the e2e suite never write into
+  the production project. That is the intended state for this repo, not a missing step.
+
+The saved funnels are defined in code, not clicked together:
+
+```bash
+POSTHOG_PERSONAL_API_KEY=phx_... npm run posthog-insights
+```
+
+Idempotent, matched by name. That needs a **personal** API key with `insight:write`
+and `dashboard:write` — the `phc_` project token is write-only and can only send
+events.
+
 ---
 
 ## 2. Content pipeline (works today, no credentials needed for stage 1)
