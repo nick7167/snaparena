@@ -140,6 +140,53 @@ npm run dev:next
 
 ---
 
+## 4. The admin console
+
+`/admin`, reachable from the account menu once your account holds the admin role.
+Nothing else links to it.
+
+The first admin cannot be granted by an admin, so it is bootstrapped from a terminal
+with the deployment secret:
+
+```bash
+npx convex run roles:grantBySecret '{"secret":"…","handle":"your-handle"}'
+```
+
+After that, `/admin` grants the role to anyone else.
+
+### Tuning values
+
+Every constant in `src/engine/config.ts` appears on that page. Match pacing, scoring
+timings and XP are editable; Elo, rank thresholds, the score tiers and the anti-cheat
+floors are shown read-only with the reason attached.
+
+Two things worth knowing before you change anything:
+
+- **`config.ts` stays the baseline.** The database holds only differences from it, so an
+  empty deployment runs exactly what the code says and "reset" is a deletion rather than a
+  write. Adding a constant needs no migration.
+- **A match keeps the config it started with.** Saving mid-duel cannot move the score
+  curve or the damage ramp underneath two players who are halfway through a round. New
+  matches pick up the change; running ones do not.
+
+Every save is a version, with a diff and a one-click restore. Restoring writes a new
+version rather than reusing the old row, because finished matches point at those rows.
+
+### Developer features
+
+The rank bots, the instant-win bar and the developer tools drawer are switched on from
+that page — **not** by `DEV_RANK_BOTS` any more. A Convex function cannot write its own
+environment, which is why the flag moved into the database; the old variable is read by
+nothing and can be removed from the deployment.
+
+> Deploying this leaves developer features **off**, even where the old variable is still
+> set. There is deliberately no fallback to it — turn them on in `/admin`.
+
+`e2e/dev-rank-bots.spec.ts` needs them on, and the e2e suite runs against the deployed
+backend, so that switch has to be on there rather than locally.
+
+---
+
 ## What runs right now, without any credentials
 
 ```bash
