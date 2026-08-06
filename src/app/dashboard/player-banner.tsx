@@ -136,7 +136,7 @@ export function PlayerBanner() {
                 emblem on mobile and drove the whole row's height — the label, not the
                 artwork, was setting how tall the identity zone was. */}
             <h1
-              className="font-display text-label sm:text-numeral flex items-center font-extrabold tracking-[0.12em] whitespace-nowrap uppercase [writing-mode:vertical-rl] rotate-180 sm:tracking-[0.18em]"
+              className="font-display text-label sm:text-numeral flex items-center font-extrabold tracking-label whitespace-nowrap uppercase [writing-mode:vertical-rl] rotate-180 sm:tracking-label"
               style={{ color: placing ? undefined : rank.tier.accent }}
             >
               {placing ? "Unranked" : rank.label}
@@ -263,7 +263,7 @@ function Stat({
       >
         {value}
       </dd>
-      <dt className="text-label text-muted truncate tracking-[0.14em] uppercase">
+      <dt className="text-label text-muted truncate tracking-label uppercase">
         {label}
       </dt>
     </div>
@@ -307,7 +307,7 @@ function TierProgress({
   // Legend has no ceiling, so there is nothing to progress toward.
   if (rank.nextAt === null) {
     return (
-      <p className="text-label text-gold tracking-[0.12em] uppercase">Top of the ladder</p>
+      <p className="text-label text-gold tracking-label uppercase">Top of the ladder</p>
     );
   }
 

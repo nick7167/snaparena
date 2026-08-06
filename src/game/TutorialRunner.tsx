@@ -287,7 +287,7 @@ function Opening({
 
   return (
     <Card variant="hero" className="flex flex-col items-start gap-4 p-6">
-      <p className="text-label text-muted tracking-[0.14em] uppercase">
+      <p className="text-label text-muted tracking-label uppercase">
         {mode === "solo" ? "Your first song" : "Now with someone else"}
       </p>
 

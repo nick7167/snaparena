@@ -76,7 +76,9 @@ export function TierChip({ tierId, size = "md" }: { tierId: string; size?: "sm" 
 
   // SNAP is pure paper. Nothing else in the app is this bright, which is exactly what
   // makes it unmistakable — you cannot get "more coloured" than the best call, you get
-  // brighter.
+  // brighter. Below it the ramp dims rather than shifting hue: gold, then secondary,
+  // then muted. SOLID and LATE used to share `neutral` and were impossible to tell
+  // apart, which flattened a four-step ramp into three.
   const tone =
     tier.id === "snap"
       ? "paper"
@@ -84,7 +86,7 @@ export function TierChip({ tierId, size = "md" }: { tierId: string; size?: "sm" 
         ? "gold"
         : tier.id === "solid"
           ? "neutral"
-          : "neutral";
+          : "muted";
 
   return (
     <Chip tone={tone} size={size} className="font-display tracking-wider">

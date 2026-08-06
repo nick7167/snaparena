@@ -20,6 +20,10 @@ const eslintConfig = defineConfig([
     // assets are large enough to exhaust the linter's memory before it gives up.
     "playwright-report/**",
     "test-results/**",
+    // Vendored agent skills, installed by tools like `uipro init` rather than written
+    // here. They ship their own CommonJS helper scripts and Python, none of which this
+    // project's TypeScript rules have any business judging — and none of which ship.
+    ".claude/skills/**",
   ]),
 ]);
 

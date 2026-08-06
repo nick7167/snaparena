@@ -1,17 +1,17 @@
-import { notFound } from "next/navigation";
-import { AdminDashboard } from "./dashboard";
+import { AdminGate } from "./gate";
 
 /**
- * Catalogue health — dev only.
+ * Operator screen: catalogue health, and who else can get in here.
  *
- * `tracks.stats` was built and never called. It answers the question that actually
- * blocks play: is there enough music? A thin difficulty tier means matches start
- * repeating tracks, which is invisible until players notice they've had a song twice.
+ * It used to be gated on `NODE_ENV === "production"` and nothing else, which made it a
+ * developer-machine page rather than an operator page — the person who actually needs the
+ * catalogue numbers is whoever runs the game, and they are looking at the deployed site.
  *
- * Same guard as /design. This is operational data and does not belong on the public
- * site, and the query reads up to 5,000 rows per call.
+ * The guard is now the admin role, checked on the server for every request AND again by
+ * every query this page calls. The server check is what keeps the page out of view; the
+ * per-query checks are what keep the data safe, since a client can call a query directly
+ * whatever the page decides to render.
  */
 export default function AdminPage() {
-  if (process.env.NODE_ENV === "production") notFound();
-  return <AdminDashboard />;
+  return <AdminGate />;
 }

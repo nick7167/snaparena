@@ -34,11 +34,25 @@ export function Input({
 }: InputProps) {
   return (
     <div
+      /**
+       * `has-[:focus-visible]` carries the global ring onto the wrapper.
+       *
+       * The inner field sets `outline-none` so the ring does not draw inside the border,
+       * which left Input as the one control in the system that never showed the 2px paper
+       * ring — a keyboard user tabbing through Settings got a border tint where every
+       * other control gets a ring. Recreated on the wrapper instead of dropped, so the
+       * ring traces the whole field including its prefix and suffix.
+       *
+       * Matched to Button's `disabled:opacity-40`; this was 50, which made a disabled
+       * input read as slightly more available than a disabled button beside it.
+       */
       className={`bg-ink-inset flex items-center gap-2 rounded-md border
                   ${invalid ? "border-signal" : "border-line-strong"}
                   ${size === "lg" ? "px-4" : "px-3"}
-                  ${disabled ? "opacity-50" : ""}
-                  focus-within:border-paper transition-colors ${className}`}
+                  ${disabled ? "opacity-40" : ""}
+                  focus-within:border-paper transition-colors
+                  has-[:focus-visible]:outline-paper has-[:focus-visible]:outline-2
+                  has-[:focus-visible]:outline-offset-2 ${className}`}
     >
       {prefix && <span className="text-muted shrink-0">{prefix}</span>}
       <input
@@ -83,7 +97,7 @@ export function Field({
       <div className="flex items-baseline justify-between gap-2">
         <label
           htmlFor={htmlFor}
-          className="text-label text-secondary font-semibold tracking-[0.12em] uppercase"
+          className="text-label text-secondary font-semibold tracking-label uppercase"
         >
           {label}
           {optional && <span className="text-muted ml-1.5 normal-case">— optional</span>}

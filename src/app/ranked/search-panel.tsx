@@ -93,7 +93,7 @@ export function SearchPanel() {
             <div className="flex flex-col gap-1.5">
               <div className="font-display flex items-center justify-between gap-3 font-extrabold tabular-nums">
                 <span className="text-body-lg text-secondary">{me.elo - band}</span>
-                <span className="text-label text-muted tracking-[0.14em] uppercase">
+                <span className="text-label text-muted tracking-label uppercase">
                   Rating range
                 </span>
                 <span className="text-body-lg text-secondary">{me.elo + band}</span>

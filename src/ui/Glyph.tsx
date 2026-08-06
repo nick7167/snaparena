@@ -103,6 +103,23 @@ const PATHS: Record<GlyphName, React.ReactNode> = {
   chevron: <path d="M4 6.5 8 10.5l4-4" />,
 };
 
+/**
+ * Marks that cannot be filled, because they enclose no area.
+ *
+ * `filled` swaps `stroke` for `fill`, which works for the solid silhouettes it was written
+ * for — `tier`, `win`, `loss` and `rank` are all closed polygons. `damage` and `streak` are
+ * open strokes: an arrow and three bars. Filling them paints nothing at all, so the mark
+ * silently disappears and the caller is left with an empty 1em box.
+ *
+ * That shipped in three places — the third rule on the public landing page, the icon on the
+ * error screen that is supposed to signal something broke, and the daily streak badge — and
+ * no test could see it, because an SVG that renders nothing still renders.
+ *
+ * Honouring the request would be wrong here, so it is ignored rather than obeyed: these
+ * names always stroke.
+ */
+const UNFILLABLE: ReadonlySet<GlyphName> = new Set(["damage", "streak"]);
+
 export function Glyph({
   name,
   className = "",
@@ -114,7 +131,7 @@ export function Glyph({
   filled?: boolean;
 }) {
   return (
-    <Mark className={className} filled={filled}>
+    <Mark className={className} filled={filled && !UNFILLABLE.has(name)}>
       {PATHS[name]}
     </Mark>
   );

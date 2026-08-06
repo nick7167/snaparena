@@ -47,6 +47,18 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Vendored agent skills, installed by `uipro init` rather than written here.
+# ~3MB of CSV databases and Python, six of the seven unrelated to this project.
+# They work the same installed locally; keeping them out of the repo keeps a clone small.
+# Everything else under .claude/skills/ IS ours and stays tracked.
+/.claude/skills/ui-ux-pro-max/
+/.claude/skills/banner-design/
+/.claude/skills/brand/
+/.claude/skills/design/
+/.claude/skills/design-system/
+/.claude/skills/slides/
+/.claude/skills/ui-styling/
+
 # playwright
 /playwright/.clerk/
 /e2e/screenshots/

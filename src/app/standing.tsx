@@ -138,7 +138,7 @@ export function RankProgress({
   // Legend has no ceiling, so there is nothing to progress toward.
   if (rank.nextAt === null) {
     return (
-      <p className="text-label text-gold tracking-[0.12em] uppercase">
+      <p className="text-label text-gold tracking-label uppercase">
         Top of the ladder
       </p>
     );

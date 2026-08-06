@@ -25,11 +25,11 @@ const VARIANTS: Record<ButtonVariant, { className: string; edge: string }> = {
   // same thing is the point — pressing this is how you get the gold.
   primary: {
     className: "bg-gold text-ink-900 hover:brightness-110",
-    edge: "#9E7414",
+    edge: "var(--color-edge-gold)",
   },
   secondary: {
     className: "bg-ink-600 text-paper border-line-strong border hover:bg-ink-500",
-    edge: "#171B25",
+    edge: "var(--color-edge-ink)",
   },
   // No fill, no edge — the only control type without mass, for genuinely minor actions.
   ghost: {
@@ -38,7 +38,7 @@ const VARIANTS: Record<ButtonVariant, { className: string; edge: string }> = {
   },
   destructive: {
     className: "bg-signal text-paper hover:brightness-110",
-    edge: "#8E211A",
+    edge: "var(--color-edge-signal)",
   },
 };
 

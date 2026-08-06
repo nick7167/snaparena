@@ -159,7 +159,7 @@ export function LeaveMatch({
                    text-xl transition-colors"
       >
         <Glyph name="leave" />
-        <span className="text-label font-semibold tracking-[0.1em]">LEAVE</span>
+        <span className="text-label font-semibold tracking-label">LEAVE</span>
       </button>
 
       <Dialog

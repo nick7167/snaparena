@@ -96,6 +96,9 @@ async function expectClockRunning(page: Page): Promise<number> {
  * Tries the cheapest exit first and degrades: resolve bar, then resignation, then giving
  * up rounds until the resignation is accepted.
  */
+/** Guards the one-shot dialog capture in `endPracticeMatch`. */
+let leaveDialogCaptured = false;
+
 async function endPracticeMatch(page: Page): Promise<void> {
   const lobby = page.getByRole("button", { name: "Play a bot" });
   const backToLobby = page.getByRole("button", { name: "Back to lobby" });
@@ -129,6 +132,23 @@ async function endPracticeMatch(page: Page): Promise<void> {
 
     if (await exit.isVisible().catch(() => false)) {
       await exit.click();
+
+      /**
+       * Photograph the confirm on the way past, once.
+       *
+       * `LeaveMatch` writes different consequence copy per mode and is the only dialog in
+       * the app that also intercepts the browser Back button, but it is unreachable from
+       * /design and appears in no other screenshot. Teardown already has it open, so this
+       * costs nothing — no extra match, no extra round. Best-effort by design: a failed
+       * screenshot must never break the cleanup it is riding along with.
+       */
+      if (!leaveDialogCaptured) {
+        leaveDialogCaptured = true;
+        await page
+          .screenshot({ path: path.join(SCREENSHOTS, "modal-leave-match-practice.png") })
+          .catch(() => {});
+      }
+
       const confirm = page.getByRole("button", { name: "Leave match", exact: true });
       await expect(confirm).toBeEnabled({ timeout: 15_000 });
       await confirm.click();

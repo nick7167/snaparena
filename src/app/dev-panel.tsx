@@ -30,13 +30,24 @@ import {
  * both development and production: turning a tool on here cannot affect anybody else,
  * because the state never leaves the browser.
  *
- * Bottom-left on purpose. The account menu owns the bottom of the sidebar on desktop and
- * the top-right on mobile; the match chrome owns the top. This corner is the only one
- * nothing else claims, and a dev control that covers the thing you are testing is worse
- * than no dev control.
+ * Bottom-RIGHT on purpose, having previously been bottom-left. The account menu owns the
+ * bottom of the sidebar on desktop and the "Me" tab owns the bottom-left on a phone, so
+ * this sat on top of both — and at the 64px sidebar rail it covered the account menu
+ * outright, making it unclickable. A dev control that covers the thing you are testing is
+ * worse than no dev control. Nothing claims the bottom-right at any width.
  */
 export function DevPanel() {
   const dev = useQuery(api.devbots.enabled, {});
+  /**
+   * The per-user half of the gate.
+   *
+   * `devbots.enabled` answers "does this DEPLOYMENT have dev features", which on this
+   * project is one deployment shared by local development and the live site — so on its
+   * own it showed this panel to every signed-in player the moment the variable went on.
+   * The role answers "is this PERSON an operator", which is the question that was
+   * actually being asked. Both must hold.
+   */
+  const me = useQuery(api.roles.amIAdmin, {});
   const setWelcomeStep = useMutation(api.tutorial.setWelcomeStep);
   const router = useRouter();
   const tools = useSyncExternalStore(
@@ -73,13 +84,33 @@ export function DevPanel() {
     document.documentElement.classList.toggle("dev-outlines", tools.layoutOutlines);
   }, [tools.layoutOutlines]);
 
-  // The master switch. Nothing below exists on a deployment without DEV_RANK_BOTS set.
-  if (!dev?.enabled) return null;
+  // The master switch. Nothing below exists unless the deployment allows dev features AND
+  // the signed-in player holds the admin role. `undefined` is "still asking" for both,
+  // which correctly renders nothing rather than flashing the panel and taking it away.
+  if (!dev?.enabled || !me?.admin) return null;
 
   const activeCount = DEV_TOOLS.filter((tool) => tools[tool.key]).length;
 
   return (
-    <div className="fixed bottom-3 left-3 z-[60] flex flex-col items-start gap-2 print:hidden">
+    /**
+     * Bottom RIGHT, not bottom left.
+     *
+     * The bottom-left corner belongs to the shell: the sidebar's account menu on desktop
+     * and the "Me" tab on a phone both live there. At `z-60` this pill sat on top of both
+     * — it covered the account row in every screenshot ever taken of the dashboard, and in
+     * the 64px rail it covered the account menu button outright, so the control could not
+     * be clicked at all. That surfaced as a Playwright timeout whose log said the dev
+     * panel "intercepts pointer events", which is exactly what was happening to anyone
+     * running a dev build on a tablet.
+     *
+     * Nothing occupies the bottom-right at any width.
+     */
+    <div
+      // Stable hook so screenshot runs can take the whole affordance out in one rule,
+      // rather than guessing at class names that change.
+      data-dev-panel=""
+      className="fixed right-3 bottom-3 z-[60] flex flex-col items-end gap-2 print:hidden"
+    >
       <AnimatePresence>
         {open && (
           <motion.div
@@ -87,14 +118,15 @@ export function DevPanel() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97, transition: { duration: 0.1 } }}
             transition={snap}
-            style={{ originY: 1, originX: 0 }}
+            style={{ originY: 1, originX: 1 }}
             role="dialog"
             aria-label="Developer tools"
-            className="border-line bg-ink-800 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col
-                       gap-1 rounded-lg border p-2 shadow-2xl shadow-black/50"
+            className="border-line-strong bg-ink-800 flex w-[min(20rem,calc(100vw-1.5rem))]
+                       flex-col gap-1 rounded-lg border p-2
+                       shadow-[0_4px_0_0_var(--color-ink-900)]"
           >
             <div className="flex items-center justify-between gap-2 px-2 pt-1 pb-2">
-              <span className="text-label text-muted font-mono tracking-[0.14em] uppercase">
+              <span className="text-label text-muted font-mono tracking-label uppercase">
                 Dev tools
               </span>
               <button

@@ -91,7 +91,7 @@ export function Card({
 /** Section heading. The only place uppercase tracking is used. */
 export function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <h2 className="text-label text-muted font-semibold tracking-[0.12em] uppercase">
+    <h2 className="text-label text-muted font-semibold tracking-label uppercase">
       {children}
     </h2>
   );
@@ -135,10 +135,14 @@ export function Panel({
   );
 }
 
-export type ChipTone = "neutral" | "gold" | "signal" | "teal" | "paper";
+export type ChipTone = "neutral" | "muted" | "gold" | "signal" | "teal" | "paper";
 
 const CHIP_TONES: Record<ChipTone, string> = {
   neutral: "bg-ink-600 text-secondary",
+  // One step quieter than neutral, on the same surface. Exists because the score tiers
+  // are a four-step ramp and the bottom two had nowhere to go: SOLID and LATE both
+  // landed on `neutral` and rendered identically, so the ramp read as three steps.
+  muted: "bg-ink-600 text-muted",
   gold: "bg-gold text-ink-900",
   signal: "bg-signal text-paper",
   teal: "bg-teal text-ink-900",

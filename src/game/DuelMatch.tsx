@@ -299,7 +299,7 @@ function VetoResult({ matchId }: { matchId: Id<"matches"> }) {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 py-10">
-      <p className="text-label text-muted tracking-[0.14em]">THE SET</p>
+      <p className="text-label text-muted tracking-label">THE SET</p>
       <h1 className="font-display text-display-2 text-center font-extrabold tracking-tight">
         You&rsquo;re playing these {surviving.length}
       </h1>

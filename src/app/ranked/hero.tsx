@@ -157,10 +157,14 @@ export function RankedHero() {
 /**
  * The one screen both states are composed into.
  *
- * The height budget is `100dvh` minus the chrome `<main>` does not own: the mobile top bar
- * (3.5rem) and the fixed tab bar it reserves with `pb-20` (5rem). That is the same 8.5rem
- * `landing.tsx` derives and documents — one constant, two screens. At `lg:` the sidebar
- * layout has neither, and `<main>` drops to `lg:pb-0`, so the budget is the full viewport.
+ * The height budget is `100dvh` minus `--shell-chrome`, declared once in globals.css and
+ * read by the two screens that promise to fit in one: this and `landing.tsx`. Below `md`
+ * it is 8.5rem — the mobile top bar (3.5rem) plus the fixed tab bar `<main>` reserves with
+ * `pb-20` (5rem). From `md` up the navigation is a sidebar beside the content instead, so
+ * there is no vertical chrome and the budget is the whole viewport.
+ *
+ * It was a literal in both files before, which meant the tablet band inherited the phone's
+ * arithmetic and left 136px of dead space under a hero that had promised to fill the screen.
  *
  * `h-*` AND `max-h-*`, the pair `Stage`'s `fit` uses, rather than the `min-h-*` landing
  * settles for. The difference is the whole mechanism: `min-h` lets the box grow to fit its
@@ -178,7 +182,7 @@ export function RankedHero() {
  */
 function HeroViewport({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto flex h-[calc(100dvh-8.5rem)] max-h-[calc(100dvh-8.5rem)] w-full max-w-2xl flex-col overflow-hidden px-4 py-6 lg:h-dvh lg:max-h-dvh lg:py-10">
+    <div className="mx-auto flex h-[calc(100dvh-var(--shell-chrome))] max-h-[calc(100dvh-var(--shell-chrome))] w-full max-w-2xl flex-col overflow-hidden px-4 py-6 lg:py-10">
       {children}
     </div>
   );
@@ -404,7 +408,7 @@ function Rating({
         {/* The honest headline stake: what an EVEN pairing moves you, which is the match
             the queue is actually trying to make. Not a projection of the next result —
             that needs an opponent who does not exist yet. */}
-        <span className="text-label text-secondary font-bold tracking-[0.1em] tabular-nums">
+        <span className="text-label text-secondary font-bold tracking-label tabular-nums">
           ±{evenSwing} A MATCH
         </span>
       </div>
@@ -509,7 +513,7 @@ function QueueControl({ elo, placing }: { elo: number; placing: boolean }) {
         block
         loading={queue.pending === "enqueue"}
         onClick={queue.enqueue}
-        className="min-h-16 text-xl tracking-[0.14em] uppercase"
+        className="min-h-16 text-xl tracking-label uppercase"
       >
         <Glyph name="tier" filled />
         Find a match

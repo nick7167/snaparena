@@ -32,7 +32,7 @@ export function Landing() {
      * screen" true rather than nearly true — without it the page overflows by exactly the
      * chrome it forgot to account for.
      */
-    <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-5xl flex-col justify-center gap-6 px-4 py-6 sm:gap-8 sm:py-8 lg:min-h-dvh lg:py-12">
+    <div className="mx-auto flex min-h-[calc(100dvh-var(--shell-chrome))] w-full max-w-5xl flex-col justify-center gap-6 px-4 py-6 sm:gap-8 sm:py-8 lg:py-12">
       <div className="grid items-center gap-6 sm:gap-8 lg:grid-cols-2 lg:gap-12">
         <Hero />
         <TodayCard />

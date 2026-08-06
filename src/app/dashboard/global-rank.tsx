@@ -65,7 +65,7 @@ export function GlobalRank({
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <span
-        className={`text-label flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-bold tracking-[0.1em] tabular-nums ${
+        className={`text-label flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-bold tracking-label tabular-nums ${
           notable ? "bg-gold text-ink-900" : "text-muted"
         }`}
       >
@@ -74,7 +74,7 @@ export function GlobalRank({
       </span>
 
       {percentile !== null && (
-        <span className="text-label text-secondary font-bold tracking-[0.1em] tabular-nums">
+        <span className="text-label text-secondary font-bold tracking-label tabular-nums">
           TOP {percentile}%
         </span>
       )}

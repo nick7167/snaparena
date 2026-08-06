@@ -73,7 +73,7 @@ export function StreakRow({ streak }: { streak: Streak }) {
             );
           })}
       </span>
-      <span className="text-label text-muted tracking-[0.14em] uppercase">This week</span>
+      <span className="text-label text-muted tracking-label uppercase">This week</span>
     </div>
   );
 }

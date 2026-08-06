@@ -16,6 +16,8 @@ import { SCREENSHOTS, assertOnboarded, hideDevOverlay } from "./helpers";
  */
 
 const DESKTOP = { width: 1280, height: 900 };
+/** iPad portrait: the widest point that used to get the phone layout. */
+const TABLET = { width: 834, height: 1112 };
 const MOBILE = { width: 390, height: 844 };
 
 const sidebarMenu = (page: Page) =>
@@ -33,6 +35,62 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Account menu" }).first()).toBeVisible();
   await assertOnboarded(page);
+});
+
+/**
+ * The tablet band, which is the whole reason this file has a third viewport.
+ *
+ * From 768 to 1023 the shell used to render the phone layout — a bottom tab bar and a
+ * top bar — on a screen wide enough for a sidebar. Nothing tested it and no screenshot
+ * had ever been taken there, so nobody had seen it. These assertions pin the fix in both
+ * directions: the rail is present, the phone chrome is gone, and the rail is genuinely
+ * the narrow one rather than the 240px sidebar squeezing the content column.
+ */
+test.describe("tablet band", () => {
+  test.use({ viewport: TABLET });
+
+  test("shows the sidebar rail instead of the phone chrome", async ({ page }) => {
+    await page.goto("/");
+    await hideDevOverlay(page);
+
+    const aside = page.locator("aside");
+    await expect(aside).toBeVisible();
+
+    // 64px rail, not the 240px sidebar. Asserted as a band rather than an exact value so
+    // a border or a scrollbar cannot make this brittle.
+    const width = (await aside.boundingBox())!.width;
+    expect(width, "sidebar should be the icon rail at tablet width").toBeLessThan(100);
+    expect(width, "sidebar should still be present at tablet width").toBeGreaterThan(40);
+
+    /**
+     * The two pieces of phone chrome are gone: no top bar, no fixed bottom tab bar.
+     *
+     * The tab bar is identified by "Me" rather than by any of the destinations it shares
+     * with the sidebar. "Me" is that tab's `shortLabel`, and the sidebar renders the same
+     * destination as "Home" — so it is the one name that belongs to the tab bar alone.
+     * Asserting on "Board" instead fails against correct code, because the rail carries a
+     * Board row too.
+     */
+    await expect(page.locator("header")).toBeHidden();
+    await expect(page.getByRole("link", { name: "Me", exact: true })).toBeHidden();
+
+    // Navigation still works from the rail — glyph-only rows keep their accessible names.
+    await expect(aside.getByRole("link", { name: "Ranked" })).toBeVisible();
+
+    await page.screenshot({ path: path.join(SCREENSHOTS, "shell-tablet-rail.png") });
+  });
+
+  /**
+   * The collapse control is deliberately absent here. It writes a preference that the
+   * forced rail immediately overrides, so leaving it in gives you a button that visibly
+   * does nothing.
+   */
+  test("hides the collapse toggle, which could not do anything", async ({ page }) => {
+    await page.goto("/");
+    await expect(
+      page.getByRole("button", { name: /(Collapse|Expand) navigation/ }),
+    ).toHaveCount(0);
+  });
 });
 
 test.describe("sidebar", () => {

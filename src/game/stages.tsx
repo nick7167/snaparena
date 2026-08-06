@@ -158,7 +158,7 @@ export function VsReveal({
         {matchup && (
           <motion.p
             {...beat(1.6)}
-            className="font-display text-body-lg text-paper text-center font-bold tracking-[0.2em]"
+            className="font-display text-body-lg text-paper text-center font-bold tracking-wide-label"
           >
             {matchup}
           </motion.p>
@@ -214,7 +214,7 @@ function VsClock({
       transition={reduced ? undefined : { duration: 0.3 }}
       className="flex flex-col items-center gap-1"
     >
-      <p className="text-label text-muted tracking-[0.3em] uppercase">
+      <p className="text-label text-muted tracking-widest-label uppercase">
         {locked ? "Starting" : "Match starts in"}
       </p>
       <p
@@ -362,7 +362,7 @@ function VsPanel({
           is struck in gold with the trophy, everyone else gets the same fact quietly. */}
       {position && (
         <span
-          className={`text-label -mt-1 flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-bold tracking-[0.1em] tabular-nums ${
+          className={`text-label -mt-1 flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-bold tracking-label tabular-nums ${
             notable ? "bg-gold text-ink-900" : "text-muted"
           }`}
         >
@@ -417,7 +417,7 @@ function VsPanel({
         <span className="text-sm leading-none">
           <Glyph name={ready ? "win" : "timer"} filled={ready} />
         </span>
-        <span className="text-label font-bold tracking-[0.14em] uppercase">
+        <span className="text-label font-bold tracking-label uppercase">
           {ready ? "Ready" : "Not ready"}
         </span>
       </motion.div>
@@ -556,7 +556,7 @@ function CompareStrip({
           transition={reduced ? undefined : { delay: 1.48, duration: 0.3 }}
           className="flex flex-col gap-1"
         >
-          <span className="text-label text-muted text-center tracking-[0.14em] uppercase">
+          <span className="text-label text-muted text-center tracking-label uppercase">
             Best category
           </span>
           <div className="flex items-center gap-3">
@@ -634,7 +634,7 @@ function CompareRow({
     >
       {/* Label above the pair rather than under the bar. Underneath, it sat between two
           bars and belonged visually to neither; on top it captions the row it heads. */}
-      <span className="text-label text-muted text-center tracking-[0.14em] uppercase">
+      <span className="text-label text-muted text-center tracking-label uppercase">
         {label}
       </span>
 
@@ -719,7 +719,7 @@ export function Countdown({
 
   return (
     <Stage keyName="countdown" className="items-center py-14">
-      <p className="text-label text-muted font-semibold tracking-[0.35em] uppercase">
+      <p className="text-label text-muted font-semibold tracking-widest-label uppercase">
         {suddenDeath ? "Sudden death" : `Round ${roundNumber}`}
       </p>
 
@@ -948,7 +948,7 @@ export function SoloRevealStage({
 
   return (
     <Stage keyName="solo-reveal" className="items-center py-8 text-center">
-      <p className="text-label text-muted font-semibold tracking-[0.35em] uppercase">
+      <p className="text-label text-muted font-semibold tracking-widest-label uppercase">
         Song {roundNumber} of {totalRounds}
       </p>
 
@@ -1515,7 +1515,7 @@ export function MilestoneStage({
 
   return (
     <Stage keyName={`milestone-${roundNumber}`} className="items-center py-16 text-center">
-      <p className="text-label text-muted font-semibold tracking-[0.3em] uppercase">
+      <p className="text-label text-muted font-semibold tracking-widest-label uppercase">
         {roundNumber} rounds in
       </p>
 

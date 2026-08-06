@@ -129,7 +129,7 @@ function Typography() {
         <p className="text-body-lg">Body large — the guess input.</p>
         <p className="text-body">Body — the default for prose and controls.</p>
         <p className="text-body-sm text-secondary">Body small — the floor for content.</p>
-        <p className="text-label text-muted font-semibold tracking-[0.12em] uppercase">
+        <p className="text-label text-muted font-semibold tracking-label uppercase">
           Label — section headings only
         </p>
         <div className="bg-ink-700 rounded-md p-4">
@@ -481,7 +481,7 @@ function TutorialAssist() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {rungs.map((rung) => (
           <Card key={rung.at} className="flex flex-col gap-3 p-4">
-            <p className="text-label text-muted font-mono tracking-[0.14em] uppercase">
+            <p className="text-label text-muted font-mono tracking-label uppercase">
               at {rung.at}
             </p>
 

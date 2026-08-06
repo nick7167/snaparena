@@ -131,7 +131,7 @@ function CreateAndJoin() {
             onKeyDown={(event) => {
               if (event.key === "Enter" && code.length === CODE_LENGTH) void handleJoin();
             }}
-            className="flex-1 font-mono tracking-[0.3em]"
+            className="flex-1 font-mono tracking-widest-label"
           />
           <Button
             size="lg"
@@ -177,7 +177,7 @@ function RecentRooms() {
                 <Glyph name="timer" />
               </span>
 
-              <span className="font-display text-body-lg text-paper shrink-0 font-bold tracking-[0.2em]">
+              <span className="font-display text-body-lg text-paper shrink-0 font-bold tracking-wide-label">
                 {room.code}
               </span>
 

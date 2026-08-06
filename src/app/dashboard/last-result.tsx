@@ -116,7 +116,7 @@ export function LastResult() {
               {last.ratingDelta > 0 ? "+" : ""}
               {last.ratingDelta}
             </span>
-            <span className="text-label text-muted tracking-[0.14em] uppercase">
+            <span className="text-label text-muted tracking-label uppercase">
               Rating
             </span>
           </span>

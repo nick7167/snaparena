@@ -36,7 +36,7 @@ export function RankProgress({ elo, stakes }: { elo: number; stakes: Stakes }) {
     <div className="flex flex-col gap-1.5">
       {/* Only the destination is labelled. The rank you are leaving is the heading directly
           above this, and naming it again here just said "Silver I" twice in two lines. */}
-      <div className="text-label flex items-baseline justify-end tracking-[0.1em]">
+      <div className="text-label flex items-baseline justify-end tracking-label">
         {next ? (
           <span className="text-muted font-bold tabular-nums">
             <span className="text-paper">{next.away}</span> TO {next.label.toUpperCase()}

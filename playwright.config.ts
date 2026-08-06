@@ -73,7 +73,8 @@ export default defineConfig({
       // rather than signing in per spec.
       name: "authed",
       // DEV ONLY — drop `dev-rank-bots` from this list with convex/devbots.ts.
-      testMatch: /(shell|new-player|sweep|ladder|dev-rank-bots|audio-recovery)\.spec\.ts/,
+      testMatch:
+        /(shell|new-player|sweep|modals|ladder|dev-rank-bots|audio-recovery)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -89,7 +90,7 @@ export default defineConfig({
        * only spec that can drive a complete daily run on every single execution.
        */
       name: "guest",
-      testMatch: /(guest-daily|landing|auth)\.spec\.ts/,
+      testMatch: /(guest-daily|sweep-guest|landing|auth)\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"] },
     },

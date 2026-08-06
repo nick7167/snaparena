@@ -306,7 +306,7 @@ function SongCountdown({
 
   return (
     <Stage keyName="countdown" className="items-center py-14">
-      <p className="text-label text-muted font-semibold tracking-[0.35em] uppercase">
+      <p className="text-label text-muted font-semibold tracking-widest-label uppercase">
         Song {roundNumber} of {totalRounds}
       </p>
 

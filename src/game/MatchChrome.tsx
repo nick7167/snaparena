@@ -47,7 +47,7 @@ export function MatchChrome({
       <div className="flex flex-1 justify-start">{leave}</div>
 
       {meta && (
-        <div className="text-label text-secondary flex shrink-0 items-center gap-2 tracking-[0.1em]">
+        <div className="text-label text-secondary flex shrink-0 items-center gap-2 tracking-label">
           {meta}
         </div>
       )}

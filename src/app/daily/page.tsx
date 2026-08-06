@@ -254,7 +254,7 @@ function StreakBadge() {
         value={streak.current}
         className="font-display text-numeral text-paper font-extrabold"
       />
-      <span className="text-label text-muted tracking-[0.14em] uppercase">
+      <span className="text-label text-muted tracking-label uppercase">
         day{streak.current === 1 ? "" : "s"}
       </span>
     </span>

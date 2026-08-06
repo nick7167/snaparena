@@ -39,16 +39,23 @@
      now the plate (see `.plate` below); teal is only ever "this is happening now". */
   --color-teal: #1f9e8c; /* 5.4:1 */
 
-  /* Score tiers. SNAP is pure paper: nothing else in the app is this bright,
-     which is what makes it unmistakable at a glance. */
-  --color-tier-snap: #f4f1ea;
-  --color-tier-quick: #f0b429;
-  --color-tier-solid: #a8b0c0;
-  --color-tier-late: #7a8398;
+  /* Score tiers do NOT get their own colours. SNAP is `paper`, QUICK is `gold`, SOLID is
+     `secondary` and LATE is `muted` — the ramp dims rather than shifting hue, so it
+     reuses the text scale rather than duplicating it. There were four --color-tier-*
+     tokens here holding exactly those four values; nothing ever read them, and
+     `TierChip` derived its own mapping a file away. See `Chip` in ui/Surface.tsx. */
 
   /* Borders. `border-line` / `border-line-strong` at the call site. -------- */
   --color-line: #262b38; /* dividers only — decorative */
   --color-line-strong: #667186; /* 3.6:1 — meaningful boundaries (inputs, controls) */
+
+  /* Press edges — the shadow colour under a control, per surface it sits on.
+     These are the ONLY values `--press-edge` should ever be set to. They lived as
+     bare hex in six files, and drifted: one copy read #171b26 against #171B25
+     everywhere else, which is a different colour that nobody could have spotted. */
+  --color-edge-gold: #9e7414; /* under bg-gold */
+  --color-edge-ink: #171b25; /* under bg-ink-600 */
+  --color-edge-signal: #8e211a; /* under bg-signal */
 
   /* Radii. Default is 12px. Nothing between 0 and 4. ---------------------- */
   --radius-xs: 4px;
@@ -77,6 +84,22 @@
   --text-body-sm--line-height: 1.45;
   --text-label: 11px;
   --text-label--line-height: 1.2;
+
+  /**
+   * Tracking. Three steps, because there were twelve.
+   *
+   * Uppercase labels need letter-spacing to stay readable, and every screen had picked
+   * its own: 0.1, 0.12, 0.14, 0.18, 0.2, 0.25, 0.3, 0.35 and 0.4em, plus Tailwind's own
+   * `wide`/`wider`. The library itself used 0.12 while app code more often used 0.14, so
+   * a `SectionLabel` and the heading beside it disagreed by 0.02em.
+   *
+   * `label` is the default for uppercase eyebrows and section labels. `wide` is for
+   * standalone display words that need air — VS, SUDDEN DEATH, the countdown eyebrow.
+   * `widest` is for a word being used as a rule across a whole stage.
+   */
+  --tracking-label: 0.12em;
+  --tracking-wide-label: 0.2em;
+  --tracking-widest-label: 0.32em;
 }
 
 /**
@@ -180,6 +203,47 @@
 }
 
 @layer base {
+  /**
+   * How much vertical space the shell's own bars take.
+   *
+   * Two screens size themselves against the viewport minus the chrome — the signed-out
+   * landing and the /ranked hero, both of which promise to fit in one screen. Both had
+   * `8.5rem` written into them as a literal, in two different files, with no shared
+   * source: 3.5rem of mobile top bar plus 5rem of tab bar.
+   *
+   * That number is only true below `md`. From there up the navigation is a sidebar beside
+   * the content rather than bars above and below it, so there is no vertical chrome at all
+   * — and subtracting 8.5rem anyway left 136px of dead space under a hero that had
+   * promised to fill the screen.
+   */
+  :root {
+    --shell-chrome: 8.5rem;
+  }
+
+  @media (min-width: 48rem) {
+    :root {
+      --shell-chrome: 0rem;
+    }
+  }
+
+  /**
+   * Buttons point. Tailwind v4 stopped doing this for us.
+   *
+   * v3's Preflight carried `button, [role="button"] { cursor: pointer }`; v4 dropped it to
+   * match the browser default, so every button in this app — Play, Find a match, every
+   * dialog action — has been showing an arrow rather than a hand since the upgrade. There
+   * is no `cursor-pointer` anywhere in `src/` to compensate, because there never needed to
+   * be one.
+   *
+   * Disabled controls are excluded: a hand over a control that will not respond is a
+   * promise the UI cannot keep, and Button already sets `pointer-events-none` there.
+   */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+
   html {
     background-color: var(--color-ink-900);
   }

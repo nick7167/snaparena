@@ -106,6 +106,22 @@ export default defineSchema({
     placementsRemaining: v.number(),
     createdAt: v.number(),
 
+    /**
+     * Elevated access. Absent means an ordinary player, which is almost everyone.
+     *
+     * Optional rather than defaulted, so adding it needs no backfill: every existing row
+     * is already correct. A union of one literal rather than a boolean because the next
+     * role — moderator, for the report queue — should widen this rather than add a second
+     * flag that can disagree with the first.
+     *
+     * Gates the developer tools and /admin. Before this existed both were gated on the
+     * DEV_RANK_BOTS deployment variable alone, which is not a per-user check at all: this
+     * project points local development and the live site at ONE Convex deployment, so
+     * turning the variable on to get dev tools locally turned them on for every signed-in
+     * player on the live site at the same time.
+     */
+    role: v.optional(v.union(v.literal("admin"))),
+
     /** Lifetime XP. Never decreases, so a lost match still advances the level bar. */
     xp: v.optional(v.number()),
     /** Denormalised from xp so leaderboards and VS cards avoid recomputing the curve. */

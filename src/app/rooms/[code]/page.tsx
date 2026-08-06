@@ -298,7 +298,7 @@ function RoomCode({ code }: { code: string }) {
   return (
     <section className="flex flex-col items-center gap-3">
       <SectionLabel>Room code</SectionLabel>
-      <p className="font-mono text-display-1 text-paper font-bold tracking-[0.25em]">
+      <p className="font-mono text-display-1 text-paper font-bold tracking-wide-label">
         {code}
       </p>
       <Button

@@ -36,12 +36,19 @@ import {
   setSidebarCollapsed,
   subscribeSidebarCollapsed,
 } from "@/ui/sidebar-collapsed";
+import { useIsTabletBand } from "@/ui/viewport-band";
 
 /**
  * The application shell.
  *
- * Sidebar from `lg` up, bottom tab bar below it. This is chrome, not information
+ * Sidebar from `md` up, bottom tab bar below it. This is chrome, not information
  * architecture.
+ *
+ * The boundary used to be `lg` (1024px) alone, which meant an iPad in portrait — 834px —
+ * got the phone layout: a bottom tab bar and a 672px column adrift on a screen a third
+ * wider than the one it was drawn for. From `md` to `lg` the sidebar is forced into the
+ * icon rail it already had for the collapsed case; from `lg` the stored preference takes
+ * over. See `useIsTabletBand`.
  *
  * They behave differently during a match, and the asymmetry is the point. The tab bar goes:
  * it sits within thumb reach of the guess field, so leaving it up is a way to walk out of a
@@ -119,7 +126,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     // search and the pages read it, so both have to be inside. Mounted here for the same
     // reason NavRecorder is — the shell is the only thing on every route.
     <QueueProvider>
-      <div className="flex min-h-full flex-col lg:flex-row">
+      <div className="flex min-h-full flex-col md:flex-row">
         <NavRecorder />
         <AudioUnlock />
         {/*
@@ -136,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           className={`min-w-0 flex-1 ${
             // Clears the fixed tab bar. Only needed when the tab bar is actually there.
-            immersive ? "" : "pb-20 lg:pb-0"
+            immersive ? "" : "pb-20 md:pb-0"
           }`}
         >
           {children}
@@ -199,16 +206,24 @@ function AudioUnlock() {
  */
 function Sidebar() {
   const pathname = usePathname();
-  const collapsed = useSyncExternalStore(
+  const stored = useSyncExternalStore(
     subscribeSidebarCollapsed,
     getSidebarCollapsedSnapshot,
     getSidebarCollapsedServerSnapshot,
   );
+  /**
+   * In the tablet band the rail is not a preference — there is not room for 240px of
+   * sidebar beside a readable column, and the alternative was the phone layout. The
+   * stored preference still governs from `lg` up, so a player who collapsed the sidebar
+   * on a desktop still finds it collapsed.
+   */
+  const tabletBand = useIsTabletBand();
+  const collapsed = stored || tabletBand;
 
   return (
     <aside
       className={`bg-ink-900 border-line sticky top-0 hidden h-dvh shrink-0 flex-col border-r
-                  transition-[width] lg:flex ${collapsed ? "w-16" : "w-60"}`}
+                  transition-[width] md:flex ${collapsed ? "w-16" : "w-60"}`}
     >
       <div
         className={`flex items-center pt-6 pb-5 ${
@@ -216,10 +231,13 @@ function Sidebar() {
         }`}
       >
         {collapsed ? <Wordmark size="mark" /> : <Wordmark size="brand" />}
-        {!collapsed && <CollapseToggle collapsed={collapsed} />}
+        {/* Hidden in the tablet band, where the rail is forced rather than chosen — the
+            toggle would flip a stored preference that `collapsed` immediately overrides,
+            so it would look broken. A control that does nothing is worse than no control. */}
+        {!collapsed && !tabletBand && <CollapseToggle collapsed={collapsed} />}
       </div>
 
-      {collapsed && (
+      {collapsed && !tabletBand && (
         <div className="flex justify-center pb-2">
           <CollapseToggle collapsed={collapsed} />
         </div>
@@ -291,7 +309,28 @@ function Sidebar() {
 
         <SignedOut>
           <MuteToggle />
-          {!collapsed && (
+          {/**
+           * The rail keeps a way in, as a glyph.
+           *
+           * This used to be dropped entirely when collapsed, which was survivable while
+           * "collapsed" only ever meant a desktop user who chose it — the mobile top bar
+           * still carried a Sign in button, so there was always a way to make an account.
+           *
+           * Once the tablet band forced the rail AND removed the top bar, those two facts
+           * combined into a signed-out visitor between 768 and 1023px with no sign-in
+           * control anywhere in the chrome. On the one funnel the whole product is built
+           * around, that is the worst possible thing to drop.
+           *
+           * The glyph carries an `sr-only` label rather than an aria-label so the
+           * accessible name stays exactly "Sign in" at both widths, and every locator that
+           * refers to it keeps working.
+           */}
+          {collapsed ? (
+            <AuthDialogButton mode="sign-in" variant="secondary" size="sm" className="px-2">
+              <Glyph name="user" />
+              <span className="sr-only">Sign in</span>
+            </AuthDialogButton>
+          ) : (
             <AuthDialogButton mode="sign-in" variant="secondary" block>
               Sign in
             </AuthDialogButton>
@@ -331,7 +370,7 @@ function RailPlayButton({ href }: { href: string }) {
     <Link
       href={href}
       aria-label={queue.inQueue ? "Searching for a match" : "Play"}
-      style={{ ["--press-edge" as string]: "#9E7414" }}
+      style={{ ["--press-edge" as string]: "var(--color-edge-gold)" }}
       className="press bg-gold text-ink-900 flex size-11 items-center justify-center rounded-md text-xl"
     >
       <span className={queue.inQueue ? "animate-pulse" : ""}>
@@ -436,7 +475,7 @@ function RankedPlayButton({ href }: { href: string }) {
   return (
     <Link
       href={href}
-      style={{ ["--press-edge" as string]: "#9E7414" }}
+      style={{ ["--press-edge" as string]: "var(--color-edge-gold)" }}
       className="press bg-gold text-ink-900 flex flex-col gap-1.5 rounded-md px-3.5 py-3
                  transition-[filter] hover:brightness-110"
     >
@@ -446,7 +485,7 @@ function RankedPlayButton({ href }: { href: string }) {
           PLAY
         </span>
         {rank && !placing && (
-          <span className="text-label font-bold tracking-[0.12em] uppercase opacity-80">
+          <span className="text-label font-bold tracking-label uppercase opacity-80">
             {rank.label}
           </span>
         )}
@@ -503,7 +542,7 @@ function SearchingPlayButton({ href }: { href: string }) {
 
   return (
     <div
-      style={{ ["--press-edge" as string]: "#9E7414" }}
+      style={{ ["--press-edge" as string]: "var(--color-edge-gold)" }}
       className="press bg-gold text-ink-900 flex flex-col gap-1.5 rounded-md px-3.5 py-3"
     >
       <div className="flex items-center justify-between gap-2">
@@ -752,7 +791,7 @@ function TabBar() {
   return (
     <nav
       aria-label="Main"
-      className="bg-ink-900 border-line fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t pb-[env(safe-area-inset-bottom)] lg:hidden"
+      className="bg-ink-900 border-line fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       {/**
        * The dismiss layer, and it is deliberately invisible.
@@ -879,7 +918,7 @@ function MobilePlayButton({
 
   const shape =
     "press bg-gold text-ink-900 -mt-5 flex size-16 flex-col items-center justify-center gap-0.5 rounded-full";
-  const edge = { ["--press-edge" as string]: "#9E7414" };
+  const edge = { ["--press-edge" as string]: "var(--color-edge-gold)" };
 
   if (direct) {
     return (
@@ -942,9 +981,15 @@ function MobilePlayButton({
              * of margin puts the menu on top of the control it came from. This clears it
              * by eight.
              */
-            className="border-line bg-ink-800 absolute bottom-full left-1/2 z-10 mb-7 flex
-                       w-[min(20rem,calc(100vw-1.5rem))] -translate-x-1/2 flex-col gap-2
-                       rounded-lg border p-2 shadow-2xl shadow-black/50"
+            /* Lifted by a hard edge and a stronger border, not a blur. `shadow-2xl
+               shadow-black/50` was doing this job on the most-used control in the app,
+               against a system whose own rule is that there is no blurred shadow
+               anywhere — see globals.css. The 4px edge is the device the rest of the UI
+               already uses to say "this sits above the surface". */
+            className="border-line-strong bg-ink-800 absolute bottom-full left-1/2 z-10 mb-7
+                       flex w-[min(20rem,calc(100vw-1.5rem))] -translate-x-1/2 flex-col
+                       gap-2 rounded-lg border p-2
+                       shadow-[0_4px_0_0_var(--color-ink-900)]"
           >
             <ButtonLink
               href="/ranked"
@@ -1009,7 +1054,7 @@ export function MobileTopBar() {
   if (immersive) return null;
 
   return (
-    <header className="border-line flex items-center justify-between gap-3 border-b px-4 py-3 lg:hidden">
+    <header className="border-line flex items-center justify-between gap-3 border-b px-4 py-3 md:hidden">
       <Wordmark />
       <SignedIn>
         {/* Bounded so a long handle cannot squeeze the wordmark off the bar. */}

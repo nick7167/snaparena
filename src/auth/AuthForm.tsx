@@ -228,7 +228,7 @@ function SignUpForm({
             inputMode="numeric"
             autoComplete="one-time-code"
             maxLength={6}
-            className="font-display tracking-[0.4em]"
+            className="font-display tracking-widest-label"
             value={code}
             invalid={Boolean(errors.fields.code)}
             onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
@@ -364,7 +364,7 @@ function Divider() {
   return (
     <div className="flex items-center gap-3" aria-hidden="true">
       <span className="bg-line h-px flex-1" />
-      <span className="text-label text-muted font-semibold tracking-[0.12em] uppercase">
+      <span className="text-label text-muted font-semibold tracking-label uppercase">
         or
       </span>
       <span className="bg-line h-px flex-1" />

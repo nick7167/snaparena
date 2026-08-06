@@ -109,17 +109,22 @@ export async function signInAs(page: Page, emailAddress: string): Promise<void> 
 }
 
 /**
- * Hides Next's dev-mode indicator.
+ * Hides Next's dev-mode indicator, and this app's own dev pill.
  *
- * It is a fixed badge in the bottom-left corner — exactly where the sidebar's account
- * menu lives — so it sits on top of the one control this suite exists to photograph. It
- * is dev-server furniture and never ships, so removing it from screenshots is showing
- * the truth rather than hiding a defect.
+ * Both are fixed badges that never ship, so removing them from screenshots is showing the
+ * truth rather than hiding a defect.
+ *
+ * The app's own pill was added here after it turned out to be doing more than sitting in
+ * a screenshot: at `z-60` in the bottom-left it covered the sidebar's account menu, and in
+ * the 64px tablet rail it swallowed the button entirely — Playwright reported it as
+ * "intercepts pointer events" rather than as anything to do with the dev panel. The pill
+ * has since moved to the bottom right, so this is belt and braces: a dev affordance must
+ * never be able to decide whether a test passes.
  */
 export async function hideDevOverlay(page: Page): Promise<void> {
   await page.addStyleTag({
     content: `nextjs-portal, [data-nextjs-dev-tools-button], #__next-build-watcher,
-              [data-nextjs-toast] { display: none !important; }`,
+              [data-nextjs-toast], [data-dev-panel] { display: none !important; }`,
   });
 }
 

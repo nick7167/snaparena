@@ -78,10 +78,19 @@ export function BadgeCase() {
               <span className="text-xl leading-none">
                 <BadgeMark id={badge.id} muted={!has} />
               </span>
+              {/* Wraps to two lines rather than truncating.
+                  `sm:grid-cols-8` puts all eight across from 640px up, which leaves each
+                  cell around 70px — narrower than "Perfect Pitch", "Comeback Kid",
+                  "Nerves of Steel" or "Giant Slayer". Half the case was rendering as
+                  "Perfect Pit…" at every width from a phone landscape to a 1280px
+                  desktop, so the one thing a badge case is for — recognising them —
+                  didn't work. `2lh` reserves both lines on every cell so the marks stay
+                  on one baseline whether a name wraps or not. */}
               <span
-                className={`text-label w-full truncate text-center font-semibold ${
-                  has ? "text-secondary" : "text-faint"
-                }`}
+                className={`text-label flex min-h-[2lh] w-full items-center justify-center
+                  text-center font-semibold text-balance ${
+                    has ? "text-secondary" : "text-faint"
+                  }`}
               >
                 {badge.name}
               </span>

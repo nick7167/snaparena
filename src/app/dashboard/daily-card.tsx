@@ -46,7 +46,7 @@ export function DailyCard() {
   return (
     <Link
       href="/daily"
-      style={{ ["--press-edge" as string]: played ? "#171b26" : "#9E7414" }}
+      style={{ ["--press-edge" as string]: played ? "var(--color-edge-ink)" : "var(--color-edge-gold)" }}
       className={`press flex items-center gap-4 rounded-md px-5 py-4 transition-[filter] hover:brightness-110 ${
         played ? "bg-ink-700 text-paper" : "bg-gold text-ink-900"
       }`}

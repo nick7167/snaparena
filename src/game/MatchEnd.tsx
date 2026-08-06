@@ -562,7 +562,7 @@ function LevelUpBanner({ level }: { level: number }) {
       transition={snap}
       className="border-gold bg-ink-700 flex flex-col items-center gap-2 rounded-md border p-6"
     >
-      <p className="text-label text-secondary font-semibold tracking-[0.3em] uppercase">
+      <p className="text-label text-secondary font-semibold tracking-widest-label uppercase">
         Level up
       </p>
       <p className="font-display text-display-1 text-gold font-extrabold tabular-nums">
@@ -621,7 +621,7 @@ function PromotionBanner({
       className="flex flex-col items-center gap-3 rounded-md border p-6"
       style={{ borderColor: `${accent}55`, backgroundColor: `${accent}12` }}
     >
-      <p className="text-label text-secondary font-semibold tracking-[0.3em] uppercase">Promoted</p>
+      <p className="text-label text-secondary font-semibold tracking-widest-label uppercase">Promoted</p>
       <RankBadge label={label} tierId={tierId} division={division} accent={accent} size="lg" />
     </motion.div>
   );

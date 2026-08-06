@@ -174,7 +174,7 @@ function TierLadder() {
             </span>
 
             <span
-              className="text-label truncate font-bold tracking-[0.12em] uppercase"
+              className="text-label truncate font-bold tracking-label uppercase"
               style={{ color: tier.accent }}
             >
               {tier.name}
