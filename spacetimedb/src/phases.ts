@@ -5,7 +5,12 @@ import type { ReducerCtx } from "./ctx";
 import { microsFrom, timestampFrom, toMs } from "./lib";
 import { resolveConfig } from "./config";
 import { difficultyTierForElo, pickTracksForMatch } from "./catalogue";
-import { MAX_DUEL_ROUNDS, STARTING_ELO, type MatchPhase } from "../../src/engine/config";
+import {
+  MAX_DUEL_ROUNDS,
+  STARTING_ELO,
+  VS_READY_COUNTDOWN_MS,
+  type MatchPhase,
+} from "../../src/engine/config";
 import type { ResolvedConfig } from "../../src/engine/config-merge";
 import {
   damageMultiplier,
@@ -426,6 +431,55 @@ export function endGuessingEarly(ctx: ReducerCtx, match: MatchRow): void {
 
   if (!everyoneDone) return;
   closeGuessing(ctx, match);
+}
+
+/**
+ * Collapses the opponent reveal once every human has pressed Ready.
+ *
+ * THE ONE PHASE THAT ENDS ON INPUT. `PHASE_DURATIONS_MS.vs_reveal` is described in
+ * the engine config as "a ceiling, not a wait" — thirty seconds exists only to
+ * protect against somebody who walked away, and pressing Ready is meant to cut it
+ * to `VS_READY_COUNTDOWN_MS`.
+ *
+ * NOTHING IMPLEMENTED THAT. The Convex `ranked.markVsReady` was not ported, the
+ * client was wired to `reportReady` instead, and `reportReady` writes
+ * `readyForRound` — a field nothing reads during this phase. So Ready appeared to do
+ * nothing at all: the button responded, the reducer succeeded, and the match sat
+ * there for the full thirty seconds regardless.
+ *
+ * Not zero, deliberately. Cutting straight to the draft means the second player to
+ * press never sees the screen resolve — the opponent they spent twenty seconds
+ * reading vanishes the instant they confirm they read them.
+ *
+ * The original thirty-second timer stays armed and is harmless: it fires later
+ * against a match that has moved on, and `runAdvancePhase` guards on the phase, so
+ * it lands as a no-op. That is the same guard-on-expectation discipline every other
+ * transition here relies on.
+ */
+export function readyUpVsReveal(ctx: ReducerCtx, match: MatchRow): void {
+  if (match.phase !== "vs_reveal") return;
+
+  const players = [...ctx.db.match_player.matchId.filter(match.id)];
+
+  /**
+   * Humans only. A bot has no client to press with and counts as ready from the
+   * start — the same rule the scoreboard applies when it shows "1 / 2".
+   */
+  const humans = players.filter((p) => ctx.db.user.id.find(p.userId)?.isBot !== true);
+  if (!humans.every((p) => p.vsReadyAt !== undefined)) return;
+
+  ctx.db.match.id.update({
+    ...match,
+    phaseEndsAt: timestampFrom(ctx.timestamp, VS_READY_COUNTDOWN_MS),
+  });
+
+  ctx.db.phase_advance_schedule.insert({
+    scheduled_id: 0n,
+    scheduled_at: ScheduleAt.time(microsFrom(ctx.timestamp, VS_READY_COUNTDOWN_MS)),
+    matchId: match.id,
+    expectedPhase: "vs_reveal",
+    expectedRound: match.currentRound,
+  });
 }
 
 /** Into the draft if a veto pool exists, else straight to the countdown. */

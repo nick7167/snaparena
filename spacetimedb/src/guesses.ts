@@ -4,7 +4,7 @@ import type { ReducerCtx, ViewCtx } from "./ctx";
 import { timestampFrom, toMs } from "./lib";
 import type { Timestamp } from "spacetimedb";
 import { resolveConfig } from "./config";
-import { endGuessingEarly, trackForRound } from "./phases";
+import { endGuessingEarly, readyUpVsReveal, trackForRound } from "./phases";
 import { requireSenderUser } from "./users";
 import { checkGuess } from "../../src/engine/match";
 import { normalizeTitle } from "../../src/engine/normalize";
@@ -297,9 +297,38 @@ export const reportReady = spacetimedb.reducer(
 
     const row = [...ctx.db.match_player.by_match_user.filter([matchId, player.id])][0];
     if (!row) return;
-    if (roundIndex <= row.readyForRound) return;
 
-    ctx.db.match_player.id.update({ ...row, readyForRound: roundIndex });
+    const match = ctx.db.match.id.find(matchId);
+
+    /**
+     * TWO SIGNALS FROM ONE PRESS, because the client sends one.
+     *
+     * `readyForRound` is the audio-buffer barrier: has this browser buffered the
+     * clip. `vsReadyAt` is a statement of intent: I have read this screen and I want
+     * to start. They are deliberately separate fields — see the schema — and the
+     * opponent reveal is the moment both are true at once, since the client reports
+     * readiness for round 0 by pressing the same button.
+     *
+     * Writing only the first is what made Ready appear dead: the reducer succeeded,
+     * the field changed, and nothing in the reveal read it.
+     */
+    const inReveal = match?.phase === "vs_reveal";
+
+    if (roundIndex <= row.readyForRound && !(inReveal && row.vsReadyAt === undefined)) {
+      return;
+    }
+
+    ctx.db.match_player.id.update({
+      ...row,
+      readyForRound: Math.max(row.readyForRound, roundIndex),
+      vsReadyAt: inReveal ? ctx.timestamp : row.vsReadyAt,
+    });
+
+    // Re-read: the update above is what may have completed the set.
+    if (inReveal && match) {
+      const refreshed = ctx.db.match.id.find(matchId);
+      if (refreshed) readyUpVsReveal(ctx, refreshed);
+    }
   },
 );
 
