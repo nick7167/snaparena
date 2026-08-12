@@ -1,9 +1,8 @@
 "use client";
 
 import { SignedIn, SignedOut } from "../auth-gate";
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../../convex/_generated/api";
+import { useActiveMatch, useMe } from "../db";
 import { DuelMatch } from "@/game/DuelMatch";
 import { LobbyColumn } from "../lobby-column";
 import { useQueue } from "../queue-driver";
@@ -39,7 +38,9 @@ function RankedHome() {
   // A reload mid-match must drop you back in, not lose the match. Derived rather
   // than copied into state via an effect — `activeMatch` only returns live
   // matches, so it falls back to null on its own once a match completes.
-  const existing = useQuery(api.ranked.activeMatch, {});
+  const me = useMe();
+  const existingMatch = useActiveMatch(me?.id);
+  const existing = existingMatch?.id ?? null;
   // The driver's id covers the gap between a match being created and `activeMatch`
   // propagating, and is the only source when the match was found on another route.
   const queue = useQueue();

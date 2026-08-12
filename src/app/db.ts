@@ -1104,3 +1104,105 @@ export function useMatchSummary(matchId: bigint | undefined) {
     return { rounds, fastest, costliest };
   }, [matchId, ready, rows, reveals, revealsReady]);
 }
+
+/**
+ * Whether the caller is searching, and how many others are.
+ *
+ * REPLACES `api.ranked.myQueueEntry` and `api.ranked.queueSize` together, because one
+ * panel read both. `queue_entry` is private — the rows carry every waiting player's
+ * rating — so this comes through a view that publishes the two facts and nothing that
+ * identifies anyone.
+ */
+export function useQueueStatus() {
+  const [rows, ready] = useTable(tables.myQueueStatus);
+  if (!ready) return undefined;
+  const row = rows[0];
+  return {
+    queued: row?.queued ?? false,
+    enqueuedAtMs:
+      row?.enqueuedAt === undefined
+        ? null
+        : Number(row.enqueuedAt.microsSinceUnixEpoch / 1_000n),
+    playersWaiting: row?.playersWaiting ?? 0,
+  };
+}
+
+/**
+ * Which practice bots this player has ever beaten.
+ *
+ * REPLACES `api.bots.beaten`, which scanned match rows server-side. The outcome and the
+ * opponent are denormalised onto `match_player`, so it is a set built from rows the
+ * roster already subscribes to.
+ *
+ * A SET, not a tally: the roster reads as a collection to complete — "4 / 12" — and one
+ * bit per bot is the honest claim.
+ */
+export function useBeatenBots(userId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (userId === undefined) return new Set<bigint>();
+    if (!ready) return undefined;
+
+    const beaten = new Set<bigint>();
+    for (const row of rows) {
+      if (row.outcome !== "win") continue;
+      if (row.opponentId !== undefined) beaten.add(row.opponentId);
+    }
+    return beaten;
+  }, [userId, ready, rows]);
+}
+
+/**
+ * A player's rooms, most recent first.
+ *
+ * REPLACES `api.rooms.recent`, which scanned match history for room memberships. `room`
+ * is public and small, so membership is a filter over rows the lobby already holds.
+ */
+export function useMyRooms(userId: bigint | undefined, limit = 5) {
+  const [rows, ready] = useTable(tables.room, { enabled: userId !== undefined });
+
+  return useMemo(() => {
+    if (userId === undefined) return [];
+    if (!ready) return undefined;
+
+    return [...rows]
+      .filter((row) => row.status !== "closed" && row.memberIds.includes(userId))
+      .sort((a, b) =>
+        a.createdAt.microsSinceUnixEpoch < b.createdAt.microsSinceUnixEpoch ? 1 : -1,
+      )
+      .slice(0, limit);
+  }, [userId, ready, rows, limit]);
+}
+
+/** Players by handle, for the practice roster's fixed cast of personas. */
+export function useUsersByHandles(handles: readonly string[]) {
+  const [rows, ready] = useTable(tables.user);
+
+  return useMemo(() => {
+    if (!ready) return undefined;
+    const wanted = new Set(handles);
+    const found = new Map<bigint, (typeof rows)[number]>();
+    for (const row of rows) if (wanted.has(row.handle)) found.set(row.id, row);
+    return found;
+  }, [ready, rows, handles]);
+}
+
+/** How many practice matches this player has finished. */
+export function usePracticeCount(userId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (userId === undefined) return 0;
+    if (!ready) return undefined;
+    return rows.filter(
+      (row) => row.mode === "practice" && row.completedAt !== undefined,
+    ).length;
+  }, [userId, ready, rows]);
+}

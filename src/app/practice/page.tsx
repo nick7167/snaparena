@@ -1,10 +1,10 @@
 "use client";
 
 import { SignedIn, SignedOut } from "../auth-gate";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState } from "react";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useActiveMatch, useMe } from "../db";
 import { DuelMatch } from "@/game/DuelMatch";
 import { BotBadge } from "@/game/ui";
 import { play } from "@/audio/sfx";
@@ -61,9 +61,11 @@ export default function PracticePage() {
  * called above it, the query throws "Not signed in" for every signed-out visitor.
  */
 function PracticeHome() {
-  const [joined, setJoined] = useState<Id<"matches"> | null>(null);
+  const [joined, setJoined] = useState<bigint | null>(null);
   // A reload mid-match drops you back into it rather than losing it.
-  const existing = useQuery(api.ranked.activeMatch, {});
+  const me = useMe();
+  const existingMatch = useActiveMatch(me?.id);
+  const existing = existingMatch?.id ?? null;
   const matchId = joined ?? existing ?? null;
 
   /**
@@ -93,8 +95,8 @@ function PracticeHome() {
   );
 }
 
-function Start({ onStarted }: { onStarted: (id: Id<"matches">) => void }) {
-  const startPractice = useMutation(api.bots.startPractice);
+function Start({ onStarted }: { onStarted: (id: bigint) => void }) {
+  const startPractice = useStdbReducer(reducers.startPractice);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -118,12 +120,14 @@ function Start({ onStarted }: { onStarted: (id: Id<"matches">) => void }) {
                 setStarting(true);
                 setError(null);
                 try {
-                  const result = await startPractice({});
-                  if (result.status === "started" && result.matchId) {
-                    play("whoosh");
-                    onStarted(result.matchId);
-                    return;
-                  }
+                  /**
+                   * A reducer returns nothing, so the match id does not come back. The
+                   * new practice match appears in `activeMatch` a moment later and the
+                   * page routes into it from there — the same path a reload takes.
+                   */
+                  await startPractice();
+                  play("whoosh");
+                  return;
                   /**
                    * Both failures are the catalogue being unready, which is nothing a
                    * player did and nothing they can fix. The old copy told them to run

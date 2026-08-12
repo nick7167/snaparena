@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useMemo } from "react";
+import { useBeatenBots, useMe, usePracticeCount, useUsersByHandles } from "../db";
 import { BOT_PERSONAS, practiceCandidates } from "@/engine/bots";
 import { rankForElo } from "@/engine/ranks";
 import { Panel, Skeleton } from "@/ui/Surface";
@@ -22,7 +22,7 @@ import { CountUp } from "../dashboard/motion";
 
 /** The 2–3 personas the server will actually draw from, named before you commit. */
 export function Shortlist() {
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
 
   if (me === undefined) return <Skeleton className="h-24 w-full" />;
   if (!me) return null;
@@ -80,11 +80,26 @@ export function Shortlist() {
  * against a bot already cleared. One bit per bot is the claim the data can actually make.
  */
 export function Roster() {
-  const record = useQuery(api.bots.beaten, {});
+  const me = useMe();
+  const beatenIds = useBeatenBots(me?.id);
+  const handles = useMemo(() => BOT_PERSONAS.map((persona) => persona.handle), []);
+  const roster = useUsersByHandles(handles);
+  const played = usePracticeCount(me?.id);
 
-  if (record === undefined) return <Skeleton className="h-64 w-full" />;
+  if (beatenIds === undefined || roster === undefined || played === undefined) {
+    return <Skeleton className="h-64 w-full" />;
+  }
 
-  const beaten = new Set(record.beaten);
+  /**
+   * Keyed by persona id rather than by user id, because that is what the roster renders
+   * against. `useBeatenBots` returns the opponents beaten as ids, so the bot rows are
+   * what turn one into the other.
+   */
+  const beaten = new Set(
+    [...beatenIds]
+      .map((id) => roster.get(id)?.botPersonaId)
+      .filter((personaId) => personaId !== undefined),
+  );
   const ordered = [...BOT_PERSONAS].sort((a, b) => a.elo - b.elo);
 
   return (
@@ -132,10 +147,12 @@ export function Roster() {
         })}
       </ul>
 
-      {record.played > 0 && (
+      {played > 0 && (
         <p className="text-label text-muted tabular-nums">
-          <CountUp value={record.played} /> practice matches counted
-          {record.approximate ? " (most recent)" : ""}
+          {/* No "(most recent)" qualifier: the old count came from a bounded scan and
+              had to admit when the ceiling stopped it. This counts every finished
+              practice row the client holds, so it is exact. */}
+          <CountUp value={played} /> practice matches counted
         </p>
       )}
     </Panel>

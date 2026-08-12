@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   createContext,
@@ -13,8 +13,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useActiveMatch, useMe, useQueueStatus } from "./db";
 import { play } from "@/audio/sfx";
 import {
   BOT_FALLBACK_MS,
@@ -53,7 +53,7 @@ interface QueueState {
   /** The pool is empty and the automatic bot match is about to fire. */
   fallingBack: boolean;
   /** Set the instant a match is found, ahead of the `activeMatch` subscription. */
-  matchId: Id<"matches"> | null;
+  matchId: bigint | null;
   /**
    * A queue action is in flight.
    *
@@ -122,7 +122,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * which is the same signal the provisioner uses, and it is already subscribed elsewhere
    * so this costs nothing.
    */
-  const me = useQuery(api.users.me, isLoaded && isSignedIn ? {} : "skip");
+  const me = useMe();
   const ready = me !== undefined && me !== null;
 
   /**
@@ -137,18 +137,37 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * is subscribed only while you are actually searching, which is the only time it is
    * rendered.
    */
-  const status = useQuery(api.ranked.myQueueEntry, ready ? {} : "skip");
-  const inQueue = status?.inQueue === true;
-  const pool = useQuery(api.ranked.queueSize, ready && inQueue ? {} : "skip");
+  /**
+   * One view rather than two subscriptions.
+   *
+   * The split existed because counting the pool read every queue row, so one person
+   * pressing Find a match re-executed that query once per signed-in user, everywhere.
+   * `my_queue_status` is materialised per viewer and returns both facts as one row, so
+   * the count costs what the membership check already cost.
+   */
+  const status = useQueueStatus();
+  const inQueue = status?.queued === true;
+  const pool = status;
 
   // Subscribed here rather than on the page so the reconciliation below can see it, and
   // so a reload mid-match still drops you back in. Only ever returns a LIVE match.
-  const activeMatch = useQuery(api.ranked.activeMatch, ready ? {} : "skip");
+  const activeMatchRow = useActiveMatch(ready ? me?.id : undefined);
+  /**
+   * Narrowed to the id here, once. The hook returns the row because other screens want
+   * its phase; this provider only ever routes on identity, and threading a whole match
+   * through the reconciliation below would be a wider object with no extra meaning.
+   */
+  const activeMatch =
+    activeMatchRow === undefined ? undefined : (activeMatchRow?.id ?? null);
 
-  const enqueueMutation = useMutation(api.ranked.enqueue);
-  const dequeueMutation = useMutation(api.ranked.dequeue);
-  const tryMatchmake = useMutation(api.ranked.tryMatchmake);
-  const startBotMatch = useMutation(api.bots.startBotMatch);
+  const enqueueMutation = useStdbReducer(reducers.enqueue);
+  const dequeueMutation = useStdbReducer(reducers.dequeue);
+  /**
+   * `tryMatchmake` is gone. It was a two-second poll each searching client ran for
+   * itself; the module sweeps the pool on everyone's behalf and pairs from there, so
+   * there is nothing left for a client to ask.
+   */
+  const startBotMatch = useStdbReducer(reducers.startPractice);
 
   const router = useRouter();
   const pathname = usePathname();
@@ -161,12 +180,12 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * rating change, exactly as the page's own state used to. It is cleared by pressing
    * Play again, and by the reconciliation below.
    */
-  const [held, setHeld] = useState<Id<"matches"> | null>(null);
+  const [held, setHeld] = useState<bigint | null>(null);
 
   // Ticked client-side from the server's `enqueuedAt`. A Convex query does not re-run on
   // a timer, so anything elapsed has to be computed here or it stands still.
   const now = useNow(1000);
-  const waitingMs = status?.enqueuedAt ? Math.max(0, now - status.enqueuedAt) : 0;
+  const waitingMs = status?.enqueuedAtMs ? Math.max(0, now - status.enqueuedAtMs) : 0;
 
   /**
    * Landing a match, from either route.
@@ -175,7 +194,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * mount on the same tick the match is created, rather than a round trip later.
    */
   const onMatched = useCallback(
-    (id: Id<"matches">) => {
+    (id: bigint) => {
       play("match_found");
       setHeld(id);
       // Ranked is where a duel is rendered. Arriving from anywhere else — the ladder, a
@@ -267,8 +286,13 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    */
   const startBot = useCallback(async () => {
     await run("startBot", async () => {
-      const result = await startBotMatch({});
-      if (result.status === "started" && result.matchId) onMatched(result.matchId);
+      /**
+       * A reducer returns nothing, so the match id no longer comes back from the call.
+       * The practice match appears in `activeMatch` a moment later and the
+       * reconciliation below routes into it — the same path a paired ranked match takes,
+       * rather than a second one that could disagree.
+       */
+      await startBotMatch();
     });
   }, [run, startBotMatch, onMatched]);
 
@@ -290,7 +314,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * adopts whatever is already live on the first resolution after mount: reloading
    * mid-duel is not a match being found, and should be silent.
    */
-  const announced = useRef<Id<"matches"> | null | undefined>(undefined);
+  const announced = useRef<bigint | null | undefined>(undefined);
   useEffect(() => {
     if (activeMatch === undefined) return;
 
@@ -323,11 +347,14 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * broken chain costs a searching player one wait cycle instead of their whole session,
    * rare enough that it is a rounding error against what the poll used to cost.
    */
-  useEffect(() => {
-    if (!inQueue) return;
-    const id = setInterval(() => void tryMatchmake({}), 15_000);
-    return () => clearInterval(id);
-  }, [inQueue, tryMatchmake]);
+  /**
+   * The fifteen-second safety net is gone with the poll it called.
+   *
+   * It existed because the sweeper chain could in principle drop, and a searching player
+   * would then wait forever; the client re-asked to restart it. There is no client-side
+   * pairing call left to make — `enqueue` starts the chain on the edge where the pool
+   * becomes matchable, and the sweep re-arms itself while it is worth running.
+   */
 
   /**
    * Automatic bot fallback.
@@ -390,7 +417,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       clearError: () => setError(null),
       enqueue: () =>
         void run("enqueue", async () => {
-          await enqueueMutation({});
+          await enqueueMutation();
           track("queue_enqueue");
         }),
       /**
@@ -402,7 +429,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
        */
       dequeue: () =>
         void run("dequeue", async () => {
-          await dequeueMutation({});
+          await dequeueMutation();
           track("queue_cancel", { waited_ms: Math.round(waitingMs) });
         }),
       startBot: () => void startBot(),

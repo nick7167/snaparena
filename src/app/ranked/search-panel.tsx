@@ -1,9 +1,8 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../../convex/_generated/api";
+import { useMe } from "../db";
 import { BOT_FALLBACK_MS } from "@/engine/matchmaking";
 import { BotBadge } from "@/game/ui";
 import { Button } from "@/ui/Button";
@@ -36,7 +35,7 @@ import { useQueue } from "../queue-driver";
  */
 export function SearchPanel() {
   const queue = useQueue();
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
 
   const seconds = Math.floor(queue.waitingMs / 1000);
   const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;

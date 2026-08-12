@@ -1,9 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
-import { api } from "../../../convex/_generated/api";
+import { useLadderNeighbours, useMe, useMyStanding } from "../db";
 import { rankForElo } from "@/engine/ranks";
 import { openingRange, stakesFor } from "@/engine/stakes";
 import {
@@ -44,11 +43,11 @@ import { useConfig } from "../config";
  * button, searching must show Cancel. See `QueueControl` for what that replaced and why.
  */
 export function RankedHero() {
-  const me = useQuery(api.users.me, {});
-  const standing = useQuery(api.users.myStanding, {});
+  const me = useMe();
+  const standing = useMyStanding(me);
   // Only for the "within one win of passing @rival" claim. Returns null during
   // placements, which `stakesFor` already handles by ignoring the gap entirely.
-  const neighbours = useQuery(api.users.ladderNeighbours, {});
+  const neighbours = useLadderNeighbours(me?.id);
 
   /**
    * The queue is read HERE rather than down in `QueueControl`, because it now decides the
@@ -93,7 +92,9 @@ export function RankedHero() {
       elo: me.elo,
       gamesPlayed: me.gamesPlayed,
       placementsRemaining: me.placementsRemaining,
-      rivalGap: rival?.gap,
+      // The ladder rows carry ratings, so the gap is a subtraction rather than a field.
+      rivalGap:
+        rival && standing ? rival.elo - standing.elo : undefined,
       rivalHandle: rival?.handle,
     },
     config,
