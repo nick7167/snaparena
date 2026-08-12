@@ -45,9 +45,13 @@ yarn-error.log*
 .vercel
 
 # SpacetimeDB
-# Generated client bindings — reproduced by `npm run stdb:generate`, and stale
-# copies in a diff are worse than no copies. Regenerate after any schema change.
-/src/module_bindings/
+# NOTE: /src/module_bindings/ is deliberately NOT ignored. It was, on the grounds
+# that stale copies in a diff are worse than no copies — true for local work, and
+# fatal for deployment: the app imports the bindings, Vercel has no `spacetime`
+# CLI to produce them, so `next build` cannot resolve `@/module_bindings` and the
+# deploy fails. Committing them is what makes the build reproducible off a clean
+# clone. The staleness risk is now a review discipline: regenerate with
+# `npm run stdb:generate` after any schema change, and commit the result with it.
 # Which database this checkout publishes to, per developer.
 /spacetime.local.json
 

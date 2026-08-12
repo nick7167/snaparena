@@ -222,6 +222,17 @@ change, and regenerates the client bindings in `src/module_bindings/`:
 `-k` links their lifetimes, so Ctrl+C stops both and a crash in either takes the other
 down rather than leaving you with a half-running stack that looks fine.
 
+**Commit the bindings after a schema change.** `src/module_bindings/` is tracked
+rather than ignored, because the app imports it and the deployment has no
+`spacetime` CLI to generate it — an ignored copy means `next build` cannot resolve
+`@/module_bindings` off a clean clone, and the Vercel deploy fails. The tradeoff is
+that a stale copy is now possible, so treat it as part of the change:
+
+```bash
+npm run stdb:generate
+git add src/module_bindings && git commit
+```
+
 To run just one side:
 
 ```bash
