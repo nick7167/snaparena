@@ -325,6 +325,9 @@ export type ModuleOwner = __Infer<typeof ModuleOwner>;
 export const MyHandleProbe = __t.object("MyHandleProbe", {});
 export type MyHandleProbe = __Infer<typeof MyHandleProbe>;
 
+export const MyQueueStatus = __t.object("MyQueueStatus", {});
+export type MyQueueStatus = __Infer<typeof MyQueueStatus>;
+
 export const MyRoundStatus = __t.object("MyRoundStatus", {});
 export type MyRoundStatus = __Infer<typeof MyRoundStatus>;
 
@@ -350,6 +353,13 @@ export const QueueEntry = __t.object("QueueEntry", {
   isBot: __t.bool(),
 });
 export type QueueEntry = __Infer<typeof QueueEntry>;
+
+export const QueueStanding = __t.object("QueueStanding", {
+  queued: __t.bool(),
+  enqueuedAt: __t.option(__t.timestamp()),
+  playersWaiting: __t.i32(),
+});
+export type QueueStanding = __Infer<typeof QueueStanding>;
 
 export const ReadyWaitSchedule = __t.object("ReadyWaitSchedule", {
   scheduledId: __t.u64(),

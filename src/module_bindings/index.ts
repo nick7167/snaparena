@@ -57,6 +57,7 @@ import RevertConfigReducer from "./revert_config_reducer";
 import SaveConfigReducer from "./save_config_reducer";
 import SeedBotsReducer from "./seed_bots_reducer";
 import SetAuthIssuerReducer from "./set_auth_issuer_reducer";
+import SetAvatarImageReducer from "./set_avatar_image_reducer";
 import SetDevFeaturesReducer from "./set_dev_features_reducer";
 import SetHandleReducer from "./set_handle_reducer";
 import SetRoleReducer from "./set_role_reducer";
@@ -90,6 +91,7 @@ import MatchRow from "./match_table";
 import MatchPlayerRow from "./match_player_table";
 import MeRow from "./me_table";
 import MyHandleProbeRow from "./my_handle_probe_table";
+import MyQueueStatusRow from "./my_queue_status_table";
 import MyRoundStatusRow from "./my_round_status_table";
 import RoomRow from "./room_table";
 import RoundLogRow from "./round_log_table";
@@ -455,6 +457,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyHandleProbeRow),
+  myQueueStatus: __table({
+    name: 'my_queue_status',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyQueueStatusRow),
   myRoundStatus: __table({
     name: 'my_round_status',
     indexes: [
@@ -496,6 +505,7 @@ const reducersSchema = __reducers(
   __reducerSchema("save_config", SaveConfigReducer),
   __reducerSchema("seed_bots", SeedBotsReducer),
   __reducerSchema("set_auth_issuer", SetAuthIssuerReducer),
+  __reducerSchema("set_avatar_image", SetAvatarImageReducer),
   __reducerSchema("set_dev_features", SetDevFeaturesReducer),
   __reducerSchema("set_handle", SetHandleReducer),
   __reducerSchema("set_role", SetRoleReducer),
