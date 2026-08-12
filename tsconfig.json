@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    /*
+     * ES2020 for BigInt. Every `u64` column arrives in the client as a bigint — ids,
+     * match ids, user ids — so the app cannot express an id literal without it. The
+     * old ES2017 target predates the SpacetimeDB port, when ids were opaque strings.
+     */
+    "target": "ES2020",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
