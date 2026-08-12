@@ -254,11 +254,19 @@ function ConnectionMonitor() {
   const { isActive, identity, connectionError } = useSpacetimeDB();
 
   useEffect(() => {
-    console.info("[snap] spacetimedb connection", {
-      active: isActive,
-      identity: identity?.toHexString() ?? null,
-      error: connectionError?.message ?? null,
-    });
+    /**
+     * ONE FLAT STRING, not an object.
+     *
+     * The first version logged an object and Chrome rendered it as the word
+     * "Object" — collapsed, needing a click per line to read. A log nobody can read
+     * at a glance is not a log; it is another round trip. Interpolated so the whole
+     * state is visible in the console's own listing.
+     */
+    console.info(
+      `[snap] spacetimedb — active=${isActive}` +
+        ` identity=${identity?.toHexString() ?? "none"}` +
+        ` error=${connectionError?.message ?? "none"}`,
+    );
   }, [isActive, identity, connectionError]);
 
   return null;
