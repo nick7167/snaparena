@@ -3,6 +3,7 @@ import { ScheduleAt } from "spacetimedb";
 import { spacetimedb, user } from "./schema";
 import type { ReducerCtx, ViewCtx } from "./ctx";
 import { armGuestCleanup } from "./guests";
+import { armLadderRebuild } from "./ladder";
 import {
   AVATAR_COLOUR_PATTERN,
   HANDLE_PATTERN,
@@ -114,6 +115,7 @@ export const init = spacetimedb.init((ctx) => {
   // someone to insert it. Each arming function is idempotent, because `init` runs
   // again on every `publish -c`.
   armGuestCleanup(ctx);
+  armLadderRebuild(ctx);
 });
 
 /**

@@ -28,6 +28,7 @@ import { runAdvancePhase, runDraftWatchdog, runWaitForReady } from "./phases";
 import { runCleanupGuests } from "./guests";
 import { runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
 import { runFinalizeMatch } from "./progression";
+import { runRebuildLadder } from "./ladder";
 
 export const advancePhase = spacetimedb.reducer(
   { row: phase_advance_schedule.rowType },
@@ -80,8 +81,9 @@ export const cleanupGuests = spacetimedb.reducer(
 
 export const rebuildLadder = spacetimedb.reducer(
   { row: ladder_rebuild_schedule.rowType },
-  (_ctx, { row }) => {
+  (ctx, { row }) => {
     void row;
+    runRebuildLadder(ctx);
   },
 );
 
