@@ -39,6 +39,7 @@ import CompleteDailyReducer from "./complete_daily_reducer";
 import CompleteOnboardingReducer from "./complete_onboarding_reducer";
 import CreateRoomReducer from "./create_room_reducer";
 import DequeueReducer from "./dequeue_reducer";
+import DevResolveNowReducer from "./dev_resolve_now_reducer";
 import EnqueueReducer from "./enqueue_reducer";
 import EnsureUserReducer from "./ensure_user_reducer";
 import ForfeitDailyReducer from "./forfeit_daily_reducer";
@@ -47,6 +48,7 @@ import LeaveRoomReducer from "./leave_room_reducer";
 import NudgeReducer from "./nudge_reducer";
 import PassRoundReducer from "./pass_round_reducer";
 import ProbeHandleReducer from "./probe_handle_reducer";
+import PurgeDevRankBotsReducer from "./purge_dev_rank_bots_reducer";
 import RebuildTitleIndexReducer from "./rebuild_title_index_reducer";
 import RemoveAuthIssuerReducer from "./remove_auth_issuer_reducer";
 import ReportProfileReducer from "./report_profile_reducer";
@@ -56,6 +58,7 @@ import ReturnToLobbyReducer from "./return_to_lobby_reducer";
 import RevertConfigReducer from "./revert_config_reducer";
 import SaveConfigReducer from "./save_config_reducer";
 import SeedBotsReducer from "./seed_bots_reducer";
+import SeedDevRankBotsReducer from "./seed_dev_rank_bots_reducer";
 import SetAuthIssuerReducer from "./set_auth_issuer_reducer";
 import SetAvatarImageReducer from "./set_avatar_image_reducer";
 import SetDevFeaturesReducer from "./set_dev_features_reducer";
@@ -487,6 +490,7 @@ const reducersSchema = __reducers(
   __reducerSchema("complete_onboarding", CompleteOnboardingReducer),
   __reducerSchema("create_room", CreateRoomReducer),
   __reducerSchema("dequeue", DequeueReducer),
+  __reducerSchema("dev_resolve_now", DevResolveNowReducer),
   __reducerSchema("enqueue", EnqueueReducer),
   __reducerSchema("ensure_user", EnsureUserReducer),
   __reducerSchema("forfeit_daily", ForfeitDailyReducer),
@@ -495,6 +499,7 @@ const reducersSchema = __reducers(
   __reducerSchema("nudge", NudgeReducer),
   __reducerSchema("pass_round", PassRoundReducer),
   __reducerSchema("probe_handle", ProbeHandleReducer),
+  __reducerSchema("purge_dev_rank_bots", PurgeDevRankBotsReducer),
   __reducerSchema("rebuild_title_index", RebuildTitleIndexReducer),
   __reducerSchema("remove_auth_issuer", RemoveAuthIssuerReducer),
   __reducerSchema("report_profile", ReportProfileReducer),
@@ -504,6 +509,7 @@ const reducersSchema = __reducers(
   __reducerSchema("revert_config", RevertConfigReducer),
   __reducerSchema("save_config", SaveConfigReducer),
   __reducerSchema("seed_bots", SeedBotsReducer),
+  __reducerSchema("seed_dev_rank_bots", SeedDevRankBotsReducer),
   __reducerSchema("set_auth_issuer", SetAuthIssuerReducer),
   __reducerSchema("set_avatar_image", SetAvatarImageReducer),
   __reducerSchema("set_dev_features", SetDevFeaturesReducer),
