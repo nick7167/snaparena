@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DbConnection } from "@/module_bindings";
 import { AnalyticsProvider } from "@/analytics/Provider";
 import { ConfigProvider } from "./config";
+// Imported, never re-exported. See the file for what re-exporting it from here did.
+import { CLERK_JWT_TEMPLATE } from "./clerk-template";
 
 /**
  * Clerk owns identity; SpacetimeDB receives the Clerk JWT as the connection token
@@ -14,15 +16,6 @@ import { ConfigProvider } from "./config";
  * `by_clerk_id` did, since Clerk's `sub` is exactly what `clerkId` used to hold.
  */
 
-/**
- * The Clerk JWT template minted for this database.
- *
- * Must exist in the Clerk dashboard under this exact name. It replaces the
- * template named "convex", and the issuer it declares has to be registered on the
- * module with `npm run stdb:auth` — the module refuses tokens from issuers it does
- * not know, which is the same deliberate loud failure `auth.config.ts` had.
- */
-export const CLERK_JWT_TEMPLATE = "spacetimedb";
 
 /**
  * How often to pull a fresh token from Clerk.
