@@ -35,6 +35,7 @@ import {
 
 // Import all reducer arg schemas
 import ClaimGuestRunsReducer from "./claim_guest_runs_reducer";
+import ClearBotCareersReducer from "./clear_bot_careers_reducer";
 import CompleteDailyReducer from "./complete_daily_reducer";
 import CompleteOnboardingReducer from "./complete_onboarding_reducer";
 import CreateRoomReducer from "./create_room_reducer";
@@ -49,6 +50,7 @@ import NudgeReducer from "./nudge_reducer";
 import PassRoundReducer from "./pass_round_reducer";
 import ProbeHandleReducer from "./probe_handle_reducer";
 import PurgeDevRankBotsReducer from "./purge_dev_rank_bots_reducer";
+import PurgeTestUserReducer from "./purge_test_user_reducer";
 import RebuildTitleIndexReducer from "./rebuild_title_index_reducer";
 import RemoveAuthIssuerReducer from "./remove_auth_issuer_reducer";
 import ReportProfileReducer from "./report_profile_reducer";
@@ -486,6 +488,7 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("claim_guest_runs", ClaimGuestRunsReducer),
+  __reducerSchema("clear_bot_careers", ClearBotCareersReducer),
   __reducerSchema("complete_daily", CompleteDailyReducer),
   __reducerSchema("complete_onboarding", CompleteOnboardingReducer),
   __reducerSchema("create_room", CreateRoomReducer),
@@ -500,6 +503,7 @@ const reducersSchema = __reducers(
   __reducerSchema("pass_round", PassRoundReducer),
   __reducerSchema("probe_handle", ProbeHandleReducer),
   __reducerSchema("purge_dev_rank_bots", PurgeDevRankBotsReducer),
+  __reducerSchema("purge_test_user", PurgeTestUserReducer),
   __reducerSchema("rebuild_title_index", RebuildTitleIndexReducer),
   __reducerSchema("remove_auth_issuer", RemoveAuthIssuerReducer),
   __reducerSchema("report_profile", ReportProfileReducer),

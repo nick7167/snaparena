@@ -7,6 +7,7 @@ import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
 import ClaimGuestRunsReducer from "../claim_guest_runs_reducer";
+import ClearBotCareersReducer from "../clear_bot_careers_reducer";
 import CompleteDailyReducer from "../complete_daily_reducer";
 import CompleteOnboardingReducer from "../complete_onboarding_reducer";
 import CreateRoomReducer from "../create_room_reducer";
@@ -21,6 +22,7 @@ import NudgeReducer from "../nudge_reducer";
 import PassRoundReducer from "../pass_round_reducer";
 import ProbeHandleReducer from "../probe_handle_reducer";
 import PurgeDevRankBotsReducer from "../purge_dev_rank_bots_reducer";
+import PurgeTestUserReducer from "../purge_test_user_reducer";
 import RebuildTitleIndexReducer from "../rebuild_title_index_reducer";
 import RemoveAuthIssuerReducer from "../remove_auth_issuer_reducer";
 import ReportProfileReducer from "../report_profile_reducer";
@@ -49,6 +51,7 @@ import UpsertCategoriesReducer from "../upsert_categories_reducer";
 import UpsertTracksReducer from "../upsert_tracks_reducer";
 
 export type ClaimGuestRunsParams = __Infer<typeof ClaimGuestRunsReducer>;
+export type ClearBotCareersParams = __Infer<typeof ClearBotCareersReducer>;
 export type CompleteDailyParams = __Infer<typeof CompleteDailyReducer>;
 export type CompleteOnboardingParams = __Infer<typeof CompleteOnboardingReducer>;
 export type CreateRoomParams = __Infer<typeof CreateRoomReducer>;
@@ -63,6 +66,7 @@ export type NudgeParams = __Infer<typeof NudgeReducer>;
 export type PassRoundParams = __Infer<typeof PassRoundReducer>;
 export type ProbeHandleParams = __Infer<typeof ProbeHandleReducer>;
 export type PurgeDevRankBotsParams = __Infer<typeof PurgeDevRankBotsReducer>;
+export type PurgeTestUserParams = __Infer<typeof PurgeTestUserReducer>;
 export type RebuildTitleIndexParams = __Infer<typeof RebuildTitleIndexReducer>;
 export type RemoveAuthIssuerParams = __Infer<typeof RemoveAuthIssuerReducer>;
 export type ReportProfileParams = __Infer<typeof ReportProfileReducer>;
