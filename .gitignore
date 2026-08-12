@@ -52,6 +52,14 @@ yarn-error.log*
 # deploy fails. Committing them is what makes the build reproducible off a clean
 # clone. The staleness risk is now a review discipline: regenerate with
 # `npm run stdb:generate` after any schema change, and commit the result with it.
+#
+# The module's own build output is the opposite case, and was tracked by mistake.
+# `spacetime build`, `publish` and `generate` all bundle from --module-path source,
+# so nothing ever reads this file back — and Vercel does not build the module at
+# all. Tracked, it did two bad things: rewrote itself on every local build so a
+# `git pull --rebase` refused to run, and sat 2MB stale in every diff, because
+# whoever last committed it had run a build and nobody since had.
+/spacetimedb/dist/
 # Which database this checkout publishes to, per developer.
 /spacetime.local.json
 
