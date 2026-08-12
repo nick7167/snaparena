@@ -70,6 +70,15 @@ export { enqueue, dequeue, surrender } from "./matchmaking";
 export { seedBots, startPractice } from "./bots";
 
 export {
+  createRoom,
+  joinRoom,
+  setRoomReady,
+  leaveRoom,
+  startRoomMatch,
+  returnToLobby,
+} from "./rooms";
+
+export {
   submitGuess,
   passRound,
   reportReady,
