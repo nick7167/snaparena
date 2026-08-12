@@ -287,6 +287,95 @@ function allocateHandle(ctx: ReducerCtx, displayName: string): string {
 }
 
 /**
+ * Creates the guest player row for an anonymous caller.
+ *
+ * A guest is simply a caller with no JWT, which is why this is a separate reducer
+ * rather than a branch inside `ensureUser`: that one demands a trusted issuer, and
+ * demanding one here would defeat the point. Anonymous identities are minted by
+ * SpacetimeDB itself, so there is no client-supplied bearer token to validate — which
+ * is the whole of what the Convex `guestByToken` machinery existed to do.
+ *
+ * Called on demand by the daily, never on page load, so a visitor who never plays
+ * leaves nothing behind.
+ *
+ * The handle uses a random suffix rather than `allocateHandle`, which derives from a
+ * display name and walks `guest2 … guest50` on collision; with every guest sharing one
+ * base name that would degrade immediately.
+ */
+export function ensureGuestUser(ctx: ReducerCtx) {
+  const existing = senderUser(ctx);
+  if (existing) return existing;
+
+  // A signed-in caller must never land here — they have an issuer and belong in
+  // `ensureUser`, which gives them a real account rather than a disposable one.
+  if (ctx.senderAuth.jwt != null) reject("Signed-in callers use ensureUser");
+
+  /**
+   * The token that lets a later sign-in claim these runs.
+   *
+   * Stored on the row rather than supplied by the client, and readable only through
+   * the `me` view — so it is a capability the guest already holds, not a name anyone
+   * can guess. This replaces the Convex token, which arrived from the browser and
+   * therefore had to be treated as an assertion about who you were.
+   */
+  const token = `${ctx.timestamp.microsSinceUnixEpoch.toString(36)}${ctx.random
+    .integerInRange(0, 0x7fffffff)
+    .toString(36)}`;
+
+  const created = ctx.db.user.insert({
+    id: 0n,
+    handle: guestHandle(ctx, token),
+    displayName: "Guest",
+    avatarUrl: undefined,
+    avatarHidden: false,
+    elo: STARTING_ELO,
+    gamesPlayed: 0,
+    // Never reaches 0, which is what keeps guests off the global ladder.
+    placementsRemaining: PLACEMENT_MATCHES,
+    createdAt: ctx.timestamp,
+    role: undefined,
+    xp: 0,
+    level: 1,
+    rankedWins: 0,
+    snapGuesses: 0,
+    onboardedAt: undefined,
+    welcomeStep: undefined,
+    tutorialCompletedAt: undefined,
+    bio: undefined,
+    bioHidden: false,
+    isBot: false,
+    botPersonaId: undefined,
+    lastPracticePersonaId: undefined,
+    isGuest: true,
+    guestClaimedAt: undefined,
+    guestClaimToken: token,
+  });
+
+  ctx.db.account.insert({
+    identity: ctx.sender,
+    userId: created.id,
+    // No issuer: this identity was minted by the database, not by an OIDC provider.
+    issuer: "",
+    createdAt: ctx.timestamp,
+  });
+
+  return created;
+}
+
+/** A handle nobody else holds, without walking a shared base name. */
+function guestHandle(ctx: ReducerCtx, token: string): string {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const suffix = attempt === 0 ? token.slice(0, 6) : `${token.slice(0, 4)}${attempt}`;
+    const candidate = `guest_${suffix}`.slice(0, HANDLE_MAX_LENGTH);
+    if (!ctx.db.user.handle.find(candidate)) return candidate;
+  }
+  return `guest_${ctx.timestamp.microsSinceUnixEpoch.toString(36)}`.slice(
+    0,
+    HANDLE_MAX_LENGTH,
+  );
+}
+
+/**
  * Completes first-run onboarding.
  *
  * Only the username is required — avatar, bio and genres are all editable later,

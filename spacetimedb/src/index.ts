@@ -56,6 +56,13 @@ export { nudge } from "./phases";
 
 export { submitBan } from "./draft";
 
+export {
+  startDaily,
+  completeDaily,
+  forfeitDaily,
+  claimGuestRuns,
+} from "./daily";
+
 export { enqueue, dequeue, surrender } from "./matchmaking";
 
 export {
