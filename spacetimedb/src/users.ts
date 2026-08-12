@@ -144,6 +144,24 @@ export const onConnect = spacetimedb.clientConnected((ctx) => {
       connectedAt: ctx.timestamp,
     });
   }
+
+  /**
+   * RE-ARM THE RECURRING WORK, because `init` is not a deployment hook.
+   *
+   * `init` runs when a database is CREATED and again only when its data is cleared.
+   * Publishing over an existing database is a migration, not a fresh start, so an
+   * interval added to `init` after the first publish is never armed by any amount of
+   * ordinary deploying — and this was not hypothetical: the ladder rebuild and the
+   * guest sweep were both added that way and had never run once in production. The
+   * visible half was an empty leaderboard with no "updated" line, because nothing had
+   * ever written `ladder_status`.
+   *
+   * Here instead, because a connection is the one event guaranteed to follow a
+   * publish. Both arming functions return immediately when their schedule table is
+   * non-empty, so the steady-state cost is two counts per connection.
+   */
+  armGuestCleanup(ctx);
+  armLadderRebuild(ctx);
 });
 
 /**
@@ -307,9 +325,26 @@ export function ensureGuestUser(ctx: ReducerCtx) {
   const existing = senderUser(ctx);
   if (existing) return existing;
 
-  // A signed-in caller must never land here — they have an issuer and belong in
-  // `ensureUser`, which gives them a real account rather than a disposable one.
-  if (ctx.senderAuth.jwt != null) reject("Signed-in callers use ensureUser");
+  /**
+   * A signed-in caller must never land here — they belong in `ensureUser`, which
+   * gives them a real account rather than a disposable one.
+   *
+   * THE TEST IS THE ISSUER, NOT THE PRESENCE OF A TOKEN. This read `jwt != null`,
+   * which is the same mistake `onConnect` documents two hundred lines above:
+   * SpacetimeDB mints its OWN token for every identity it issues, so an anonymous
+   * visitor arrives carrying a JWT from the database itself. The SDK persists that
+   * token and presents it on every later connection — so the check passed exactly
+   * once, on a browser that had never loaded the site, and refused every returning
+   * guest thereafter. The daily is the only mode a guest can play, so that was the
+   * whole guest funnel, failing with "Could not start today's run."
+   *
+   * A trusted issuer is what actually distinguishes a signed-in player, and it is
+   * the same rule `requireTrustedIssuer` applies on the way in.
+   */
+  const issuer = ctx.senderAuth.jwt?.issuer;
+  if (issuer !== undefined && ctx.db.auth_issuer.issuer.find(issuer)) {
+    reject("Signed-in callers use ensureUser");
+  }
 
   /**
    * The token that lets a later sign-in claim these runs.

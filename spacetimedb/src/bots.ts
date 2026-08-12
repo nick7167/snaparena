@@ -1,6 +1,6 @@
 import { spacetimedb } from "./schema";
 import type { ReducerCtx } from "./ctx";
-import { applyGuess } from "./guesses";
+import { applyGuess, markPassed } from "./guesses";
 import {
   closeDraft,
   endGuessingEarly,
@@ -131,14 +131,41 @@ function placeBotBan(ctx: ReducerCtx, matchId: bigint, expectedTurn: number): vo
   if (match.banTurn !== expectedTurn) return;
   if (expectedTurn >= TOTAL_BANS) return;
 
+  /**
+   * EVERY EXIT FROM HERE HANDS THE TURN BACK, which is why the work is wrapped.
+   *
+   * This used to re-queue `draft_turn` only on the success path. Any other exit —
+   * an unresolvable persona, a chosen slug that is not in the pool, a category row
+   * that has gone away — dropped the chain silently, and with it the only thing
+   * moving the draft. The turn indicator then sat still until the watchdog force-
+   * closed the phase fifteen seconds later, which reads as the game hanging.
+   *
+   * The re-queue is safe from every one of those exits: `draftTurn` re-reads the
+   * match and does nothing once the draft has closed or the turn has moved on.
+   */
+  const chosen = chooseBan(ctx, match);
+  if (chosen !== undefined) {
+    // `placeBan` closes the draft itself once the last ban lands.
+    placeBan(ctx, matchId, chosen);
+  }
+
+  // Hand the turn back. A no-op if that ban closed the draft.
+  queueBotAction(ctx, matchId, 0n, "draft_turn", 0, 0, 0);
+}
+
+/** The category this bot wants to ban, or undefined if it cannot pick one. */
+function chooseBan(
+  ctx: ReducerCtx,
+  match: NonNullable<ReturnType<ReducerCtx["db"]["match"]["id"]["find"]>>,
+): bigint | undefined {
   const currentId = draftTurnOwner(match);
-  if (currentId === undefined) return;
+  if (currentId === undefined) return undefined;
 
   const bot = ctx.db.user.id.find(currentId);
-  if (!bot?.isBot || bot.botPersonaId === undefined) return;
+  if (!bot?.isBot || bot.botPersonaId === undefined) return undefined;
 
   const persona = personaById(bot.botPersonaId);
-  if (!persona) return;
+  if (!persona) return undefined;
 
   const banned = new Set(match.bannedCategoryIds);
   const available: { id: bigint; slug: string }[] = [];
@@ -153,14 +180,13 @@ function placeBotBan(ctx: ReducerCtx, matchId: bigint, expectedTurn: number): vo
     persona,
     available.map((entry) => entry.slug),
   );
-  const choice = available.find((entry) => entry.slug === slug);
-  if (!choice) return;
 
-  // `placeBan` closes the draft itself once the last ban lands.
-  placeBan(ctx, matchId, choice.id);
-
-  // Hand the turn back. A no-op if that ban closed the draft.
-  queueBotAction(ctx, matchId, 0n, "draft_turn", 0, 0, 0);
+  /**
+   * Falls back to the first available rather than giving up. A persona whose
+   * preference has already been banned would otherwise skip its turn entirely, and
+   * a draft where one side never bans is not the draft either player agreed to.
+   */
+  return (available.find((entry) => entry.slug === slug) ?? available[0])?.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,13 +301,10 @@ function passForBot(
   if (!match || match.phase !== "guessing") return;
   if (match.currentRound !== roundIndex) return;
 
-  const player = [...ctx.db.match_player.by_match_user.filter([matchId, userId])][0];
-  if (!player) return;
-
-  ctx.db.match_player.id.update({ ...player, passedRound: roundIndex });
-
-  const refreshed = ctx.db.match.id.find(matchId);
-  if (refreshed) endGuessingEarly(ctx, refreshed);
+  // The shared writer, so a bot's pass counts towards ending the round early. It
+  // used to write only `match_player.passedRound`, which `endGuessingEarly` does not
+  // read — so every round the bot gave up on still ran its full thirty seconds.
+  markPassed(ctx, match, roundIndex, userId);
 }
 
 /**

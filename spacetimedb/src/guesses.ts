@@ -264,6 +264,48 @@ export const submitGuess = spacetimedb.reducer(
   },
 );
 
+/**
+ * Gives up on the round, for a human or a bot.
+ *
+ * TWO ROWS, AND BOTH ARE LOAD-BEARING — which is the whole reason this is one
+ * function rather than two call sites that each wrote the half they cared about.
+ *
+ * `round_result.passed` is what `endGuessingEarly` counts when deciding whether
+ * everyone is done. `match_player.passedRound` is what the client reads to render
+ * "you passed" and retire the guess field. Writing either alone is silently broken
+ * in one direction:
+ *
+ *   human pass wrote only round_result  -> the round could end, but the player got
+ *                                          no acknowledgement and kept typing into
+ *                                          a round they had already given up on
+ *   bot pass wrote only match_player     -> the bot's own `endGuessingEarly` call
+ *                                          could never see it, so every round the
+ *                                          bot did not know ran its full thirty
+ *                                          seconds of silence after the human had
+ *                                          already answered
+ *
+ * Both were true at once, in opposite directions, which is what a shared writer
+ * prevents.
+ */
+export function markPassed(
+  ctx: ReducerCtx,
+  match: MatchRow,
+  roundIndex: number,
+  userId: bigint,
+): void {
+  const result = roundResultFor(ctx, match.id, roundIndex, userId);
+  if (result.solved) return;
+
+  ctx.db.round_result.id.update({ ...result, passed: true });
+
+  const entry = [...ctx.db.match_player.by_match_user.filter([match.id, userId])][0];
+  if (entry) ctx.db.match_player.id.update({ ...entry, passedRound: roundIndex });
+
+  // Re-read: the writes above are what may have completed the set.
+  const refreshed = ctx.db.match.id.find(match.id);
+  if (refreshed) endGuessingEarly(ctx, refreshed);
+}
+
 /** Locks in zero for the round. May end guessing early if everyone is now done. */
 export const passRound = spacetimedb.reducer(
   { matchId: t.u64(), roundIndex: t.i32() },
@@ -276,11 +318,7 @@ export const passRound = spacetimedb.reducer(
     if (match.currentRound !== roundIndex) return;
     if (!match.playerIds.some((id) => id === player.id)) return;
 
-    const result = roundResultFor(ctx, matchId, roundIndex, player.id);
-    if (result.solved) return;
-
-    ctx.db.round_result.id.update({ ...result, passed: true });
-    endGuessingEarly(ctx, match);
+    markPassed(ctx, match, roundIndex, player.id);
   },
 );
 
@@ -312,23 +350,31 @@ export const reportReady = spacetimedb.reducer(
      * Writing only the first is what made Ready appear dead: the reducer succeeded,
      * the field changed, and nothing in the reveal read it.
      */
-    const inReveal = match?.phase === "vs_reveal";
+    /**
+     * DURING THE REVEAL THIS IS INTENT, NOT BUFFERING, and conflating the two breaks
+     * the barrier it shares a reducer with.
+     *
+     * The client presses Ready on the opponent screen, before round 0 has a clip to
+     * buffer — `openRound` has not run, so `currentAudioUrl` is still null. Letting
+     * that press also write `readyForRound: 0` would satisfy `runWaitForReady` for a
+     * round the browser has downloaded nothing of, and song one would start
+     * mid-buffer and cut off on a slow connection: exactly the failure the barrier
+     * exists to prevent. So the reveal writes `vsReadyAt` and nothing else, and the
+     * real buffer report arrives later on its own.
+     */
+    if (match?.phase === "vs_reveal") {
+      if (row.vsReadyAt !== undefined) return;
 
-    if (roundIndex <= row.readyForRound && !(inReveal && row.vsReadyAt === undefined)) {
+      ctx.db.match_player.id.update({ ...row, vsReadyAt: ctx.timestamp });
+
+      // Re-read: the update above is what may have completed the set.
+      const refreshed = ctx.db.match.id.find(matchId);
+      if (refreshed) readyUpVsReveal(ctx, refreshed);
       return;
     }
 
-    ctx.db.match_player.id.update({
-      ...row,
-      readyForRound: Math.max(row.readyForRound, roundIndex),
-      vsReadyAt: inReveal ? ctx.timestamp : row.vsReadyAt,
-    });
-
-    // Re-read: the update above is what may have completed the set.
-    if (inReveal && match) {
-      const refreshed = ctx.db.match.id.find(matchId);
-      if (refreshed) readyUpVsReveal(ctx, refreshed);
-    }
+    if (roundIndex <= row.readyForRound) return;
+    ctx.db.match_player.id.update({ ...row, readyForRound: roundIndex });
   },
 );
 

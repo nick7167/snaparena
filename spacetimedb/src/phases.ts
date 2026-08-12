@@ -2,7 +2,7 @@ import { ScheduleAt, type Timestamp } from "spacetimedb";
 import { t } from "spacetimedb/server";
 import { spacetimedb } from "./schema";
 import type { ReducerCtx } from "./ctx";
-import { microsFrom, timestampFrom, toMs } from "./lib";
+import { microsFrom, msToMicros, timestampFrom, toMs } from "./lib";
 import { resolveConfig } from "./config";
 import { difficultyTierForElo, pickTracksForMatch } from "./catalogue";
 import {
@@ -376,7 +376,33 @@ export function runAdvancePhase(
        */
       const config = resolveConfig(ctx, match.configVersionId);
       const endsAt = match.phaseEndsAt ? toMs(match.phaseEndsAt) : 0;
-      if (toMs(ctx.timestamp) < endsAt + config.READY_TIMEOUT_MS) return;
+      const safeAt = endsAt + config.READY_TIMEOUT_MS;
+
+      if (toMs(ctx.timestamp) < safeAt) {
+        /**
+         * RE-ARMED, not dropped — without this the backstop was dead code.
+         *
+         * The only `phase_advance_schedule` row for a countdown is armed at exactly
+         * `phaseEndsAt`, which is `READY_TIMEOUT_MS` earlier than the gate above. So
+         * the guard was guaranteed false on the one firing this row ever gets, and
+         * returning consumed it: the countdown was left with a single automatic exit,
+         * the self-re-arming ready-wait chain, and any hiccup in that chain froze the
+         * match on "3… 2… 1…" forever with the backstop unable to run.
+         *
+         * Re-arming for the moment the gate opens is what the comment above always
+         * described. A healthy chain reaches `guessing` long before then and this
+         * lands as a no-op, because the phase no longer matches.
+         */
+        ctx.db.phase_advance_schedule.insert({
+          scheduled_id: 0n,
+          scheduled_at: ScheduleAt.time(msToMicros(safeAt)),
+          matchId: match.id,
+          expectedPhase: "countdown",
+          expectedRound: match.currentRound,
+        });
+        return;
+      }
+
       enterPhase(ctx, match.id, "guessing");
       return;
     }
@@ -736,13 +762,29 @@ export function closeDraft(ctx: ReducerCtx, match: MatchRow): void {
   });
 
   if (trackIds.length < MAX_DUEL_ROUNDS) {
-    // Not enough catalogue to run the full distance — abandon rather than repeat
-    // songs, which would let a player who already heard one score for free.
+    /**
+     * Not enough catalogue to run the full distance — abandon rather than repeat
+     * songs, which would let a player who already heard one score for free.
+     *
+     * `completedAt` IS SET, and that is the difference between a dead end and an
+     * ending. Without it the match sat at `match_end` with no completion time, no
+     * winner and no `finalize_schedule` row: the screen went blank, no result was
+     * shown, and nothing could rescue it — `surrender` ignores a non-active match,
+     * the forfeit sweep only touches ranked, and `nudge` needs a `phaseEndsAt` this
+     * path deliberately clears. The result screen keys off `completedAt`, so writing
+     * it is what lets the player see that the match is over and leave.
+     *
+     * No `finalize_schedule`: an abandoned match pays out nothing, which is correct.
+     * The gate in `requireCatalogue` counts every playable track and cannot model the
+     * four categories a draft has just banned, so this path is reachable from a
+     * catalogue that passed the pre-flight check.
+     */
     ctx.db.match.id.update({
       ...match,
       status: "abandoned",
       phase: "match_end",
       phaseEndsAt: undefined,
+      completedAt: ctx.timestamp,
     });
     return;
   }
