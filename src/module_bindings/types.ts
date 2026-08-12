@@ -523,6 +523,17 @@ export const TrackInput = __t.object("TrackInput", {
 });
 export type TrackInput = __Infer<typeof TrackInput>;
 
+export const TutorialClip = __t.object("TutorialClip", {
+  title: __t.string(),
+  artist: __t.string(),
+  artworkUrl: __t.string(),
+  previewUrl: __t.string(),
+});
+export type TutorialClip = __Infer<typeof TutorialClip>;
+
+export const TutorialTrack = __t.object("TutorialTrack", {});
+export type TutorialTrack = __Infer<typeof TutorialTrack>;
+
 export const User = __t.object("User", {
   id: __t.u64(),
   handle: __t.string(),

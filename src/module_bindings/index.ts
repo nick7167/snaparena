@@ -34,23 +34,40 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClaimGuestRunsReducer from "./claim_guest_runs_reducer";
+import CompleteDailyReducer from "./complete_daily_reducer";
 import CompleteOnboardingReducer from "./complete_onboarding_reducer";
+import CreateRoomReducer from "./create_room_reducer";
+import DequeueReducer from "./dequeue_reducer";
+import EnqueueReducer from "./enqueue_reducer";
 import EnsureUserReducer from "./ensure_user_reducer";
+import ForfeitDailyReducer from "./forfeit_daily_reducer";
+import JoinRoomReducer from "./join_room_reducer";
+import LeaveRoomReducer from "./leave_room_reducer";
 import NudgeReducer from "./nudge_reducer";
 import PassRoundReducer from "./pass_round_reducer";
 import ProbeHandleReducer from "./probe_handle_reducer";
 import RebuildTitleIndexReducer from "./rebuild_title_index_reducer";
 import RemoveAuthIssuerReducer from "./remove_auth_issuer_reducer";
+import ReportProfileReducer from "./report_profile_reducer";
 import ReportReadyReducer from "./report_ready_reducer";
 import ResetConfigReducer from "./reset_config_reducer";
+import ReturnToLobbyReducer from "./return_to_lobby_reducer";
 import RevertConfigReducer from "./revert_config_reducer";
 import SaveConfigReducer from "./save_config_reducer";
+import SeedBotsReducer from "./seed_bots_reducer";
 import SetAuthIssuerReducer from "./set_auth_issuer_reducer";
 import SetDevFeaturesReducer from "./set_dev_features_reducer";
 import SetHandleReducer from "./set_handle_reducer";
 import SetRoleReducer from "./set_role_reducer";
+import SetRoomReadyReducer from "./set_room_ready_reducer";
 import SetWelcomeStepReducer from "./set_welcome_step_reducer";
+import StartDailyReducer from "./start_daily_reducer";
+import StartPracticeReducer from "./start_practice_reducer";
+import StartRoomMatchReducer from "./start_room_match_reducer";
+import SubmitBanReducer from "./submit_ban_reducer";
 import SubmitGuessReducer from "./submit_guess_reducer";
+import SurrenderReducer from "./surrender_reducer";
 import UpdateProfileReducer from "./update_profile_reducer";
 import UpsertCategoriesReducer from "./upsert_categories_reducer";
 import UpsertTracksReducer from "./upsert_tracks_reducer";
@@ -80,6 +97,7 @@ import RoundResultRow from "./round_result_table";
 import RoundRevealRow from "./round_reveal_table";
 import SettingsRow from "./settings_table";
 import TrackIndexRow from "./track_index_table";
+import TutorialTrackRow from "./tutorial_track_table";
 import UserRow from "./user_table";
 import UserBadgeRow from "./user_badge_table";
 import UserPreferenceRow from "./user_preference_table";
@@ -444,27 +462,51 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyRoundStatusRow),
+  tutorialTrack: __table({
+    name: 'tutorial_track',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, TutorialTrackRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("claim_guest_runs", ClaimGuestRunsReducer),
+  __reducerSchema("complete_daily", CompleteDailyReducer),
   __reducerSchema("complete_onboarding", CompleteOnboardingReducer),
+  __reducerSchema("create_room", CreateRoomReducer),
+  __reducerSchema("dequeue", DequeueReducer),
+  __reducerSchema("enqueue", EnqueueReducer),
   __reducerSchema("ensure_user", EnsureUserReducer),
+  __reducerSchema("forfeit_daily", ForfeitDailyReducer),
+  __reducerSchema("join_room", JoinRoomReducer),
+  __reducerSchema("leave_room", LeaveRoomReducer),
   __reducerSchema("nudge", NudgeReducer),
   __reducerSchema("pass_round", PassRoundReducer),
   __reducerSchema("probe_handle", ProbeHandleReducer),
   __reducerSchema("rebuild_title_index", RebuildTitleIndexReducer),
   __reducerSchema("remove_auth_issuer", RemoveAuthIssuerReducer),
+  __reducerSchema("report_profile", ReportProfileReducer),
   __reducerSchema("report_ready", ReportReadyReducer),
   __reducerSchema("reset_config", ResetConfigReducer),
+  __reducerSchema("return_to_lobby", ReturnToLobbyReducer),
   __reducerSchema("revert_config", RevertConfigReducer),
   __reducerSchema("save_config", SaveConfigReducer),
+  __reducerSchema("seed_bots", SeedBotsReducer),
   __reducerSchema("set_auth_issuer", SetAuthIssuerReducer),
   __reducerSchema("set_dev_features", SetDevFeaturesReducer),
   __reducerSchema("set_handle", SetHandleReducer),
   __reducerSchema("set_role", SetRoleReducer),
+  __reducerSchema("set_room_ready", SetRoomReadyReducer),
   __reducerSchema("set_welcome_step", SetWelcomeStepReducer),
+  __reducerSchema("start_daily", StartDailyReducer),
+  __reducerSchema("start_practice", StartPracticeReducer),
+  __reducerSchema("start_room_match", StartRoomMatchReducer),
+  __reducerSchema("submit_ban", SubmitBanReducer),
   __reducerSchema("submit_guess", SubmitGuessReducer),
+  __reducerSchema("surrender", SurrenderReducer),
   __reducerSchema("update_profile", UpdateProfileReducer),
   __reducerSchema("upsert_categories", UpsertCategoriesReducer),
   __reducerSchema("upsert_tracks", UpsertTracksReducer),
