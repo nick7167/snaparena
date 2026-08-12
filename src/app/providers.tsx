@@ -165,6 +165,7 @@ function SpacetimeBridge({ children }: { children: ReactNode }) {
   return (
     <SpacetimeDBProvider connectionBuilder={builder}>
       <IdentitySwitchGuard epoch={tokenEpoch} />
+      <ConnectionMonitor />
       {/* Inside the SpacetimeDB provider because it identifies against the module's
           user row, not the Clerk one — every other system in the app keys on that
           id. Renders nothing, and is inert unless NEXT_PUBLIC_POSTHOG_KEY is set. */}
@@ -224,6 +225,41 @@ function IdentitySwitchGuard({ epoch }: { epoch: number }) {
     const handle = setTimeout(() => getConnection()?.disconnect(), 0);
     return () => clearTimeout(handle);
   }, [epoch, getConnection]);
+
+  return null;
+}
+
+/**
+ * Reports the connection's state to the console, once per transition.
+ *
+ * The SDK is nearly silent: it logs "Connecting to SpacetimeDB WS..." from the
+ * constructor — BEFORE the socket exists — and then says nothing at all unless the
+ * open outright rejects. So a page that renders every panel as a loading skeleton
+ * looks identical whether the socket is still opening, opened and idle, or was
+ * refused; and the one message you do get is the least informative of the three,
+ * because it is printed before anything has been attempted.
+ *
+ * That ambiguity cost a diagnosis, so the app says it plainly instead. Three or
+ * four lines per page load, and they distinguish the cases that matter:
+ *
+ *   active:false, error:null    still connecting, or hung
+ *   active:false, error:"..."   refused, and by what
+ *   active:true,  identity:...  connected; anything still blank is a subscription
+ *
+ * `console.info` rather than a debug flag nobody knows to set. This is the log an
+ * operator needs at the moment they discover they need it, and by then a rebuild to
+ * turn it on is the expensive part.
+ */
+function ConnectionMonitor() {
+  const { isActive, identity, connectionError } = useSpacetimeDB();
+
+  useEffect(() => {
+    console.info("[snap] spacetimedb connection", {
+      active: isActive,
+      identity: identity?.toHexString() ?? null,
+      error: connectionError?.message ?? null,
+    });
+  }, [isActive, identity, connectionError]);
 
   return null;
 }
