@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useCatalogueStats, useCategories } from "../db";
 import { DAILY_SONGS, MAX_DUEL_ROUNDS } from "@/engine/config";
 import { Card, Chip, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
@@ -10,8 +9,8 @@ import { Glyph } from "@/ui/Glyph";
 const THIN_TIER_FLOOR = 50;
 
 export function AdminDashboard() {
-  const stats = useQuery(api.tracks.stats, {});
-  const categories = useQuery(api.tracks.categories, {});
+  const stats = useCatalogueStats();
+  const categories = useCategories();
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 py-12">
@@ -78,7 +77,7 @@ export function AdminDashboard() {
               <SectionLabel>Categories</SectionLabel>
               <div className="flex flex-wrap gap-2">
                 {categories.map((category) => (
-                  <Chip key={category._id}>{category.name}</Chip>
+                  <Chip key={category.id}>{category.name}</Chip>
                 ))}
               </div>
             </section>

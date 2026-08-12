@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useDevFeatures } from "../config";
 import { Button } from "@/ui/Button";
 import { Card, Chip, SectionLabel, Skeleton } from "@/ui/Surface";
 
@@ -19,18 +20,16 @@ import { Card, Chip, SectionLabel, Skeleton } from "@/ui/Surface";
  * environment. It is a database row now, which is the only reason this toggle can exist.
  */
 export function DevControls() {
-  const live = useQuery(api.config.current, {});
-  const setDevFeatures = useMutation(api.config.setDevFeatures);
-  const seed = useMutation(api.devbots.seed);
-  const resetRoster = useMutation(api.devbots.resetRoster);
+  const devFeaturesEnabled = useDevFeatures();
+  const setDevFeatures = useStdbReducer(reducers.setDevFeatures);
+  const seed = useStdbReducer(reducers.seedBots);
+  const resetRoster = useStdbReducer(reducers.seedBots);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  if (live === undefined) return <Skeleton className="h-48 w-full" />;
-
-  const enabled = live.devFeaturesEnabled;
+  const enabled = devFeaturesEnabled;
 
   async function run(id: string, action: () => Promise<string>) {
     if (busy) return;
@@ -97,8 +96,10 @@ export function DevControls() {
               loading={busy === "seed"}
               onClick={() =>
                 void run("seed", async () => {
-                  const result = await seed({});
-                  return `${result.created} created, ${result.updated} updated.`;
+                  // A reducer returns nothing, so the count is gone. The roster itself
+                  // is the confirmation — it appears in the practice list either way.
+                  await seed();
+                  return `Roster seeded from the personas.`;
                 })
               }
             >
@@ -110,8 +111,11 @@ export function DevControls() {
               loading={busy === "reset"}
               onClick={() =>
                 void run("reset", async () => {
-                  const result = await resetRoster({});
-                  return `${result.reset} bots back on their anchor rating.`;
+                  // Re-seeding IS the reset: seedBots refreshes every existing row from
+                  // its persona, which is what putting a bot back on its anchor rating
+                  // means. One reducer rather than two that could disagree.
+                  await resetRoster();
+                  return `Bots back on their anchor ratings.`;
                 })
               }
             >

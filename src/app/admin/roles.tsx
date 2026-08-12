@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useAdmins } from "../db";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -20,8 +21,8 @@ import { Avatar } from "@/game/ui";
  * component that answers a question nobody asked.
  */
 export function RoleManager() {
-  const admins = useQuery(api.roles.listAdmins, {});
-  const setRole = useMutation(api.roles.setRole);
+  const admins = useAdmins();
+  const setRole = useStdbReducer(reducers.setRole);
 
   const [handle, setHandle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,9 +38,11 @@ export function RoleManager() {
     setDone(null);
 
     try {
-      const result = await setRole({ handle: trimmed, admin });
+      // A reducer returns nothing, so the confirmation names the handle that was sent
+      // rather than one echoed back. The list below is the real proof either way.
+      await setRole({ handle: trimmed, admin });
       setDone(
-        admin ? `@${result.handle} is now an admin.` : `@${result.handle} is no longer an admin.`,
+        admin ? `@${trimmed} is now an admin.` : `@${trimmed} is no longer an admin.`,
       );
       setHandle("");
     } catch (caught) {
@@ -118,7 +121,7 @@ export function RoleManager() {
             <ul className="flex flex-wrap gap-2">
               {admins.map((admin) => (
                 <li
-                  key={admin.userId}
+                  key={String(admin.id)}
                   className="bg-ink-600 flex items-center gap-2 rounded-xs px-2 py-1"
                 >
                   <Avatar name={admin.displayName} url={admin.avatarUrl} className="size-6" />

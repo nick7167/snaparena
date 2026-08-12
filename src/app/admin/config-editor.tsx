@@ -1,8 +1,10 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useMemo, useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useStoredOverrides } from "../db";
+import { useConfig } from "../config";
 import { Button } from "@/ui/Button";
 import { Field, Input } from "@/ui/Input";
 import { Card, Chip, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -31,9 +33,9 @@ import {
  * are the bounds enforced on write. This form is a convenience; it is not the guard.
  */
 export function ConfigEditor() {
-  const live = useQuery(api.config.current, {});
-  const stored = useQuery(api.config.overrides, {});
-  const save = useMutation(api.config.save);
+  const live = useConfig();
+  const stored = useStoredOverrides();
+  const save = useStdbReducer(reducers.saveConfig);
 
   /**
    * Only what has been typed, keyed by config key.
@@ -47,13 +49,13 @@ export function ConfigEditor() {
   const [saved, setSaved] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const config = live?.config as ResolvedConfig | undefined;
+  const config: ResolvedConfig = live;
   const overriddenKeys = useMemo(
-    () => new Set((stored?.values ?? []).map((entry) => entry.key)),
+    () => new Set<string>(Object.keys(stored ?? {})),
     [stored],
   );
 
-  if (config === undefined || stored === undefined) {
+  if (stored === undefined) {
     return <Skeleton className="h-96 w-full" />;
   }
 
@@ -116,7 +118,17 @@ export function ConfigEditor() {
     setSaved(false);
 
     try {
-      await save({ values: buildValues() });
+      /**
+       * `null` means "clear this override" in the editor and `undefined` means it on
+       * the wire — the column is an option, and an option has no null. Converted here
+       * rather than in `buildValues`, which the diff also reads.
+       */
+      await save({
+        values: buildValues().map((entry) => ({
+          key: entry.key,
+          value: entry.value ?? undefined,
+        })),
+      });
       setDraft({});
       setConfirming(false);
       setSaved(true);

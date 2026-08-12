@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useIsAdmin } from "../db";
 import { Empty } from "@/ui/Surface";
 import { ButtonLink } from "@/ui/Button";
 import { AdminDashboard } from "./dashboard";
@@ -25,7 +24,7 @@ import { PageHeader } from "../page-header";
  * round-trip, which is the one person it should never show.
  */
 export function AdminGate() {
-  const me = useQuery(api.roles.amIAdmin, {});
+  const me = useIsAdmin();
 
   if (me === undefined) {
     return (
@@ -37,7 +36,7 @@ export function AdminGate() {
     );
   }
 
-  if (!me.admin) {
+  if (!me) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-12">
         <Empty

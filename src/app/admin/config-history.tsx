@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useConfigHistory } from "../db";
 import { Button } from "@/ui/Button";
 import { Card, Chip, SectionLabel, Skeleton } from "@/ui/Surface";
 import { timeAgo } from "@/ui/relative-time";
@@ -20,9 +21,9 @@ type StoredValue = { key: string; value: number | null };
  * finished match was played by.
  */
 export function ConfigHistory() {
-  const versions = useQuery(api.config.history, { limit: 25 });
-  const revert = useMutation(api.config.revert);
-  const resetAll = useMutation(api.config.resetAll);
+  const versions = useConfigHistory(25);
+  const revert = useStdbReducer(reducers.revertConfig);
+  const resetAll = useStdbReducer(reducers.resetConfig);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +71,7 @@ export function ConfigHistory() {
               <Card className="flex flex-col gap-3 p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-body text-paper font-semibold">
-                    {timeAgo(version.createdAt, now)}
+                    {timeAgo(version.createdAtMs, now)}
                     {version.author && (
                       <span className="text-muted font-normal"> by @{version.author}</span>
                     )}
@@ -88,9 +89,9 @@ export function ConfigHistory() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      loading={busy === version.versionId}
+                      loading={busy === String(version.versionId)}
                       onClick={() =>
-                        void run(version.versionId, () =>
+                        void run(String(version.versionId), () =>
                           revert({ versionId: version.versionId }),
                         )
                       }
@@ -114,7 +115,7 @@ export function ConfigHistory() {
           <Button
             variant="secondary"
             loading={busy === "reset"}
-            onClick={() => void run("reset", () => resetAll({}))}
+            onClick={() => void run("reset", () => resetAll())}
           >
             Reset everything to defaults
           </Button>

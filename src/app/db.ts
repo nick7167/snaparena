@@ -506,3 +506,73 @@ export function useLadderNeighbours(userId: bigint | undefined, spread = 2) {
     };
   }, [userId, mine, ready, rows, spread]);
 }
+
+/** Everyone holding the admin role. For the roles panel. */
+export function useAdmins() {
+  const [rows, ready] = useTable(tables.user.where((row) => row.role.eq("admin")));
+  if (!ready) return undefined;
+  return rows;
+}
+
+/**
+ * Saved config versions, newest first.
+ *
+ * The admin console is the only surface that wants the history — every player screen
+ * reads the one current version through `ConfigProvider` — so subscribing to the whole
+ * table is right here and wrong everywhere else.
+ */
+export function useConfigHistory(limit = 25) {
+  const [rows, ready] = useTable(tables.configVersion);
+
+  const [pointers, pointerReady] = useTable(tables.currentConfigVersion);
+  const currentId = pointers[0]?.versionId;
+
+  return useMemo(() => {
+    if (!ready || !pointerReady) return undefined;
+
+    return [...rows]
+      .sort((a, b) =>
+        a.createdAt.microsSinceUnixEpoch < b.createdAt.microsSinceUnixEpoch ? 1 : -1,
+      )
+      .slice(0, limit)
+      .map((row) => ({
+        versionId: row.id,
+        createdAtMs: Number(row.createdAt.microsSinceUnixEpoch / 1_000n),
+        // The author's handle needs a user row; the id alone is what the column holds,
+        // and the panel falls back to "system" for a version nobody is named on.
+        author: row.createdBy,
+        note: row.note,
+        isCurrent: currentId !== undefined && row.id === currentId,
+        // `null` is the shape the editor and the diff both speak: an override that
+        // deliberately clears a value, as distinct from one that is absent.
+        values: row.values.map((entry) => ({
+          key: entry.key,
+          value: entry.value ?? null,
+        })),
+      }));
+  }, [ready, rows, limit, pointerReady, currentId]);
+}
+
+/** The overrides stored on the current version, as the editor's starting values. */
+export function useStoredOverrides() {
+  const [pointers, pointerReady] = useTable(tables.currentConfigVersion);
+  const versionId = pointers[0]?.versionId;
+
+  const [versions, versionsReady] = useTable(
+    tables.configVersion.where((row) => row.id.eq(versionId ?? 0n)),
+    { enabled: versionId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (!pointerReady) return undefined;
+    if (versionId === undefined) return {};
+    if (!versionsReady) return undefined;
+
+    const version = versions.find((row) => row.id === versionId);
+    if (!version) return {};
+
+    const overrides: Record<string, number | null> = {};
+    for (const entry of version.values) overrides[entry.key] = entry.value ?? null;
+    return overrides;
+  }, [pointerReady, versionId, versions, versionsReady]);
+}
