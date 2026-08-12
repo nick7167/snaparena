@@ -1,10 +1,11 @@
 "use client";
 
 import { AnimatePresence } from "motion/react";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useCallback, useState } from "react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useMatchState, useMyRoundStatus } from "@/app/db";
+import { useConfig } from "@/app/config";
 import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { useRoundAudio } from "./useRoundAudio";
@@ -27,7 +28,7 @@ import { MATCH_CHROME_HEIGHT, MatchChrome } from "./MatchChrome";
 import { Chip, Meter } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
 
-type MatchState = NonNullable<ReturnType<typeof useQuery<typeof api.matches.state>>>;
+type MatchState = NonNullable<ReturnType<typeof useMatchState>>;
 
 /**
  * The duel arena: ranked, practice and rooms.
@@ -46,7 +47,7 @@ export function RoundRunner({
   matchId,
   onPlayAgain,
 }: {
-  matchId: Id<"matches">;
+  matchId: bigint;
   onPlayAgain?: () => void;
 }) {
   // Hides the app chrome for the duration. Presentation only — clears on unmount, so
@@ -56,11 +57,17 @@ export function RoundRunner({
   // keystroke of round one already has something to match against.
   usePrefetchTrackIndex();
 
-  const match = useQuery(api.matches.state, { matchId });
-  const myStatus = useQuery(api.matches.myRoundStatus, { matchId });
-  const submitGuess = useMutation(api.matches.submitGuess);
-  const passRound = useMutation(api.matches.pass);
-  const markVsReady = useMutation(api.ranked.markVsReady);
+  const config = useConfig();
+  const match = useMatchState(matchId, config);
+  const myStatus = useMyRoundStatus(matchId);
+  const submitGuess = useStdbReducer(reducers.submitGuess);
+  const passRound = useStdbReducer(reducers.passRound);
+  /**
+   * `ranked.markVsReady` is gone: the module collapses the reveal once every human has
+   * reported, and `reportReady` is the report. One readiness signal rather than two that
+   * could disagree about whether a player is in.
+   */
+  const markVsReady = useStdbReducer(reducers.reportReady);
 
   const phase = match?.phase ?? "guessing";
   const isGuessing = phase === "guessing";
@@ -75,7 +82,6 @@ export function RoundRunner({
     isGuessing,
     nextAudioUrl: match?.nextAudioUrl ?? null,
     audio,
-    guestToken: undefined,
     onRoundStart: () => setFeedback(null),
   });
 
@@ -104,27 +110,28 @@ export function RoundRunner({
    */
   const currentRound = match?.currentRound ?? 0;
 
+  /**
+   * THE VERDICT ARRIVES SEPARATELY NOW.
+   *
+   * A Convex mutation could answer its caller, so this awaited "correct, snap, +240". A
+   * reducer commits and returns nothing, so the module writes the outcome to
+   * `guess_feedback` — an event table carrying one row to the one player who guessed —
+   * and the effect below reacts to it.
+   *
+   * The submit therefore only reports whether the CALL landed. Everything about the
+   * guess itself comes back through the subscription, which also means a verdict is no
+   * longer lost if the tab is mid-navigation when it resolves.
+   */
   const onGuess = useCallback(
     async (text: string) => {
       try {
-        const result = await submitGuess({
+        await submitGuess({
           matchId,
           roundIndex: currentRound,
           text,
           clientElapsedMs: audio.elapsedMs(),
         });
-
-        if (result.status === "correct") {
-          play(result.tier === "snap" ? "snap" : "correct");
-          setFeedback(`${result.tierLabel} · +${result.points}`);
-          audio.stop();
-        } else if (result.status === "wrong") {
-          play("wrong");
-          setFeedback("Not it");
-        } else {
-          setFeedback(rejectionMessage(result.reason));
-        }
-        return result;
+        return { status: "sent" as const, keepText: false };
       } catch {
         setFeedback("That didn't send — try again");
         return { status: "error" as const, keepText: true };
@@ -224,7 +231,7 @@ export function RoundRunner({
             opponent={opponent}
             matchup={match.matchup}
             phaseEndsAt={match.phaseEndsAt}
-            onReady={() => void markVsReady({ matchId })}
+            onReady={() => void markVsReady({ matchId, roundIndex: 0 })}
           />
         )}
 
@@ -246,9 +253,13 @@ export function RoundRunner({
             audio={audio}
             solved={myStatus?.solved ?? false}
             passed={me !== undefined && hasPassed(match, me.userId)}
-            tierThisRound={myStatus?.tierThisRound ?? null}
+            tierThisRound={null}
             pointsThisRound={myStatus?.pointsThisRound ?? 0}
-            lockedUntil={myStatus?.lockedUntil ?? 0}
+            lockedUntil={
+              myStatus?.lockedUntil === undefined
+                ? 0
+                : Number(myStatus.lockedUntil.microsSinceUnixEpoch / 1_000n)
+            }
             feedback={feedback}
             onGuess={onGuess}
             onPass={() => {

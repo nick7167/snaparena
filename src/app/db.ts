@@ -4,7 +4,10 @@ import { useTable, useSpacetimeDB } from "spacetimedb/react";
 import { useMemo } from "react";
 import { tables } from "@/module_bindings";
 import { computeStreak } from "@/engine/streak";
-import { rankForElo } from "@/engine/ranks";
+import { matchupLabel, rankForElo } from "@/engine/ranks";
+import { damageMultiplier, wonRound } from "@/engine/duel";
+import { revealBeatAt } from "@/engine/scoring";
+import type { ResolvedConfig } from "@/engine/config-merge";
 
 /**
  * The client's read layer.
@@ -708,4 +711,253 @@ export function useMatchRecord(userId: bigint | undefined) {
     }
     return { wins, losses, draws };
   }, [userId, ready, rows]);
+}
+
+/**
+ * Everything a live match screen renders, composed from subscriptions.
+ *
+ * REPLACES `api.matches.state`, which was the largest query in the Convex backend and the
+ * one that shaped this whole port. Five screens read it; rebuilding its shape at each
+ * would be five chances to disagree about what "the round just played" means, so it stays
+ * one shape and moves here.
+ *
+ * WHAT IT CANNOT DO, AND WHY THAT IS THE POINT. The query decided what the client was
+ * allowed to see — it withheld the current track until the reveal beat. A subscription
+ * cannot withhold anything, so the module writes the answer progressively instead:
+ * `round_reveal` carries only `previewUrl` while guessing is open and gains the title,
+ * artist and artwork when it closes. This hook therefore does not choose to hide the
+ * track; it renders what has been published, and nothing more has been.
+ *
+ * The frozen `globalRankAtStart` is read off `match_player` rather than the ladder, for
+ * the same reason the query froze it: this recomputes on every guess and every phase
+ * change, and touching the ladder here would make one rating change anywhere invalidate
+ * every live duel.
+ */
+export function useMatchState(matchId: bigint | undefined, config: ResolvedConfig) {
+  const me = useMe();
+  const match = useMatch(matchId);
+  const players = useMatchPlayers(matchId);
+  const results = useRoundResults(matchId);
+  const [users, usersReady] = useTable(tables.user, { enabled: matchId !== undefined });
+  const [reveals, revealsReady] = useTable(
+    tables.roundReveal.where((row) => row.matchId.eq(matchId ?? 0n)),
+    { enabled: matchId !== undefined },
+  );
+  const [logs, logsReady] = useTable(
+    tables.roundLog.where((row) => row.matchId.eq(matchId ?? 0n)),
+    { enabled: matchId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (matchId === undefined) return null;
+    if (match === undefined || players === undefined || results === undefined) {
+      return undefined;
+    }
+    if (!usersReady || !revealsReady || !logsReady) return undefined;
+    if (match === null) return null;
+
+    const byId = new Map(users.map((row) => [row.id, row]));
+    const round = match.currentRound;
+
+    const revealFor = (index: number) =>
+      reveals.find((row) => row.roundIndex === index) ?? null;
+
+    const current = revealFor(round);
+    const next = revealFor(round + 1);
+
+    const lastLog = [...logs].sort((a, b) => a.roundIndex - b.roundIndex).at(-1)?.entry;
+
+    const roundStartedAtMs =
+      match.roundStartedAt === undefined
+        ? null
+        : Number(match.roundStartedAt.microsSinceUnixEpoch / 1_000n);
+
+    const roundElapsedMs =
+      roundStartedAtMs === null ? 0 : Math.max(0, Date.now() - roundStartedAtMs);
+
+    const forRound = (index: number) =>
+      results.filter((row) => row.roundIndex === index);
+
+    const thisRound = forRound(round);
+
+    /** Per-player totals across the match, for the streak and best-time stats. */
+    const statsFor = (userId: bigint) => {
+      let roundsWon = 0;
+      let streak = 0;
+      let bestMs: number | null = null;
+      let solved = 0;
+
+      for (let index = 0; index <= round; index++) {
+        const rows = forRound(index);
+        const mine = rows.find((row) => row.userId === userId);
+        const points = mine?.solved ? mine.points : 0;
+        const others = rows
+          .filter((row) => row.userId !== userId)
+          .map((row) => (row.solved ? row.points : 0));
+
+        if (mine?.solved) {
+          solved++;
+          const elapsed = mine.elapsedMs;
+          if (elapsed !== undefined && (bestMs === null || elapsed < bestMs)) {
+            bestMs = elapsed;
+          }
+        }
+
+        if (wonRound(points, others)) {
+          roundsWon++;
+          streak++;
+        } else if (others.some((value) => value > points)) {
+          streak = 0;
+        }
+      }
+
+      return { roundsWon, streak, bestMs, solved };
+    };
+
+    const scoreboard = players
+      .map((player) => {
+        const user = byId.get(player.userId);
+        // Derived from the rating rather than stored, exactly as the profile does it.
+        const rank = rankForElo(user?.elo ?? player.ratingBefore);
+        return {
+          userId: player.userId,
+          rankLabel: rank.label,
+          rankTierId: rank.tier.id,
+          rankDivision: rank.division,
+          rankAccent: rank.tier.accent,
+          placementsRemaining: user?.placementsRemaining ?? 0,
+          /**
+           * The opponent-card extras. `playerCard` resolved these per player on every
+           * state read; here they come off rows the screen is already subscribed to, and
+           * the record is a tally rather than a query.
+           */
+          wins: 0,
+          losses: 0,
+          bestCategory: null as string | null,
+          badges: [] as { id: string; name: string; emoji: string }[],
+          bio: user?.bioHidden ? undefined : user?.bio,
+          handle: user?.handle ?? "player",
+          displayName: user?.displayName ?? "Player",
+          avatarUrl: user ? publicAvatarUrl(user) : undefined,
+          elo: user?.elo ?? player.ratingBefore,
+          level: user?.level ?? 1,
+          isBot: user?.isBot ?? false,
+          globalRank: player.globalRankAtStart ?? null,
+          ...statsFor(player.userId),
+          totalPoints: player.totalPoints,
+          hp: player.hp,
+          eliminatedAtRound: player.eliminatedAtRound ?? null,
+          passedRound: player.passedRound ?? null,
+          ratingBefore: player.ratingBefore,
+          ratingAfter: player.ratingAfter ?? null,
+          ratingDelta: player.ratingDelta ?? null,
+          xpEarned: player.xpEarned,
+          xpBreakdown: player.xpBreakdown,
+          // Null until the finalize reducer has run. The results screen treats that as
+          // "still settling" rather than as a level of zero.
+          levelBefore: player.levelBefore ?? null,
+          levelAfter: player.levelAfter ?? null,
+          xpAfter: player.xpAfter ?? null,
+          badgesEarned: player.badgesEarned,
+          forfeited: player.forfeited,
+          vsReady: player.vsReadyAt !== undefined,
+          isMe: me?.id === player.userId,
+        };
+      })
+      /**
+       * The viewer first, always.
+       *
+       * Sorting by HP would swap the duel header's sides the moment the lead changed —
+       * your bar on the left while ahead, jumping right when behind, mid-match, with
+       * nothing explaining it. A health bar you have to re-find is worse than none.
+       */
+      .sort((a, b) => Number(b.isMe) - Number(a.isMe));
+
+    return {
+      matchId: match.id,
+      mode: match.mode,
+      status: match.status,
+      phase: match.phase,
+      phaseEndsAt:
+        match.phaseEndsAt === undefined
+          ? null
+          : Number(match.phaseEndsAt.microsSinceUnixEpoch / 1_000n),
+      currentRound: round,
+      totalRounds: match.totalRounds,
+      /** Derived from the log so it can never disagree with the recorded history. */
+      lastRoundDamage: lastLog?.damage ?? [],
+      lastRoundOutcome: lastLog?.outcome ?? null,
+      lastRoundTimeGapMs: lastLog?.timeGapMs ?? null,
+      multiplier: damageMultiplier(round, config),
+      nextMultiplier: damageMultiplier(round + 1, config),
+      suddenDeath: match.suddenDeath,
+      roundStartedAt: roundStartedAtMs,
+      roundElapsedMs,
+      revealBeat: revealBeatAt(roundElapsedMs, config),
+      winnerId: match.winnerId ?? null,
+      bannedCategoryIds: match.bannedCategoryIds,
+      vetoPoolIds: match.vetoPoolIds,
+      banOrder: match.banOrder,
+      banTurn: match.banTurn,
+      vetoDeadline:
+        match.vetoDeadline === undefined
+          ? null
+          : Number(match.vetoDeadline.microsSinceUnixEpoch / 1_000n),
+
+      /** Audio is published when the round opens; the title only when it closes. */
+      currentAudioUrl: current?.previewUrl ?? null,
+      /**
+       * The next round's clip, so the client can buffer before the countdown. Without it
+       * the client first learns the URL when the countdown starts and has 3s for ~1MB.
+       */
+      nextAudioUrl: next?.previewUrl ?? null,
+      currentTrack:
+        current?.title !== undefined
+          ? {
+              title: current.title,
+              artist: current.artist ?? "",
+              artworkUrl: current.artworkUrl ?? "",
+              categoryName: current.categoryName ?? null,
+            }
+          : null,
+
+      /** Per-player results for the round just played, for the head-to-head reveal. */
+      roundResults: players.map((player) => {
+        const row = thisRound.find((entry) => entry.userId === player.userId);
+        return {
+          userId: player.userId,
+          solved: row?.solved ?? false,
+          elapsedMs: row?.elapsedMs ?? null,
+          points: row?.solved ? row.points : 0,
+        };
+      }),
+
+      /** Who took the round just played, for the standings callout. */
+      roundWinnerId: (() => {
+        const scored = players
+          .map((player) => {
+            const row = thisRound.find((entry) => entry.userId === player.userId);
+            return { userId: player.userId, points: row?.solved ? row.points : 0 };
+          })
+          .sort((a, b) => b.points - a.points);
+        if (scored.length === 0 || scored[0].points === 0) return null;
+        if (scored[1] && scored[1].points === scored[0].points) return null;
+        return scored[0].userId;
+      })(),
+
+      scoreboard,
+
+      /**
+       * Matchup framing for the VS screen. Qualitative only — the projected rating swing
+       * is withheld until match_end so the reward is not spent before the match starts.
+       */
+      matchup:
+        match.mode === "ranked" && me && scoreboard.length === 2
+          ? matchupLabel(scoreboard[0].elo, scoreboard[1].elo)
+          : null,
+    };
+  }, [
+    matchId, match, players, results, users, usersReady,
+    reveals, revealsReady, logs, logsReady, me, config,
+  ]);
 }
