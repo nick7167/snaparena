@@ -2,12 +2,13 @@
 
 import { AnimatePresence } from "motion/react";
 import { useReducer as useStdbReducer } from "spacetimedb/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { reducers } from "@/module_bindings";
-import { useMatchState, useMyRoundStatus } from "@/app/db";
+import { useGuessFeedback, useMatchState, useMe, useMyRoundStatus } from "@/app/db";
 import { useConfig } from "@/app/config";
 import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { play } from "@/audio/sfx";
+import { tierForElapsed } from "@/engine/scoring";
 import { useRoundAudio } from "./useRoundAudio";
 import { useRoundLifecycle, rejectionMessage } from "./useRoundLifecycle";
 import { hpTone, nameFor } from "./ui";
@@ -109,6 +110,46 @@ export function RoundRunner({
    * the inferred one in agreement.
    */
   const currentRound = match?.currentRound ?? 0;
+  const viewer = useMe();
+  const verdict = useGuessFeedback(matchId, viewer?.id);
+
+  /**
+   * The verdict, which now ARRIVES rather than being returned.
+   *
+   * A reducer commits and answers nothing, so `submitGuess` writes this row inside the
+   * same transaction and it lands over the same open socket — same round trip, same
+   * moment on screen. Reacting to the row rather than to a return value also means a
+   * verdict is not lost when the tab is mid-navigation as it resolves.
+   *
+   * Keyed on the row's identity so a repeated outcome — two wrong guesses in a row —
+   * still re-fires, and so a verdict from an earlier round never replays into this one.
+   */
+  const seenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!verdict) return;
+    if (verdict.roundIndex !== currentRound) return;
+
+    const key = `${verdict.roundIndex}:${verdict.outcome}:${verdict.points}:${verdict.rejectionReason ?? ""}`;
+    if (seenRef.current === key) return;
+    seenRef.current = key;
+
+    if (verdict.outcome === "correct") {
+      const tier = tierForElapsed(lastElapsedRef.current, config);
+      play(tier.id === "snap" ? "snap" : "correct");
+      setFeedback(`${tier.label} · +${Math.round(verdict.points)}`);
+      audio.stop();
+      return;
+    }
+
+    if (verdict.outcome === "wrong") {
+      play("wrong");
+      setFeedback("Not it");
+      return;
+    }
+
+    setFeedback(rejectionMessage(verdict.rejectionReason ?? "unknown"));
+  }, [verdict, currentRound, config, audio]);
 
   /**
    * THE VERDICT ARRIVES SEPARATELY NOW.
@@ -122,9 +163,20 @@ export function RoundRunner({
    * guess itself comes back through the subscription, which also means a verdict is no
    * longer lost if the tab is mid-navigation when it resolves.
    */
+  /**
+   * The elapsed time the guess claimed, kept so the verdict can be labelled.
+   *
+   * `guess_feedback` carries the outcome and the points but not the tier name, because a
+   * tier is a pure function of the elapsed time and republishing it would be a second
+   * copy of something the client already sent. Same number, same `tierForElapsed`, same
+   * label the server scored with.
+   */
+  const lastElapsedRef = useRef(0);
+
   const onGuess = useCallback(
     async (text: string) => {
       try {
+        lastElapsedRef.current = audio.elapsedMs();
         await submitGuess({
           matchId,
           roundIndex: currentRound,
