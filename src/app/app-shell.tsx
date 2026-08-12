@@ -2,7 +2,7 @@
 
 import { useClerk, useUser } from "@clerk/nextjs";
 import { SignedIn, SignedOut } from "./auth-gate";
-import { useReducer as useStdbReducer } from "spacetimedb/react";
+import { useReducer as useStdbReducer, useSpacetimeDB } from "spacetimedb/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
@@ -1173,16 +1173,35 @@ function Provisioner() {
   const me = useMe();
   const ensureUser = useStdbReducer(reducers.ensureUser);
   const claimGuestRuns = useStdbReducer(reducers.claimGuestRuns);
+  /**
+   * The identity the socket is actually speaking as, which is NOT the same question
+   * as "is Clerk signed in".
+   *
+   * The first connection of a page load is always anonymous — it is opened before
+   * Clerk's token can be fetched, see providers.tsx — and `ensureUser` rejects an
+   * anonymous caller outright. So this effect has to run again on the authenticated
+   * socket that replaces it, and the identity changing is exactly that event. Without
+   * it, provisioning was attempted once, against the one connection guaranteed to
+   * refuse it, and never retried.
+   */
+  const { identity } = useSpacetimeDB();
 
   useEffect(() => {
     if (!isLoaded || !user) return;
+    if (!identity) return; // no live connection to provision against yet
     if (me !== null) return; // already provisioned, or still loading
 
+    /**
+     * Caught rather than floated. The anonymous connection above rejects this with
+     * "Not signed in", which is correct and expected — but an unhandled rejection
+     * turns an ordinary race into a red console error on every load, and buries the
+     * ones that matter.
+     */
     void ensureUser({
       displayName: user.username ?? user.firstName ?? "Player",
       avatarUrl: user.imageUrl,
-    });
-  }, [isLoaded, user, me, ensureUser]);
+    }).catch(() => undefined);
+  }, [isLoaded, user, me, identity, ensureUser]);
 
   /**
    * Carries an anonymous daily run onto the account that just signed in.
