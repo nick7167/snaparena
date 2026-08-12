@@ -43,6 +43,14 @@ This project's database is **`snaparena-740t8`** (identity
 `c2008240fdcacf07b61461af986544193d77657844148219b4485d0cf077278b`). It is already
 wired into `NEXT_PUBLIC_SPACETIMEDB_DB` and the `stdb:*` scripts.
 
+**`--server maincloud` is not optional on any of these.** `spacetime.json` used to
+pin a server name and no longer does — the name it carried was one developer's local
+instance, so `publish` was unrunnable anywhere else, and no single pinned value can
+serve both `spacetime dev` (which wants a local instance) and `spacetime publish`
+(which wants this one). The `stdb:*` scripts pass it for you; a bare `spacetime`
+command typed by hand goes to whatever your CLI's default server is, which is very
+probably localhost.
+
 Database names are global on Maincloud, which is why this one carries a suffix — a
 name someone else holds fails with a 401 or 403 that reads like an auth problem but
 is not.
@@ -127,7 +135,7 @@ unchanged. What changed is the bridge to the backend.
 4. **Grant yourself admin**, as the identity that published the database:
 
    ```bash
-   spacetime call snaparena-740t8 set_role '"your-handle"' 'true'
+   spacetime call snaparena-740t8 --server maincloud set_role '"your-handle"' 'true'
    ```
 
 ## 4. Environment variables
@@ -284,15 +292,31 @@ read by nothing.
 > Deploying this leaves developer features **off**, even where the old variable is still
 > set. There is deliberately no fallback to it — turn them on in `/admin`.
 
-`e2e/dev-rank-bots.spec.ts` needs them on, and the e2e suite runs against the deployed
-backend, so that switch has to be on there rather than locally.
+Turning the switch on does not by itself put anybody in the queue. Seed the roster
+afterwards, either from `/admin` → **Seed roster** or from a terminal:
+
+```bash
+npm run dev-bots seed              # create the sixteen, or put them back on their anchors
+npm run dev-bots purge <handle>    # delete them, their matches, and reset that account
+```
+
+The sixteen join the ranked queue within fifteen seconds and stay there — a bot's queue
+row is consumed when it is matched, so an interval tops it back up. Expect about twenty
+seconds of searching before one answers; that floor is deliberate, so a permanently
+stocked queue still reads as a search rather than teleporting you into a duel.
+
+They arrive with no career: `0W · 0L`, Level 1, no badges. That half of the Convex
+backend is not ported — see "What is not here yet" in `spacetimedb/README.md`.
+
+`e2e/dev-rank-bots.spec.ts` needs the switch on and the roster seeded, and the e2e suite
+runs against the deployed backend, so both have to be true there rather than locally.
 
 ---
 
 ## What runs right now, without any credentials
 
 ```bash
-npm test            # 76 tests, all passing
+npm test            # 378 tests, all passing
 npm run ingest:smoke
 ```
 
