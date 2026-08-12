@@ -1,0 +1,17 @@
+{
+  "name": "snaparena-module",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SNAP ARENA SpacetimeDB module — the game's entire backend.",
+  "scripts": {
+    "build": "spacetime build",
+    "publish": "spacetime publish snaparena --server local3001 --yes"
+  },
+  "dependencies": {
+    "spacetimedb": "2.8.*"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

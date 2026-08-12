@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n convex,next -c magenta,cyan -k --handle-input \"npm:dev:convex\" \"npm:dev:next\"",
-    "dev:convex": "convex dev",
+    "dev": "concurrently -n stdb,next -c magenta,cyan -k --handle-input \"npm:dev:stdb\" \"npm:dev:next\"",
+    "dev:stdb": "spacetime dev --client-lang typescript --module-bindings-path ./src/module_bindings",
     "dev:next": "next dev",
+    "stdb:build": "spacetime build",
+    "stdb:publish": "spacetime publish snaparena --yes",
+    "stdb:generate": "spacetime generate --lang typescript --out-dir ./src/module_bindings --module-path ./spacetimedb --yes",
+    "stdb:logs": "spacetime logs snaparena -f",
+    "stdb:sql": "spacetime sql snaparena",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -28,12 +33,12 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",
-    "convex": "^1.43.0",
     "motion": "^12.43.0",
     "next": "16.2.12",
     "posthog-js": "^1.413.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "spacetimedb": "2.8.*"
   },
   "devDependencies": {
     "@clerk/testing": "^2.2.16",
@@ -45,7 +50,6 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.5",
     "concurrently": "^10.0.4",
-    "convex-test": "^0.0.55",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "sharp": "^0.34.5",
