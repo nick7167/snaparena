@@ -255,6 +255,31 @@ const user_avatar = table(
   },
 );
 
+/**
+ * The username a player is currently typing into the onboarding form. PRIVATE.
+ *
+ * A VIEW CANNOT TAKE ARGUMENTS. That is the sharpest difference between views and
+ * Convex queries, and `isHandleAvailable({ handle })` is where it bites: the form
+ * needs a live yes/no for a string the client chooses.
+ *
+ * The alternatives are worse. Replicating every handle to every client is both
+ * large and a user-enumeration hole. Answering through a reducer is impossible,
+ * because reducers return nothing. So the candidate is written here and the verdict
+ * is read back from `my_handle_probe` — one row per player, overwritten as they
+ * type, never read by anyone else.
+ *
+ * The rule itself lives in `normaliseHandle`, which decides both the answer shown
+ * in the form and the answer enforced on save, so the two can never disagree.
+ */
+const handle_probe = table(
+  { name: "handle_probe" },
+  {
+    userId: t.u64().primaryKey(),
+    candidate: t.string(),
+    probedAt: t.timestamp(),
+  },
+);
+
 /** Bio and avatar reports, for manual review. No automated takedown. */
 const report = table(
   { name: "report" },
@@ -910,12 +935,18 @@ const queue_entry = table(
  *
  * One Identity can hold several connections (two tabs), so this is keyed by
  * connection and a player is present while any row survives.
+ *
+ * Keyed on `identity` rather than a userId because a connection exists before a
+ * player does: the very first thing a new sign-in does is connect, and a guest may
+ * connect and never create a user row at all. The userId is resolved through
+ * `account` when it is actually needed, which keeps this table free of a
+ * denormalised field that could fall out of step.
  */
 const connection = table(
   { name: "connection" },
   {
     connectionId: t.connectionId().primaryKey(),
-    userId: t.u64().index("btree"),
+    identity: t.identity().index("btree"),
     connectedAt: t.timestamp(),
   },
 );
@@ -966,6 +997,32 @@ const settings = table(
     devFeaturesEnabled: t.bool(),
     updatedAt: t.timestamp(),
     updatedBy: t.option(t.u64()),
+  },
+);
+
+/**
+ * Which OIDC issuers this database will accept a token from. PRIVATE.
+ *
+ * This is `convex/auth.config.ts`, which read CLERK_JWT_ISSUER_DOMAIN from the
+ * deployment environment. A module has no environment to read, so the allow-list
+ * lives in a table and the owner writes it with `setAuthIssuer`.
+ *
+ * Empty means no signed-in player can connect, and that is the intended failure
+ * mode rather than an oversight — the same call the Convex setup made. Auth
+ * silently not working is far worse than a loud refusal, and an empty allow-list
+ * that defaulted to "accept anything" would accept a token minted by any OIDC
+ * provider on the internet for any application.
+ *
+ * `audience` is checked too. Without it, a token some other application legitimately
+ * issued for itself could be replayed here.
+ */
+const auth_issuer = table(
+  { name: "auth_issuer" },
+  {
+    issuer: t.string().primaryKey(),
+    /** Expected `aud` claim. Empty string accepts any audience from this issuer. */
+    audience: t.string(),
+    addedAt: t.timestamp(),
   },
 );
 
@@ -1093,6 +1150,7 @@ export const spacetimedb = schema({
   user,
   user_preference,
   user_avatar,
+  handle_probe,
   report,
   user_badge,
   category_rating,
@@ -1125,6 +1183,7 @@ export const spacetimedb = schema({
 
   config_version,
   settings,
+  auth_issuer,
   module_owner,
 
   phase_advance_schedule,
