@@ -32,6 +32,12 @@ const TIMEOUT_MS = 2_000;
  * the same, but it says so explicitly rather than by accident.
  */
 export async function publicRow<Row>(sql: string): Promise<Row | null> {
+  const rows = await publicRows<Row>(sql);
+  return rows[0] ?? null;
+}
+
+/** Every row of one statement. Same contract as `publicRow`. */
+export async function publicRows<Row>(sql: string): Promise<Row[]> {
   if (!URI || !DB) throw new Error("SpacetimeDB URI or database name is not configured");
 
   const response = await fetch(`${URI}/v1/database/${DB}/sql`, {
@@ -56,7 +62,5 @@ export async function publicRow<Row>(sql: string): Promise<Row | null> {
    * statement in, so the first result is the only one, and its first row is the answer.
    */
   const results = (await response.json()) as { rows?: unknown[] }[];
-  const rows = results?.[0]?.rows;
-
-  return (rows?.[0] as Row) ?? null;
+  return (results?.[0]?.rows as Row[]) ?? [];
 }

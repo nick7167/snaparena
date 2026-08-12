@@ -160,6 +160,11 @@ async function findByName(collection: string, name: string): Promise<number | nu
   return match ? (match.id as number) : null;
 }
 
+// A module rather than a global script. Without this its top-level `main` merges into
+// the global scope and collides with the same name in a sibling script — a pre-existing
+// clash that was invisible while the whole tree was failing to compile.
+export {};
+
 async function main() {
   if (!KEY) {
     throw new Error(

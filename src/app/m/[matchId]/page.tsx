@@ -1,9 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { useParams, useSearchParams } from "next/navigation";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { useMatchState } from "@/app/db";
+import { useConfig } from "@/app/config";
 import { MatchEnd, type MatchEndPlayer } from "@/game/MatchEnd";
 import { DUEL_STARTING_HP, ROOM_STARTING_HP } from "@/engine/config";
 import { Empty, Skeleton } from "@/ui/Surface";
@@ -26,16 +25,38 @@ import { useNow } from "@/game/usePrefersReducedMotion";
 export default function MatchRecapPage() {
   const params = useParams<{ matchId: string }>();
   const search = useSearchParams();
-  const matchId = params.matchId as Id<"matches">;
+  /**
+   * The id arrives as a string in the URL and every id is a u64 now, so this is where
+   * the route parameter becomes one. A malformed id yields a match nobody has, which
+   * the empty state below already handles.
+   */
+  const matchId = (() => {
+    try {
+      return BigInt(params.matchId);
+    } catch {
+      return undefined;
+    }
+  })();
   // Shared formatter, so this match reads the same here as it does in the dashboard strip
   // and on the profile that linked here — it previously read three different ways.
   const now = useNow(60_000);
 
-  const perspectiveUserId = search.get("p") ?? undefined;
-  const recap = useQuery(api.matches.recap, {
-    matchId,
-    perspectiveUserId: perspectiveUserId as Id<"users"> | undefined,
-  });
+  const perspectiveParam = search.get("p");
+  const perspectiveUserId = (() => {
+    if (!perspectiveParam) return undefined;
+    try {
+      return BigInt(perspectiveParam);
+    } catch {
+      return undefined;
+    }
+  })();
+  /**
+   * `matches.recap` is gone: it rebuilt a finished match from nothing but an id, and
+   * `useMatchState` already composes exactly that from the same rows. One shape for a
+   * live match and a finished one, rather than two that could disagree about a draw.
+   */
+  const config = useConfig();
+  const recap = useMatchState(matchId, config);
 
   if (recap === undefined) {
     return (
@@ -59,7 +80,7 @@ export default function MatchRecapPage() {
 
   // The shape MatchEnd wants is exactly what recap returns; the cast is only to satisfy
   // the branded id types, which arrive as strings on the wire.
-  const players = recap.players as unknown as MatchEndPlayer[];
+  const players = recap.scoreboard as unknown as MatchEndPlayer[];
 
   /**
    * The declared parent is the subject's profile — the page a match record hangs off, and
@@ -67,7 +88,9 @@ export default function MatchRecapPage() {
    * you actually came from; this is what a shared link lands on.
    */
   const subject =
-    players.find((player) => player.userId === recap.perspectiveUserId) ?? players[0];
+    players.find(
+      (player) => String(player.userId) === String(perspectiveUserId ?? ""),
+    ) ?? players[0];
 
   return (
     <>
@@ -82,7 +105,7 @@ export default function MatchRecapPage() {
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-8">
         <p className="text-body-sm text-muted text-center">
-          {timeAgoCapitalized(recap.completedAt, now)}
+          {timeAgoCapitalized(recap.completedAtMs ?? Date.now(), now)}
           {recap.mode === "practice" && " · practice"}
           {recap.suddenDeath && " · sudden death"}
         </p>
@@ -90,12 +113,12 @@ export default function MatchRecapPage() {
         {/* No "Play again" here — this is a record, not a lobby. The way back used to be
             a lone underlined link at the bottom of the page; it is the header now. */}
         <MatchEnd
-          matchId={matchId}
+          matchId={matchId!}
           players={players}
           winnerId={recap.winnerId ? String(recap.winnerId) : null}
           maxHp={recap.mode === "room" ? ROOM_STARTING_HP : DUEL_STARTING_HP}
           perspectiveUserId={
-            recap.perspectiveUserId ? String(recap.perspectiveUserId) : undefined
+            perspectiveUserId ? String(perspectiveUserId) : undefined
           }
         />
       </div>

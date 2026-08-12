@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useCategories, useMe, useProfile } from "../db";
 import { STARTING_ELO } from "@/engine/config";
 import { rankForElo } from "@/engine/ranks";
 import { Meter, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -43,10 +42,10 @@ const MEANINGFUL_SPREAD = 40;
  * in for a while, and it has to say what to do about it rather than apologise.
  */
 export function Categories() {
-  const me = useQuery(api.users.me, {});
-  const profile = useQuery(api.users.profile, me ? { handle: me.handle } : "skip");
-  const categories = useQuery(api.tracks.categories, {});
-
+  const me = useMe();
+  const profile = useProfile(me?.handle);
+  const categories = useCategories();
+  
   if (me === undefined) return <Skeleton className="h-40 w-full" />;
   if (!me) return null;
 

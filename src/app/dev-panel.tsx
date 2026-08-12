@@ -1,10 +1,12 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { api } from "../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useIsAdmin } from "./db";
+import { useDevFeatures } from "./config";
 import { Glyph } from "@/ui/Glyph";
 import { snap } from "@/ui/motion";
 import { STEP } from "./welcome/steps";
@@ -37,7 +39,7 @@ import {
  * worse than no dev control. Nothing claims the bottom-right at any width.
  */
 export function DevPanel() {
-  const dev = useQuery(api.devbots.enabled, {});
+  const dev = useDevFeatures();
   /**
    * The per-user half of the gate.
    *
@@ -47,8 +49,8 @@ export function DevPanel() {
    * The role answers "is this PERSON an operator", which is the question that was
    * actually being asked. Both must hold.
    */
-  const me = useQuery(api.roles.amIAdmin, {});
-  const setWelcomeStep = useMutation(api.tutorial.setWelcomeStep);
+  const me = useIsAdmin();
+  const setWelcomeStep = useStdbReducer(reducers.setWelcomeStep);
   const router = useRouter();
   const tools = useSyncExternalStore(
     subscribeDevTools,
@@ -87,7 +89,7 @@ export function DevPanel() {
   // The master switch. Nothing below exists unless the deployment allows dev features AND
   // the signed-in player holds the admin role. `undefined` is "still asking" for both,
   // which correctly renders nothing rather than flashing the panel and taking it away.
-  if (!dev?.enabled || !me?.admin) return null;
+  if (!dev || !me) return null;
 
   const activeCount = DEV_TOOLS.filter((tool) => tools[tool.key]).length;
 
@@ -179,7 +181,7 @@ export function DevPanel() {
                 onClick={() => {
                   // Back to the explainer rather than the username step: the handle is
                   // already committed and `completeOnboarding` would only re-validate it.
-                  void setWelcomeStep({ step: STEP.EXPLAIN });
+                  void setWelcomeStep({ step: STEP.EXPLAIN, tutorialCompleted: false });
                   setOpen(false);
                   router.push("/welcome");
                 }}

@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { publicRows } from "@/app/sql";
 
 /**
  * A match that names its players.
@@ -22,18 +20,30 @@ export async function generateMetadata({
   const { matchId } = await params;
 
   try {
-    const client = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
-    const recap = await client.query(api.matches.recap, {
-      matchId: matchId as Id<"matches">,
-    });
+    /**
+     * Two public tables and a join the SQL does itself, rather than a query that shaped
+     * the answer. `match_player` names who was in it and `user` names them; both are
+     * public, which is what makes an unauthenticated read of them legitimate.
+     */
+    const id = BigInt(matchId);
 
-    // Recap returns null for a match that is unfinished, daily, or simply not there.
-    if (!recap || recap.players.length === 0) return { title: "Match" };
+    const players = await publicRows<{ handle: string; user_id: string }>(
+      `SELECT u.handle AS handle, mp.user_id AS user_id
+         FROM match_player mp JOIN user u ON mp.user_id = u.id
+        WHERE mp.match_id = ${id}`,
+    );
 
-    const names = recap.players.map((player) => `@${player.handle}`);
+    if (players.length === 0) return { title: "Match" };
+
+    const match = await publicRows<{ winner_id: string | null }>(
+      `SELECT winner_id FROM match WHERE id = ${id}`,
+    );
+
+    const names = players.map((player) => `@${player.handle}`);
     const title = names.length === 2 ? `${names[0]} vs ${names[1]}` : names.join(" · ");
 
-    const winner = recap.players.find((player) => player.userId === recap.winnerId);
+    const winnerId = match[0]?.winner_id;
+    const winner = players.find((player) => String(player.user_id) === String(winnerId));
 
     return {
       title,
@@ -43,8 +53,9 @@ export async function generateMetadata({
       openGraph: { title: `${title} — SNAP`, description: "One second of a song." },
     };
   } catch {
-    // An invalid id in the URL reaches `client.query` as a malformed argument and throws.
-    // A bare title is the right outcome; a 500 on a decorative lookup is not.
+    // A malformed id in the URL throws at `BigInt`, and a database that does not answer
+    // throws in the read. A bare title is the right outcome for both; a 500 on a
+    // decorative lookup is not.
     return { title: "Match" };
   }
 }

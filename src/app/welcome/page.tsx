@@ -1,12 +1,12 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useCategories, useHandleProbe, useMe, useTutorialTrack } from "../db";
 import { AVATAR_COLOURS, HANDLE_MAX_LENGTH, REVEAL_BEATS, SCORE_TIERS } from "@/engine/config";
 import { track } from "@/analytics";
 import { TutorialRunner } from "@/game/TutorialRunner";
@@ -42,7 +42,7 @@ import { STEP, STEP_COUNT, STEP_LABELS } from "./steps";
  */
 export default function WelcomePage() {
   const { isLoaded, isSignedIn } = useUser();
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
   const router = useRouter();
 
   // Signed out entirely — nothing here applies. Replace rather than push, so Back does not
@@ -73,13 +73,13 @@ export default function WelcomePage() {
   return <Flow me={me} />;
 }
 
-type Me = NonNullable<ReturnType<typeof useQuery<typeof api.users.me>>>;
+type Me = NonNullable<ReturnType<typeof useMe>>;
 
 function Flow({ me }: { me: Me }) {
   const router = useRouter();
   const reduced = usePrefersReducedMotion();
-  const setWelcomeStep = useMutation(api.tutorial.setWelcomeStep);
-  const tutorialTrack = useQuery(api.tutorial.track, {});
+  const setWelcomeStep = useStdbReducer(reducers.setWelcomeStep);
+  const tutorialTrack = useTutorialTrack();
 
   /**
    * Resumes where they left off.
@@ -111,7 +111,7 @@ function Flow({ me }: { me: Me }) {
       // Persisted per transition so a refresh, a closed tab or a dropped connection resumes
       // rather than restarting. Fire-and-forget: failing to record progress must never
       // block someone from moving through their own signup.
-      void setWelcomeStep({ step: next });
+      void setWelcomeStep({ step: next, tutorialCompleted: false });
       track("welcome_step", { step: next, name: STEP_LABELS[next] ?? String(next) });
     },
     [setWelcomeStep],
@@ -224,15 +224,17 @@ function Intro({ onNext }: { onNext: () => void }) {
  * note at the top of this file for why that happens here rather than at the end.
  */
 function HandleStep({ me, onDone }: { me: Me; onDone: () => void }) {
-  const complete = useMutation(api.users.completeOnboarding);
+  const complete = useStdbReducer(reducers.completeOnboarding);
   const [handle, setHandle] = useState(me.handle);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const availability = useQuery(
-    api.users.isHandleAvailable,
-    handle.trim().length >= 3 ? { handle } : "skip",
-  );
+  /**
+   * A view cannot take an argument, so the candidate is WRITTEN before it is answered:
+   * `probeHandle` records what this caller is asking about and `my_handle_probe` reports
+   * on it. That is what keeps the answer per-viewer without publishing anyone's attempts.
+   */
+  const availability = useHandleProbe(handle.trim().length >= 3 ? handle : "");
 
   const canSubmit = availability?.available === true && !saving;
 
@@ -240,7 +242,7 @@ function HandleStep({ me, onDone }: { me: Me; onDone: () => void }) {
     setSaving(true);
     setError(null);
     try {
-      await complete({ handle });
+      await complete({ handle, preferredCategoryIds: [] });
       onDone();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message.replace(/^\[.*?\]\s*/, "") : "Something went wrong");
@@ -325,7 +327,7 @@ function AvatarStep({
   onNext: () => void;
   onSkip: () => void;
 }) {
-  const updateProfile = useMutation(api.users.updateProfile);
+  const updateProfile = useStdbReducer(reducers.updateProfile);
   const [colour, setColour] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
 
@@ -389,9 +391,9 @@ function AvatarStep({
 }
 
 function GenresStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
-  const categories = useQuery(api.tracks.categories, {});
-  const updateProfile = useMutation(api.users.updateProfile);
-  const [picked, setPicked] = useState<Id<"categories">[]>([]);
+  const categories = useCategories();
+  const updateProfile = useStdbReducer(reducers.updateProfile);
+  const [picked, setPicked] = useState<bigint[]>([]);
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -426,15 +428,15 @@ function GenresStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void
 
       <div className="flex flex-wrap gap-2">
         {(categories ?? []).map((category) => {
-          const on = picked.includes(category._id);
+          const on = picked.includes(category.id);
           return (
             <button
-              key={category._id}
+              key={category.id}
               type="button"
               aria-pressed={on}
               onClick={() =>
                 setPicked((current) =>
-                  on ? current.filter((id) => id !== category._id) : [...current, category._id],
+                  on ? current.filter((id) => id !== category.id) : [...current, category.id],
                 )
               }
               className={`text-body-sm min-h-9 rounded-sm border px-3 py-1.5 font-medium

@@ -1,8 +1,8 @@
 "use client";
 
-import { useTable, useSpacetimeDB } from "spacetimedb/react";
-import { useMemo } from "react";
-import { tables } from "@/module_bindings";
+import { useTable, useReducer, useSpacetimeDB } from "spacetimedb/react";
+import { useEffect, useMemo } from "react";
+import { reducers, tables } from "@/module_bindings";
 import { computeStreak } from "@/engine/streak";
 import { matchupLabel, rankForElo } from "@/engine/ranks";
 import { damageMultiplier, wonRound } from "@/engine/duel";
@@ -915,6 +915,10 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
       roundElapsedMs,
       revealBeat: revealBeatAt(roundElapsedMs, config),
       winnerId: match.winnerId ?? null,
+      completedAtMs:
+        match.completedAt === undefined
+          ? null
+          : Number(match.completedAt.microsSinceUnixEpoch / 1_000n),
       bannedCategoryIds: match.bannedCategoryIds,
       vetoPoolIds: match.vetoPoolIds,
       banOrder: match.banOrder,
@@ -1367,4 +1371,58 @@ export function useMyDailyPlacing(userId: bigint | undefined, date = todayKey())
       totalPlayers: ranked.length,
     };
   }, [userId, ready, rows, date]);
+}
+
+/**
+ * Whether a handle is free, and why not when it isn't.
+ *
+ * REPLACES `api.users.isHandleAvailable`, which took the candidate as an argument. A
+ * view has no arguments, so the candidate is WRITTEN first — `probeHandle` records what
+ * the caller is asking about — and `my_handle_probe` answers it. That indirection is
+ * what lets the answer stay per-viewer without publishing anyone's attempts.
+ */
+export function useHandleProbe(candidate: string) {
+  const probe = useStdbReducerForProbe();
+  const [rows, ready] = useTable(tables.myHandleProbe);
+
+  useEffect(() => {
+    const trimmed = candidate.trim().toLowerCase();
+    if (trimmed.length === 0) return;
+
+    // Debounced: this fires per keystroke, and each call is a write.
+    const id = setTimeout(() => void probe({ candidate: trimmed }).catch(() => {}), 250);
+    return () => clearTimeout(id);
+  }, [candidate, probe]);
+
+  if (!ready) return undefined;
+
+  const row = rows[0];
+  if (!row) return undefined;
+  // A stale answer is worse than none: it would show the previous candidate's verdict
+  // against the text now in the box.
+  if (row.handle !== candidate.trim().toLowerCase()) return undefined;
+
+  return { available: row.available, reason: row.reason };
+}
+
+function useStdbReducerForProbe() {
+  return useReducer(reducers.probeHandle);
+}
+
+/** The one track the welcome tutorial teaches on. A view, because `track` is private. */
+export function useTutorialTrack() {
+  const [rows, ready] = useTable(tables.tutorialTrack);
+  if (!ready) return undefined;
+  return rows[0] ?? null;
+}
+
+/** The genres this player said they liked. Their own row, so their own preference. */
+export function useMyPreferences(userId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.userPreference.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+  if (userId === undefined) return [];
+  if (!ready) return undefined;
+  return rows[0]?.preferredCategoryIds ?? [];
 }

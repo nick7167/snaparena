@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState, useSyncExternalStore } from "react";
-import { api } from "../../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useCategories, useMe, useMyPreferences } from "../db";
 import { SignedIn, SignedOut } from "../auth-gate";
 import { AuthDialogButton } from "@/auth/AuthDialogButton";
 import { Button, ButtonLink } from "@/ui/Button";
@@ -11,7 +12,6 @@ import { Card, SectionLabel, Skeleton } from "@/ui/Surface";
 import { PageHeader } from "../page-header";
 import { AvatarUpload } from "../avatar-upload";
 import { BIO_MAX_LENGTH, HANDLE_MAX_LENGTH } from "@/engine/config";
-import type { Id } from "../../../convex/_generated/dataModel";
 import {
   getMuteServerSnapshot,
   getMuteSnapshot,
@@ -63,7 +63,7 @@ export default function SettingsPage() {
  * onboarding was permanent — the same gap `setHandle` had before it got a screen.
  */
 function AvatarSection() {
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
   if (me === undefined) return <Skeleton className="h-28 w-full" />;
   if (me === null) return null;
 
@@ -85,8 +85,8 @@ function AvatarSection() {
 }
 
 function HandleSection() {
-  const me = useQuery(api.users.me, {});
-  const setHandle = useMutation(api.users.setHandle);
+  const me = useMe();
+  const setHandle = useStdbReducer(reducers.setHandle);
 
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -200,8 +200,8 @@ function HandleSection() {
  * review and no way to change the thing being reviewed.
  */
 function BioSection() {
-  const me = useQuery(api.users.me, {});
-  const updateProfile = useMutation(api.users.updateProfile);
+  const me = useMe();
+  const updateProfile = useStdbReducer(reducers.updateProfile);
 
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -310,11 +310,12 @@ function BioSection() {
  * gameplay, which the copy below says outright rather than implying otherwise.
  */
 function GenresSection() {
-  const me = useQuery(api.users.me, {});
-  const categories = useQuery(api.tracks.categories, {});
-  const updateProfile = useMutation(api.users.updateProfile);
+  const me = useMe();
+  const categories = useCategories();
+  const preferences = useMyPreferences(me?.id);
+  const updateProfile = useStdbReducer(reducers.updateProfile);
 
-  const [draft, setDraft] = useState<Id<"categories">[] | null>(null);
+  const [draft, setDraft] = useState<bigint[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -324,7 +325,7 @@ function GenresSection() {
   }
   if (me === null) return null;
 
-  const stored = me.preferredCategoryIds ?? [];
+  const stored = preferences ?? [];
   const picked = draft ?? stored;
   const changed =
     draft !== null &&
@@ -336,17 +337,17 @@ function GenresSection() {
       <Card className="flex flex-col items-start gap-4 p-5">
         <div className="flex flex-wrap gap-2">
           {categories.map((category) => {
-            const on = picked.includes(category._id);
+            const on = picked.includes(category.id);
             return (
               <button
-                key={category._id}
+                key={category.id}
                 type="button"
                 aria-pressed={on}
                 onClick={() => {
                   setDraft(
                     on
-                      ? picked.filter((id) => id !== category._id)
-                      : [...picked, category._id],
+                      ? picked.filter((id) => id !== category.id)
+                      : [...picked, category.id],
                   );
                   setSaved(false);
                 }}
