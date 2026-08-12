@@ -1,3 +1,4 @@
+import { spacetimedb } from "./schema";
 import type { ReducerCtx } from "./ctx";
 import { applyGuess } from "./guesses";
 import {
@@ -7,13 +8,19 @@ import {
   queueBotAction,
 } from "./phases";
 import { TOTAL_BANS, draftTurnOwner, placeBan } from "./draft";
-import { toMs } from "./lib";
+import { reject, toMs } from "./lib";
+import { requireFullAccount, requireOwnerOrAdmin } from "./users";
+import { requireCatalogue } from "./catalogue";
+import { createDuel } from "./matchmaking";
 import {
+  BOT_PERSONAS,
   botBanDelayMs,
   chooseBotBan,
   personaById,
+  pickPracticePersona,
   planBotRound,
 } from "../../src/engine/bots";
+import { MAX_DUEL_ROUNDS } from "../../src/engine/config";
 
 /**
  * What a bot does when its turn comes round.
@@ -306,3 +313,123 @@ function wrongGuessText(title: string): string {
   if (words.length > 1) return words.slice(0, -1).join(" ");
   return `${title}xx`;
 }
+
+// ---------------------------------------------------------------------------
+// Seeding and practice
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates or refreshes the bot roster from the personas.
+ *
+ * Owner or admin, replacing the shared secret the Convex version checked. The personas
+ * are the source of truth: re-running this brings existing rows back in line with them
+ * rather than adding duplicates.
+ */
+export const seedBots = spacetimedb.reducer({}, (ctx) => {
+  requireOwnerOrAdmin(ctx);
+
+  for (const persona of BOT_PERSONAS) {
+    const existing = ctx.db.user.handle.find(persona.handle);
+
+    /**
+     * Refuses to seed over an account a person actually signed up for.
+     *
+     * Nothing reserves the persona handles — the handle pattern accepts every one of
+     * them — so a player could be holding `dustbowl` or `needledrop` before this ever
+     * runs. Matching on handle alone would then overwrite THEIR row: flagged as a bot,
+     * rating and display name replaced, with a fabricated career on top. Cheap to
+     * check, and the failure it prevents is not recoverable.
+     */
+    if (existing && !existing.isBot) {
+      reject(`Handle ${persona.handle} belongs to a real player`);
+    }
+
+    if (existing) {
+      ctx.db.user.id.update({
+        ...existing,
+        displayName: persona.displayName,
+        elo: persona.elo,
+        bio: persona.bio,
+        botPersonaId: persona.id,
+        placementsRemaining: 0,
+      });
+      continue;
+    }
+
+    ctx.db.user.insert({
+      id: 0n,
+      handle: persona.handle,
+      displayName: persona.displayName,
+      avatarUrl: undefined,
+      avatarHidden: false,
+      elo: persona.elo,
+      gamesPlayed: 0,
+      // Bots never sit in placements — they are calibrated by definition.
+      placementsRemaining: 0,
+      createdAt: ctx.timestamp,
+      role: undefined,
+      xp: 0,
+      level: 1,
+      rankedWins: 0,
+      snapGuesses: 0,
+      onboardedAt: ctx.timestamp,
+      welcomeStep: undefined,
+      tutorialCompletedAt: undefined,
+      bio: persona.bio,
+      bioHidden: false,
+      isBot: true,
+      botPersonaId: persona.id,
+      lastPracticePersonaId: undefined,
+      isGuest: false,
+      guestClaimedAt: undefined,
+      guestClaimToken: undefined,
+    });
+
+    /**
+     * No `account` row, and that is the point.
+     *
+     * Convex needed a synthetic `clerkId` to keep a non-null field from colliding with
+     * a real one. Here identity lives in its own table, so a bot simply has no identity
+     * — which means there is no `ctx.sender` that could ever resolve to one, and the
+     * "log in as a bot" question does not arise.
+     */
+  }
+});
+
+/**
+ * Starts a practice duel against a bot.
+ *
+ * `mode: "practice"`, so the rating pass cannot see it and nothing moves on the ladder.
+ * The player is told that before they accept, and the opponent is badged throughout —
+ * the ladder stays a measure of play against humans.
+ */
+export const startPractice = spacetimedb.reducer({}, (ctx) => {
+  const player = requireFullAccount(ctx);
+
+  const persona = pickPracticePersona(
+    player.elo,
+    player.lastPracticePersonaId,
+    () => ctx.random.integerInRange(0, 1_000_000) / 1_000_000,
+  );
+
+  const bot = ctx.db.user.handle.find(persona.handle);
+  if (!bot || !bot.isBot) reject("No practice opponents seeded yet");
+
+  /**
+   * Sanity check only. The real selection happens after the bans, in `closeDraft` —
+   * this exists so a thin catalogue fails on the button with a readable message
+   * instead of starting a match that instantly abandons itself.
+   */
+  requireCatalogue(ctx, MAX_DUEL_ROUNDS);
+
+  /**
+   * Leave the queue first. Without this the player stays enqueued through the whole
+   * practice match and the sweeper could pair them with a human they are not watching.
+   */
+  ctx.db.queue_entry.userId.delete(player.id);
+
+  // Remembered so the "random" opponent rotates rather than repeating.
+  ctx.db.user.id.update({ ...player, lastPracticePersonaId: persona.id });
+
+  createDuel(ctx, player, bot, "practice");
+});

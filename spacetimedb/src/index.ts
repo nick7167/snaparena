@@ -67,6 +67,8 @@ export {
 
 export { enqueue, dequeue, surrender } from "./matchmaking";
 
+export { seedBots, startPractice } from "./bots";
+
 export {
   submitGuess,
   passRound,
