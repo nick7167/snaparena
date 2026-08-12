@@ -29,6 +29,7 @@ import { runCleanupGuests } from "./guests";
 import { runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
 import { runFinalizeMatch } from "./progression";
 import { runRebuildLadder } from "./ladder";
+import { runBotAction as runBotActionFor } from "./bots";
 
 export const advancePhase = spacetimedb.reducer(
   { row: phase_advance_schedule.rowType },
@@ -47,10 +48,7 @@ export const draftWatchdog = spacetimedb.reducer(
 
 export const runBotAction = spacetimedb.reducer(
   { row: bot_action_schedule.rowType },
-  (_ctx, { row }) => {
-    // Owned by the bot module, ported in a later step.
-    void row;
-  },
+  (ctx, { row }) => runBotActionFor(ctx, row),
 );
 
 export const sweepMatchmaking = spacetimedb.reducer(
