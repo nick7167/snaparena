@@ -73,6 +73,27 @@ export function gameModeOf(mode: string): GameMode {
 }
 
 /**
+ * The avatar as everyone else should see it.
+ *
+ * A reported picture falls back to the initial-on-colour rather than vanishing — the
+ * player keeps an avatar, they just lose the image. Every public reader goes through
+ * this, so a hidden picture cannot survive on one surface after being pulled from
+ * another. The ladder is the surface that makes this necessary: it denormalises the
+ * avatar into its own rows, so reading `avatarUrl` straight from the user would leave a
+ * hidden picture on the leaderboard until that player's rank happened to move.
+ *
+ * The `me` view deliberately does NOT use it. That only ever returns the caller's own
+ * row, and hiding someone's picture from themselves would leave them unable to tell why
+ * it looks wrong to everyone else, or to go and change it.
+ */
+export function publicAvatarUrl(user: {
+  avatarHidden: boolean;
+  avatarUrl: string | undefined;
+}): string | undefined {
+  return user.avatarHidden ? undefined : user.avatarUrl;
+}
+
+/**
  * Throws a `SenderError`, which is what surfaces to the caller as a reducer error.
  *
  * A plain `Error` is reported as an internal module fault instead, so the

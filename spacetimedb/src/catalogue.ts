@@ -3,7 +3,11 @@ import { spacetimedb } from "./schema";
 import type { AnonymousViewCtx, ReducerCtx } from "./ctx";
 import { reject } from "./lib";
 import { requireModuleOwner, requireOwnerOrAdmin } from "./users";
-import { MAX_DUEL_ROUNDS, TITLE_INDEX_MAX } from "../../src/engine/config";
+import {
+  MAX_DUEL_ROUNDS,
+  TITLE_INDEX_MAX,
+  TUTORIAL_ITUNES_TRACK_ID,
+} from "../../src/engine/config";
 
 /**
  * The song catalogue, the autocomplete index, and track selection.
@@ -420,3 +424,67 @@ export function catalogueCanFill(ctx: ReducerCtx, count: number): boolean {
 export function requireCatalogue(ctx: ReducerCtx, count: number): void {
   if (!catalogueCanFill(ctx, count)) reject("Not enough playable songs yet");
 }
+
+/**
+ * The track the welcome tutorial teaches on.
+ *
+ * A VIEW because `track` is private: the client cannot subscribe to the catalogue —
+ * that is the anti-cheat boundary — so the one row the tutorial needs has to be handed
+ * over deliberately. It carries only what the runner renders; the full row holds
+ * scoring data it has no use for, and `titleNormalized` would be a spoiler.
+ *
+ * Anonymous rather than per-viewer: the same song for everyone, materialised once,
+ * and readable before sign-in because the tutorial runs during the welcome flow.
+ *
+ * Pinned by `itunesTrackId` rather than by row id, because the ingest script re-creates
+ * rows and an id would stop resolving after a re-ingest — silently, and forever. The
+ * iTunes id is external and already indexed.
+ */
+export const tutorialTrack = spacetimedb.anonymousView(
+  { name: "tutorial_track", public: true },
+  t.option(
+    t.row("TutorialTrack", {
+      title: t.string(),
+      artist: t.string(),
+      artworkUrl: t.string(),
+      previewUrl: t.string(),
+    }),
+  ),
+  (ctx) => {
+    const shape = (row: {
+      title: string;
+      artist: string;
+      artworkUrl: string;
+      previewUrl: string;
+    }) => ({
+      title: row.title,
+      artist: row.artist,
+      artworkUrl: row.artworkUrl,
+      previewUrl: row.previewUrl,
+    });
+
+    if (TUTORIAL_ITUNES_TRACK_ID !== null) {
+      const pinned = ctx.db.track.itunesTrackId.find(BigInt(TUTORIAL_ITUNES_TRACK_ID));
+      // `playable` is checked as well as existence: a track held out of the pool is
+      // held out of the tutorial too, or the first song a new player hears is one the
+      // game has decided is not fit to serve.
+      if (pinned && pinned.playable) return shape(pinned);
+    }
+
+    /**
+     * Bounded scan. Difficulty 1 is the largest tier in a healthy catalogue, and this
+     * view is materialised for every visitor in the welcome flow — walking the whole
+     * tier to pick one row would be the most expensive read in the app for no gain.
+     *
+     * Deterministic rather than random: a view is recomputed whenever its inputs
+     * change, so a random pick would swap the tutorial song underneath a player
+     * mid-flow. The Convex version could randomise because it was a query answered
+     * once per call.
+     */
+    for (const row of ctx.db.track.by_playable_difficulty.filter([true, 1])) {
+      return shape(row);
+    }
+
+    return undefined;
+  },
+);

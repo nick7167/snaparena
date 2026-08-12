@@ -50,6 +50,7 @@ export {
   upsertTracks,
   rebuildTitleIndex,
   catalogueStats,
+  tutorialTrack,
 } from "./catalogue";
 
 export { nudge } from "./phases";

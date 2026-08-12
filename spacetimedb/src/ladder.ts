@@ -1,6 +1,7 @@
 import { ScheduleAt } from "spacetimedb";
 import type { ReducerCtx } from "./ctx";
 import { devFeaturesEnabled } from "./config";
+import { publicAvatarUrl } from "./lib";
 import { rankForElo } from "../../src/engine/ranks";
 
 /**
@@ -123,7 +124,7 @@ export function runRebuildLadder(ctx: ReducerCtx): void {
       elo: user.elo,
       handle: user.handle,
       displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
+      avatarUrl: publicAvatarUrl(user),
       gamesPlayed: user.gamesPlayed,
       level: user.level,
       tierId,
