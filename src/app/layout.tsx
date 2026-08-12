@@ -104,13 +104,40 @@ export const viewport: Viewport = {
  * which the `auth()` call itself guarantees.
  */
 async function connectionToken(): Promise<string | undefined> {
+  const { userId, getToken } = await auth();
+
+  /**
+   * Signed out, as far as the server can tell. Correct and common — a stranger
+   * connects anonymously — so this is not worth a log line.
+   */
+  if (!userId) return undefined;
+
   try {
-    const { getToken } = await auth();
-    return (await getToken({ template: CLERK_JWT_TEMPLATE })) ?? undefined;
-  } catch {
-    // A signed-out visitor, or Clerk being unreachable. Neither is a failure: the
-    // client connects anonymously, which is the correct state for a stranger and a
-    // recoverable one for everybody else.
+    const token = await getToken({ template: CLERK_JWT_TEMPLATE });
+
+    /**
+     * Signed in, but no token. Almost always one thing: no Clerk JWT template named
+     * `spacetimedb`. Said out loud, because silently returning undefined here costs
+     * a reconnect on every page load and looks like a client bug.
+     */
+    if (!token) {
+      console.warn(
+        `[snap] no "${CLERK_JWT_TEMPLATE}" token for a signed-in session —` +
+          " check the JWT template exists in the Clerk dashboard",
+      );
+      return undefined;
+    }
+
+    return token;
+  } catch (error) {
+    /**
+     * NOT swallowed. The first version caught this and returned undefined, which
+     * degraded correctly — the client still connects, just anonymously first — but
+     * made the resulting double connection impossible to tell apart from a signed-out
+     * visitor. The whole point of minting here is to avoid that reconnect, so a
+     * failure to mint is the thing worth knowing about.
+     */
+    console.error("[snap] could not mint a SpacetimeDB token on the server", error);
     return undefined;
   }
 }

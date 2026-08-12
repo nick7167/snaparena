@@ -216,7 +216,7 @@ function SpacetimeBridge({
 
   return (
     <SpacetimeDBProvider connectionBuilder={builder}>
-      <ConnectionMonitor />
+      <ConnectionMonitor seeded={initialToken !== undefined} />
       {/* Inside the SpacetimeDB provider because it identifies against the module's
           user row, not the Clerk one — every other system in the app keys on that
           id. Renders nothing, and is inert unless NEXT_PUBLIC_POSTHOG_KEY is set. */}
@@ -287,7 +287,7 @@ function SpacetimeBridge({
  * operator needs at the moment they discover they need it, and by then a rebuild to
  * turn it on is the expensive part.
  */
-function ConnectionMonitor() {
+function ConnectionMonitor({ seeded }: { seeded: boolean }) {
   const { isActive, identity, connectionError } = useSpacetimeDB();
 
   useEffect(() => {
@@ -302,9 +302,10 @@ function ConnectionMonitor() {
     console.info(
       `[snap] spacetimedb — active=${isActive}` +
         ` identity=${identity?.toHexString() ?? "none"}` +
+        ` seeded=${seeded}` +
         ` error=${connectionError?.message ?? "none"}`,
     );
-  }, [isActive, identity, connectionError]);
+  }, [isActive, identity, connectionError, seeded]);
 
   return null;
 }
