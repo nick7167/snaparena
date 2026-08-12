@@ -3,7 +3,7 @@ import path from "node:path";
 import { SCREENSHOTS, assertOnboarded, enableResolveBar } from "./helpers";
 
 /**
- * DEV ONLY — delete with convex/devbots.ts.
+ * DEV ONLY — delete with spacetimedb/src/devbots.ts.
  *
  * The one path in the app that had no browser coverage at all: an actual rated match.
  * Everything about ranked — pairing, the ban draft, Elo, the placement countdown — was
@@ -12,8 +12,12 @@ import { SCREENSHOTS, assertOnboarded, enableResolveBar } from "./helpers";
  *
  * With the dev roster seeded there is a real opponent in the queue, so this drives the
  * genuine article: enqueue, pair, draft, then finish through the dev resolve control and
- * assert the rating actually moved. Requires DEV_RANK_BOTS set on the deployment and
- * `npm run dev-bots seed` already run; skips itself cleanly if not.
+ * assert the rating actually moved.
+ *
+ * TWO PRECONDITIONS, and the switch is no longer where it was. Developer features must
+ * be on — that is a `settings` row now, flipped in /admin, not the `DEV_RANK_BOTS`
+ * deployment variable it used to be — and `npm run dev-bots seed` must already have run.
+ * Skips itself cleanly if not.
  */
 
 test.describe("ranked against a dev rank bot", () => {
@@ -61,7 +65,11 @@ test.describe("ranked against a dev rank bot", () => {
       page.getByRole("button", { name: "Play a bot instead" }),
     ).toBeInViewport();
 
-    // Pairing is a client poll every 2s against a queue the cron keeps stocked.
+    /**
+     * Pairing is a SERVER sweep every 2s against a queue the refill keeps stocked — it
+     * was a poll each searching client ran for itself, which is gone. The budget here
+     * still has to cover DEV_BOT_MIN_WAIT_MS before a bot will answer at all.
+     */
     const devBar = page.getByRole("button", { name: "Random", exact: true });
     await expect(devBar).toBeVisible({ timeout: 45_000 });
 

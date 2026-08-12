@@ -64,7 +64,7 @@ export function DuelMatch({ matchId, onLeave }: { matchId: bigint; onLeave: () =
 }
 
 /**
- * DEV ONLY — delete with convex/devbots.ts.
+ * DEV ONLY — delete with spacetimedb/src/devbots.ts.
  *
  * A duel runs nine to twelve songs, so clearing five placement matches is the better
  * part of an hour. This ends the current one instantly through the real `finishMatch`
@@ -77,6 +77,8 @@ export function DuelMatch({ matchId, onLeave }: { matchId: bigint; onLeave: () =
  */
 function DevResolveBar({ matchId }: { matchId: bigint }) {
   const dev = useDevFeatures();
+  const resolveNow = useStdbReducer(reducers.devResolveNow);
+  const [resolving, setResolving] = useState<string | null>(null);
   /**
    * The role gate, matching `DevPanel`.
    *
@@ -102,17 +104,7 @@ function DevResolveBar({ matchId }: { matchId: bigint }) {
     getDevToolsServerSnapshot,
   );
 
-  /**
-   * Held closed until the dev-bot module is ported.
-   *
-   * `devbots.resolveNow` forced a rated match to a chosen outcome, and there is no
-   * reducer behind it yet. Drawing a button that cannot act is worse than drawing none,
-   * so the bar stays hidden rather than pretending — the gates below are unchanged and
-   * come back with it.
-   */
-  const resolveNowAvailable = false;
-
-  if (!dev || !me || !tools.resolveBar || !resolveNowAvailable) return null;
+  if (!dev || !me || !tools.resolveBar) return null;
 
   return (
     // Top right, clear of the guess combobox and the HP bars — this is a scaffold, and a
@@ -124,7 +116,25 @@ function DevResolveBar({ matchId }: { matchId: bigint }) {
           key={outcome}
           variant="secondary"
           size="sm"
-          onClick={() => undefined}
+          loading={resolving === outcome}
+          disabled={resolving !== null && resolving !== outcome}
+          onClick={() => {
+            setResolving(outcome);
+            /**
+             * No catch that swallows. This is operator tooling on an admin-only screen,
+             * and the reducer's rejections are all things worth seeing in the console —
+             * "Not your match", "Developer features are off" — rather than a spinner
+             * that stops for no stated reason.
+             *
+             * Nothing resets `resolving` on success either, deliberately: the match ends,
+             * the phase machine moves everyone to the results screen, and this whole bar
+             * unmounts with it.
+             */
+            void resolveNow({ matchId, outcome }).catch((error: unknown) => {
+              setResolving(null);
+              console.error("dev resolve failed", error);
+            });
+          }}
         >
           {outcome === "win" ? "Win" : outcome === "loss" ? "Lose" : "Random"}
         </Button>
