@@ -358,3 +358,64 @@ export const surrender = spacetimedb.reducer({ matchId: t.u64() }, (ctx, { match
   const opponentId = match.playerIds.find((id) => id !== player.id);
   finishMatch(ctx, match, opponentId);
 });
+
+// ---------------------------------------------------------------------------
+// Forfeits
+// ---------------------------------------------------------------------------
+
+/**
+ * Forfeits any player who is still gone once the grace period has run out.
+ *
+ * Disconnecting counts as a full loss. Without this, a player who is behind simply
+ * closes the tab — the most-exploited hole in any ranked ladder.
+ *
+ * PRESENCE IS NOW A FACT, NOT AN INFERENCE. Convex had no way to know a socket had
+ * closed, so it maintained a `presence` table from a client heartbeat and treated a
+ * stale timestamp as absence — which meant the clock could not start until a beat was
+ * already overdue, and a client that lied about beating was never absent at all. Here
+ * `onDisconnect` arms this sweep at the moment the socket drops, and this asks the
+ * `connection` table whether the player has come back. A player with any live
+ * connection is present, which also makes a second tab do the right thing for free.
+ */
+export function runSweepForfeits(ctx: ReducerCtx, matchId: bigint): void {
+  const match = ctx.db.match.id.find(matchId);
+  if (!match) return;
+  if (match.status !== "active" && match.status !== "veto") return;
+  if (match.mode !== "ranked") return;
+
+  const players = [...ctx.db.match_player.matchId.filter(matchId)];
+
+  /**
+   * Bots cannot disconnect, so they can never be the absent player.
+   *
+   * They also set the denominator in the everyone-gone guard below, which is the less
+   * obvious half of why they have to be filtered out rather than merely skipped:
+   * counting a bot as a live player would make `absent.length !== humans.length` when
+   * the only human walks away, and the bot would be awarded the match.
+   */
+  const humans = players.filter((player) => !ctx.db.user.id.find(player.userId)?.isBot);
+
+  const absent = humans.filter((player) => !isConnected(ctx, player.userId));
+
+  // Everyone gone is nobody to award it to. Such a match is reaped elsewhere rather
+  // than decided here.
+  if (absent.length === 0 || absent.length === humans.length) return;
+
+  for (const player of absent) {
+    const current = ctx.db.match_player.id.find(player.id);
+    if (current) ctx.db.match_player.id.update({ ...current, forfeited: true, hp: 0 });
+  }
+
+  const survivor = humans.find((player) => !absent.includes(player));
+
+  finishMatch(ctx, ctx.db.match.id.find(matchId) ?? match, survivor?.userId);
+}
+
+/** Whether this player holds any live connection. Several tabs count as one player. */
+function isConnected(ctx: ReducerCtx, userId: bigint): boolean {
+  const account = ctx.db.account.userId.find(userId);
+  if (!account) return false;
+
+  for (const _ of ctx.db.connection.identity.filter(account.identity)) return true;
+  return false;
+}
