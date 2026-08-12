@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../../convex/_generated/api";
+import { useMatchHistory, useMe, useMyStanding } from "../db";
 import { BADGES } from "@/engine/badges";
 import { Avatar } from "@/game/ui";
 import { useNow } from "@/game/usePrefersReducedMotion";
@@ -31,17 +30,17 @@ import { timeAgo } from "@/ui/relative-time";
  * further down the page, and Convex dedupes identical subscriptions.
  */
 export function LastResult() {
-  const me = useQuery(api.users.me, {});
-  const matches = useQuery(api.matches.history, me ? { userId: me._id } : "skip");
+  const me = useMe();
+  const matches = useMatchHistory(me?.id);
   const now = useNow(60_000);
 
   const last = matches?.[0];
   if (!me || !last) return null;
 
   const promoted =
-    last.levelBefore !== null &&
-    last.levelAfter !== null &&
-    last.levelAfter > last.levelBefore;
+    (last.levelBefore ?? 0) !== null &&
+    (last.levelAfter ?? 0) !== null &&
+    (last.levelAfter ?? 0) > (last.levelBefore ?? 0);
 
   const badges = last.badgesEarned
     .map((id) => BADGES.find((badge) => badge.id === id))
@@ -49,7 +48,7 @@ export function LastResult() {
 
   // A practice match moves no rating, so without a badge or a level-up it has nothing to
   // report and the panel stays out of the way.
-  const hasNews = last.ratingDelta !== null || promoted || badges.length > 0;
+  const hasNews = (last.ratingDelta ?? 0) !== null || promoted || badges.length > 0;
   if (!hasNews) return null;
 
   const verdict = last.drawn ? "Draw" : last.won ? "Won" : "Lost";
@@ -63,14 +62,14 @@ export function LastResult() {
 
   return (
     <Link
-      href={`/m/${last.matchId}?p=${me._id}`}
+      href={`/m/${last.matchId}?p=${me.id}`}
       className="border-line bg-ink-800 hover:border-line-strong group flex flex-col gap-4
                  rounded-md border px-5 py-4 transition-colors"
     >
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Your last match</SectionLabel>
         <span className="text-label text-muted shrink-0">
-          {timeAgo(last.completedAt, now)}
+          {timeAgo(last.completedAtMs, now)}
         </span>
       </div>
 
@@ -97,24 +96,24 @@ export function LastResult() {
 
         {/* Zero is its own case, not a small win — a loss at the rating floor reports a
             delta of 0, and colouring that gold would be a lie told by a symbol. */}
-        {last.ratingDelta !== null && (
+        {(last.ratingDelta ?? 0) !== null && (
           <span className="flex shrink-0 flex-col">
             <span
               className={`font-display text-numeral flex items-center gap-1 font-extrabold tabular-nums ${
-                last.ratingDelta > 0
+                (last.ratingDelta ?? 0) > 0
                   ? "text-gold"
-                  : last.ratingDelta < 0
+                  : (last.ratingDelta ?? 0) < 0
                     ? "text-signal-text"
                     : "text-muted"
               }`}
             >
-              {last.ratingDelta !== 0 && (
-                <span className={last.ratingDelta > 0 ? "" : "rotate-180"}>
+              {(last.ratingDelta ?? 0) !== 0 && (
+                <span className={(last.ratingDelta ?? 0) > 0 ? "" : "rotate-180"}>
                   <Glyph name="win" filled />
                 </span>
               )}
-              {last.ratingDelta > 0 ? "+" : ""}
-              {last.ratingDelta}
+              {(last.ratingDelta ?? 0) > 0 ? "+" : ""}
+              {(last.ratingDelta ?? 0)}
             </span>
             <span className="text-label text-muted tracking-label uppercase">
               Rating
@@ -155,7 +154,7 @@ export function LastResult() {
           {promoted && (
             <Chip tone="teal" size="sm">
               <Glyph name="tier" filled />
-              Level {last.levelBefore} → {last.levelAfter}
+              Level {(last.levelBefore ?? 0)} → {(last.levelAfter ?? 0)}
             </Chip>
           )}
           {badges.map((badge) => (

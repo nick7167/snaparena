@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../convex/_generated/api";
+import { useMatchHistory, useMe, useMyStanding } from "./db";
 import { rankForElo } from "@/engine/ranks";
 import { Chip, Meter, SectionLabel, Skeleton } from "@/ui/Surface";
 import { GlobalRank } from "./dashboard/global-rank";
@@ -37,8 +36,8 @@ export const FORM_LENGTH = 5;
  * steps down a level in both type and markup rather than competing with it.
  */
 export function StandingHero({ size = "xl" }: { size?: "lg" | "xl" }) {
-  const me = useQuery(api.users.me, {});
-  const standing = useQuery(api.users.myStanding, {});
+  const me = useMe();
+  const standing = useMyStanding(me);
 
   const large = size === "xl";
 
@@ -171,8 +170,8 @@ export function RankProgress({
  * than a rating that moves eighteen points at a time.
  */
 export function Form() {
-  const me = useQuery(api.users.me, {});
-  const matches = useQuery(api.matches.history, me ? { userId: me._id } : "skip");
+  const me = useMe();
+  const matches = useMatchHistory(me?.id);
 
   if (matches === undefined) return <Skeleton className="mx-4 h-10" />;
 
@@ -239,8 +238,8 @@ export function Form() {
  * results screen rather than a summary of it.
  */
 export function RecentMatches() {
-  const me = useQuery(api.users.me, {});
-  const matches = useQuery(api.matches.history, me ? { userId: me._id } : "skip");
+  const me = useMe();
+  const matches = useMatchHistory(me?.id);
 
   if (matches === undefined || matches.length === 0) return null;
 
@@ -253,7 +252,7 @@ export function RecentMatches() {
           return (
             <li key={match.matchId}>
               <Link
-                href={`/m/${match.matchId}${me ? `?p=${me._id}` : ""}`}
+                href={`/m/${match.matchId}${me ? `?p=${me.id}` : ""}`}
                 className="border-line bg-ink-800 hover:bg-ink-700 flex items-center gap-3
                            rounded-md border px-3 py-2 transition-colors"
               >
@@ -287,18 +286,18 @@ export function RecentMatches() {
 
                 {/* Zero is its own case, not a small win — a loss at the rating floor
                     reports a delta of 0 and colouring that gold would read as a gain. */}
-                {match.ratingDelta !== null && (
+                {(match.ratingDelta ?? 0) !== null && (
                   <span
                     className={`text-body-sm shrink-0 font-semibold tabular-nums ${
-                      match.ratingDelta > 0
+                      (match.ratingDelta ?? 0) > 0
                         ? "text-gold"
-                        : match.ratingDelta < 0
+                        : (match.ratingDelta ?? 0) < 0
                           ? "text-signal-text"
                           : "text-muted"
                     }`}
                   >
-                    {match.ratingDelta > 0 ? "+" : ""}
-                    {match.ratingDelta}
+                    {(match.ratingDelta ?? 0) > 0 ? "+" : ""}
+                    {(match.ratingDelta ?? 0)}
                   </span>
                 )}
               </Link>

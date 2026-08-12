@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../../convex/_generated/api";
+import { useDailyStreak, useMe, useMyDailyRun } from "../db";
 import { DAILY_SONGS } from "@/engine/config";
 import { Glyph } from "@/ui/Glyph";
 import { Skeleton } from "@/ui/Surface";
@@ -21,14 +20,21 @@ import { CountUp } from "./motion";
  * carry once there is a streak to lose.
  */
 export function DailyCard() {
-  const myRun = useQuery(api.daily.myRun, {});
-  const active = useQuery(api.daily.activeRun, {});
-  const streak = useQuery(api.users.dailyStreak, {});
+  const me = useMe();
+  const myRun = useMyDailyRun(me?.id);
+  const streak = useDailyStreak(me?.id);
+
+  /**
+   * `api.daily.activeRun` is gone: an unfinished daily is a live match, and the module
+   * resumes it on `startDaily` rather than the client needing to know first. The card
+   * therefore stops distinguishing "resuming" from "not played" — pressing it does the
+   * right thing either way, which it did not when the client had to choose.
+   */
+  const resuming = false;
 
   if (myRun === undefined) return <Skeleton className="h-20 w-full" />;
 
   const played = myRun !== null;
-  const resuming = !played && active !== null && active !== undefined;
 
   // A streak is only at risk on a day it has not already been secured, and only if there
   // is one to lose. Any match keeps it alive, so this claims the daily *would* — never
@@ -73,11 +79,11 @@ export function DailyCard() {
           <span className="font-display text-numeral font-extrabold tabular-nums">
             <CountUp value={myRun.totalPoints} /> pts
           </span>
-          {/* `totalPlayers` has been returned by `daily.myRun` all along and rendered
-              nowhere — a rank with no denominator is a number, not a placing. */}
-          <span className="text-label text-muted tabular-nums">
-            #{myRun.rank} of {myRun.totalPlayers}
-          </span>
+          {/* The placing is gone rather than recomputed. `daily.myRun` returned a rank
+              and a denominator because it could count the day's rows server-side; doing
+              that on the client would mean subscribing to every run of the day to render
+              one line on a card. The board on /daily already shows the placing, against
+              rows it needs anyway. */}
         </span>
       ) : (
         // Quarter-turned: the set's only chevron points down, for menus.

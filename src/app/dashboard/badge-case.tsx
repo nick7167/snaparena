@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useMe, useUserBadges } from "../db";
 import { BADGES } from "@/engine/badges";
 import { BadgeMark } from "@/ui/Glyph";
 import { Meter, SectionLabel, Skeleton } from "@/ui/Surface";
@@ -16,13 +15,13 @@ import { Meter, SectionLabel, Skeleton } from "@/ui/Surface";
  * a task you are partway through.
  */
 const COUNTED: Record<string, (me: Me) => { have: number; need: number }> = {
-  first_blood: (me) => ({ have: Math.min(me.rankedWins ?? 0, 1), need: 1 }),
-  snap_10: (me) => ({ have: Math.min(me.snapGuesses ?? 0, 10), need: 10 }),
-  snap_100: (me) => ({ have: Math.min(me.snapGuesses ?? 0, 100), need: 100 }),
+  first_blood: (me) => ({ have: Math.min(me.rankedWins, 1), need: 1 }),
+  snap_10: (me) => ({ have: Math.min(me.snapGuesses, 10), need: 10 }),
+  snap_100: (me) => ({ have: Math.min(me.snapGuesses, 100), need: 100 }),
   centurion: (me) => ({ have: Math.min(me.gamesPlayed, 100), need: 100 }),
 };
 
-type Me = NonNullable<ReturnType<typeof useQuery<typeof api.users.me>>>;
+type Me = NonNullable<ReturnType<typeof useMe>>;
 
 /**
  * The badge case.
@@ -37,13 +36,13 @@ type Me = NonNullable<ReturnType<typeof useQuery<typeof api.users.me>>>;
  * the player can actually move.
  */
 export function BadgeCase() {
-  const me = useQuery(api.users.me, {});
-  const card = useQuery(api.matches.card, me ? { userId: me._id } : "skip");
+  const me = useMe();
+  const badges = useUserBadges(me?.id);
 
-  if (me === undefined || card === undefined) return <Skeleton className="h-32 w-full" />;
-  if (!me || !card) return null;
+  if (me === undefined || badges === undefined) return <Skeleton className="h-32 w-full" />;
+  if (!me) return null;
 
-  const earned = new Set(card.badges.map((badge) => badge.id));
+  const earned = new Set(badges.map((badge) => badge.badgeId));
 
   const next = BADGES.filter((badge) => !earned.has(badge.id) && COUNTED[badge.id])
     .map((badge) => ({ badge, ...COUNTED[badge.id](me) }))

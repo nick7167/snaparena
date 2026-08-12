@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useLadderStatus } from "../db";
 import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { Glyph } from "@/ui/Glyph";
 
@@ -35,7 +34,7 @@ export function GlobalRank({
   /** The POSITION is a bucket floor, not an exact place. */
   approximate?: boolean;
 }) {
-  const ladder = useQuery(api.users.rankedPlayerCount, {});
+  const ladder = useLadderStatus();
 
   const label = formatGlobalRank(position, approximate);
   if (!label) return null;
@@ -56,10 +55,12 @@ export function GlobalRank({
   const percentile =
     !approximate &&
     ladder &&
-    !ladder.approximate &&
-    ladder.count >= PERCENTILE_MIN_POPULATION &&
+    // `truncated` is the board's own version of `approximate`: it says the population
+    // is larger than the ladder ranks, so the denominator would be a floor.
+    !ladder.truncated &&
+    ladder.playerCount >= PERCENTILE_MIN_POPULATION &&
     position
-      ? Math.max(1, Math.round((position / ladder.count) * 100))
+      ? Math.max(1, Math.round((position / ladder.playerCount) * 100))
       : null;
 
   return (

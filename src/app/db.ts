@@ -3,6 +3,7 @@
 import { useTable, useSpacetimeDB } from "spacetimedb/react";
 import { useMemo } from "react";
 import { tables } from "@/module_bindings";
+import { computeStreak } from "@/engine/streak";
 
 /**
  * The client's read layer.
@@ -357,20 +358,28 @@ export function useCategoryRatings(userId: bigint | undefined) {
 /**
  * A player's finished matches, newest first.
  *
- * REPLACES `api.matches.history`. It reads only `match_player`, never the matches
- * themselves — the port denormalised mode, outcome, opponent and completion onto
- * that row precisely so this list costs one subscription instead of one read per
- * match. See the note on those fields in the module schema.
+ * REPLACES `api.matches.history`, INCLUDING ITS SHAPE. The query returned a payload the
+ * cards render directly — `won`, `drawn`, a resolved opponent, a millisecond timestamp —
+ * and rebuilding that at six call sites would be six chances to disagree about what a
+ * draw is. So the shaping stays in one place and moves here.
+ *
+ * It reads `match_player` and the opponent's user row, never the matches themselves: the
+ * port denormalised mode, outcome, opponent and completion onto that row precisely so
+ * this list costs one subscription instead of one read per match.
  */
 export function useMatchHistory(userId: bigint | undefined, limit = 8) {
   const [rows, ready] = useTable(
     tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
     { enabled: userId !== undefined },
   );
+  const [users, usersReady] = useTable(tables.user, { enabled: userId !== undefined });
 
   return useMemo(() => {
     if (userId === undefined) return [];
-    if (!ready) return undefined;
+    if (!ready || !usersReady) return undefined;
+
+    const byId = new Map(users.map((row) => [row.id, row]));
+
     return [...rows]
       .filter((row) => row.completedAt !== undefined)
       .sort((a, b) => {
@@ -378,6 +387,122 @@ export function useMatchHistory(userId: bigint | undefined, limit = 8) {
         const bt = b.completedAt?.microsSinceUnixEpoch ?? 0n;
         return at < bt ? 1 : at > bt ? -1 : 0;
       })
-      .slice(0, limit);
-  }, [userId, ready, rows, limit]);
+      .slice(0, limit)
+      .map((row) => {
+        const opponent = row.opponentId === undefined ? null : byId.get(row.opponentId);
+
+        return {
+          ...row,
+          // The engine and the cards deal in milliseconds; the column is a Timestamp.
+          completedAtMs: Number(
+            (row.completedAt?.microsSinceUnixEpoch ?? 0n) / 1_000n,
+          ),
+          won: row.outcome === "win",
+          drawn: row.outcome === "draw",
+          opponent: opponent
+            ? {
+                id: opponent.id,
+                handle: opponent.handle,
+                displayName: opponent.displayName,
+                avatarUrl: publicAvatarUrl(opponent),
+                elo: opponent.elo,
+                isBot: opponent.isBot,
+              }
+            : null,
+        };
+      });
+  }, [userId, ready, rows, users, usersReady, limit]);
+}
+
+/**
+ * The avatar as everyone else should see it. Mirrors the module's own helper, because a
+ * hidden picture must not survive on a surface that reads the user row directly.
+ */
+function publicAvatarUrl(user: { avatarHidden: boolean; avatarUrl: string | undefined }) {
+  return user.avatarHidden ? undefined : user.avatarUrl;
+}
+
+/**
+ * The player's daily streak.
+ *
+ * REPLACES `api.users.dailyStreak`, which walked the run rows server-side. The rows are
+ * already subscribed for the results card, so the walk moves to the client and runs
+ * against `computeStreak` — the same engine function the query used, so the forgiveness
+ * rule cannot drift between the two.
+ */
+export function useDailyStreak(userId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.dailyRun.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (userId === undefined) return null;
+    if (!ready) return undefined;
+    return computeStreak(new Set(rows.map((row) => row.date)), Date.now());
+  }, [userId, ready, rows]);
+}
+
+/**
+ * Where the player stands: rating, games, and global position.
+ *
+ * REPLACES `api.users.myStanding`. `position` is `null` rather than a number until the
+ * ladder has been built at least once, and `approximate` marks a placing past the depth
+ * the board carries exactly — both the same meanings the query gave them.
+ */
+export function useMyStanding(me: ReturnType<typeof useMe>) {
+  const entry = useLadderEntry(me?.id);
+
+  return useMemo(() => {
+    if (me === undefined || entry === undefined) return undefined;
+    if (me === null) return null;
+
+    return {
+      elo: me.elo,
+      gamesPlayed: me.gamesPlayed,
+      placementsRemaining: me.placementsRemaining,
+      position: entry?.rank ?? null,
+      approximate: entry?.approximate ?? false,
+    };
+  }, [me, entry]);
+}
+
+/**
+ * The players ranked immediately above and below you.
+ *
+ * REPLACES `api.users.ladderNeighbours`. The Convex version walked outward from the
+ * player's position in the stored field; here the board is rows with a `rank` index, so
+ * it is a range subscription — and a narrow one, because a window is exactly what the
+ * panel draws.
+ *
+ * Returns `null` for an unranked player rather than an empty list: "still placing" and
+ * "nobody near you" are different states and the panel says different things about them.
+ */
+export function useLadderNeighbours(userId: bigint | undefined, spread = 2) {
+  const mine = useLadderEntry(userId);
+  const rank = mine?.rank;
+
+  const [rows, ready] = useTable(
+    tables.ladderEntry.where((row) => row.rank.gte((rank ?? 1) - spread)),
+    { enabled: rank !== undefined },
+  );
+
+  return useMemo(() => {
+    if (userId === undefined) return null;
+    if (mine === undefined) return undefined;
+    if (mine === null) return null;
+    if (!ready) return undefined;
+
+    const window = [...rows]
+      .filter((row) => Math.abs(row.rank - mine.rank) <= spread)
+      .sort((a, b) => a.rank - b.rank);
+
+    // Split rather than handed over flat, because the panel draws the two sides
+    // differently — above you is what to chase, below is what is chasing you.
+    return {
+      above: window.filter((row) => row.rank < mine.rank),
+      below: window.filter((row) => row.rank > mine.rank),
+      me: { elo: mine.elo, position: mine.rank, approximate: mine.approximate },
+    };
+  }, [userId, mine, ready, rows, spread]);
 }

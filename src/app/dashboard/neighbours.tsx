@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import Link from "next/link";
-import { api } from "../../../convex/_generated/api";
+import { useLadderNeighbours, useMe } from "../db";
 import { rankForElo } from "@/engine/ranks";
 import { Avatar } from "@/game/ui";
 import { RankEmblem } from "@/ui/RankEmblem";
@@ -20,23 +19,41 @@ import { SectionLabel } from "@/ui/Surface";
  * invented slot would be worse than an absent panel.
  */
 export function Neighbours() {
-  const board = useQuery(api.users.ladderNeighbours, {});
+  const me = useMe();
+  const board = useLadderNeighbours(me?.id);
 
   if (!board) return null;
 
+  /**
+   * `gap` is the rating distance from you, computed here rather than served.
+   *
+   * The Convex query returned it because it already held both ratings; the ladder rows
+   * carry `elo` too, so it is a subtraction the panel can do itself.
+   */
+  const shape = (row: (typeof board.above)[number]) => ({
+    userId: row.userId as bigint | null,
+    handle: row.handle,
+    displayName: row.displayName,
+    avatarUrl: row.avatarUrl,
+    elo: row.elo,
+    position: row.rank,
+    gap: row.elo - board.me.elo,
+    isMe: false,
+  });
+
   const rows = [
-    ...board.above.map((row) => ({ ...row, isMe: false })),
+    ...board.above.map(shape),
     {
       userId: null,
       handle: "you",
       displayName: "You",
       avatarUrl: undefined,
-      elo: board.elo,
-      position: board.position,
+      elo: board.me.elo,
+      position: board.me.position,
       gap: 0,
       isMe: true,
     },
-    ...board.below.map((row) => ({ ...row, isMe: false })),
+    ...board.below.map(shape),
   ];
 
   return (

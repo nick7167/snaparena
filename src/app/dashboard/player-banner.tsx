@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
-import { api } from "../../../convex/_generated/api";
+import { useDailyStreak, useMe, useMyStanding } from "../db";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
 import { PLACEMENT_MATCHES } from "@/engine/config";
@@ -32,9 +31,9 @@ import { useConfig } from "../config";
  * corners. Its hairline carries the tier accent, which is the only colour on the object.
  */
 export function PlayerBanner() {
-  const me = useQuery(api.users.me, {});
-  const standing = useQuery(api.users.myStanding, {});
-  const streak = useQuery(api.users.dailyStreak, {});
+  const me = useMe();
+  const standing = useMyStanding(me);
+  const streak = useDailyStreak(me?.id);
   const config = useConfig();
 
   if (me === undefined) return <Skeleton className="h-56 w-full" />;
@@ -42,7 +41,7 @@ export function PlayerBanner() {
 
   const rank = rankForElo(me.elo);
   const placing = me.placementsRemaining > 0;
-  const level = levelForXp(me.xp ?? 0, config);
+  const level = levelForXp(me.xp, config);
   const played = Math.max(0, PLACEMENT_MATCHES - me.placementsRemaining);
 
   return (
