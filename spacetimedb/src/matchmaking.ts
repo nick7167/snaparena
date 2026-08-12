@@ -1,7 +1,7 @@
 import { ScheduleAt } from "spacetimedb";
 import { Range, t } from "spacetimedb/server";
 import { spacetimedb } from "./schema";
-import type { ReducerCtx } from "./ctx";
+import type { ReducerCtx, ViewCtx } from "./ctx";
 import { microsFrom, reject, toMs } from "./lib";
 import { requireFullAccount } from "./users";
 import { currentVersionId, devFeaturesEnabled, resolveConfig } from "./config";
@@ -419,3 +419,51 @@ function isConnected(ctx: ReducerCtx, userId: bigint): boolean {
   for (const _ of ctx.db.connection.identity.filter(account.identity)) return true;
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// What the searching screen may see
+// ---------------------------------------------------------------------------
+
+const QueueStatus = t.row("QueueStanding", {
+  /** Whether the caller is currently in the queue. */
+  queued: t.bool(),
+  /** When they joined, so the client can run its own search timer. */
+  enqueuedAt: t.option(t.timestamp()),
+  /** Humans waiting. Bots are excluded for the reason `sweepable` gives. */
+  playersWaiting: t.i32(),
+});
+
+/**
+ * The queue, as the person searching is allowed to see it.
+ *
+ * A VIEW because `queue_entry` is private, and it has to stay private: the rows carry
+ * every waiting player's rating, and publishing them would let a client watch the pool
+ * and time its entry against a specific opponent.
+ *
+ * So this hands back the two facts the searching screen actually renders — am I in, and
+ * how many people are waiting — and nothing that identifies any of them. It replaces
+ * `ranked.myQueueEntry` and `ranked.queueSize` together, because both were read by the
+ * same panel and splitting them meant two subscriptions to draw one line.
+ */
+export const myQueueStatus = spacetimedb.view(
+  { name: "my_queue_status", public: true },
+  t.option(QueueStatus),
+  (ctx: ViewCtx) => {
+    const account = ctx.db.account.identity.find(ctx.sender);
+
+    let playersWaiting = 0;
+    for (const row of ctx.db.queue_entry.iter()) {
+      if (!row.isBot) playersWaiting++;
+      if (playersWaiting >= QUEUE_SCAN) break;
+    }
+
+    const mine =
+      account === null ? null : ctx.db.queue_entry.userId.find(account.userId);
+
+    return {
+      queued: mine !== null && mine !== undefined,
+      enqueuedAt: mine?.enqueuedAt,
+      playersWaiting,
+    };
+  },
+);

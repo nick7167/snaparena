@@ -6,6 +6,7 @@ import { armGuestCleanup } from "./guests";
 import { armLadderRebuild } from "./ladder";
 import {
   AVATAR_COLOUR_PATTERN,
+  AVATAR_MAX_BYTES,
   HANDLE_PATTERN,
   containsBlockedTerm,
   microsFrom,
@@ -374,6 +375,48 @@ function guestHandle(ctx: ReducerCtx, token: string): string {
     HANDLE_MAX_LENGTH,
   );
 }
+
+/**
+ * Sets the player's uploaded picture.
+ *
+ * STORED IN `avatarUrl` AS A DATA URL, not as bytes in a table, and the reason is
+ * replication rather than convenience. `user_avatar` holds raw bytes and is PRIVATE — it
+ * has to be, or every client would replicate every player's image — which means nobody
+ * but the owner could ever read it, and an avatar only exists to be seen by other people.
+ * Making it public would push every stored image to every subscriber of `user`.
+ *
+ * `avatarUrl` is a public string that already travels with the row the avatar belongs to,
+ * already renders on every surface, and already carries the `color:#rrggbb` form. A 256px
+ * webp lands around 10-20KB, so the picture replicates exactly where the name does and
+ * nowhere else.
+ *
+ * The client re-encodes to a 256px square webp before calling, so anything arriving near
+ * the cap did not come from our own form. The cap exists for that case: a reducer is
+ * callable directly, which makes the client's own limit a convenience rather than a
+ * control.
+ */
+export const setAvatarImage = spacetimedb.reducer(
+  { dataUrl: t.string() },
+  (ctx, { dataUrl }) => {
+    const player = requireFullAccount(ctx);
+
+    const match = /^data:(image\/(?:webp|jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!match) reject("That is not an image we can store");
+
+    // Base64 carries four characters per three bytes, so this is the decoded size
+    // without decoding it.
+    const bytes = Math.floor((match[2].length * 3) / 4);
+    if (bytes > AVATAR_MAX_BYTES) reject("That picture is too large");
+
+    ctx.db.user.id.update({
+      ...player,
+      avatarUrl: dataUrl,
+      // A fresh picture starts unhidden; the reports that hid the last one were about a
+      // different image.
+      avatarHidden: false,
+    });
+  },
+);
 
 /**
  * Distinct reporters required before a profile field is auto-hidden.

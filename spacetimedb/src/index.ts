@@ -41,6 +41,7 @@ export {
   removeAuthIssuer,
   setRole,
   reportProfile,
+  setAvatarImage,
   // views
   me,
   myHandleProbe,
@@ -65,7 +66,7 @@ export {
   claimGuestRuns,
 } from "./daily";
 
-export { enqueue, dequeue, surrender } from "./matchmaking";
+export { enqueue, dequeue, surrender, myQueueStatus } from "./matchmaking";
 
 export { seedBots, startPractice } from "./bots";
 
