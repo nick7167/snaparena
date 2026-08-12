@@ -1,10 +1,8 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { useMatchSummary } from "@/app/db";
 import { play } from "@/audio/sfx";
 import { badgeById } from "@/engine/badges";
 import { rankChange } from "@/engine/ranks";
@@ -60,7 +58,7 @@ export function MatchEnd({
   players: MatchEndPlayer[];
   winnerId: string | null;
   maxHp: number;
-  matchId: Id<"matches">;
+  matchId: bigint;
   /**
    * Whose side to read the result from when the viewer was not in the match.
    *
@@ -278,12 +276,12 @@ function RoundTimeline({
   players,
   subjectId,
 }: {
-  matchId: Id<"matches">;
+  matchId: bigint;
   players: MatchEndPlayer[];
   /** Whose side the win/loss markers are drawn from. See `MatchEnd`'s `perspectiveUserId`. */
   subjectId?: string;
 }) {
-  const summary = useQuery(api.matches.summary, { matchId });
+  const summary = useMatchSummary(matchId);
   const [expanded, setExpanded] = useState<number | null>(null);
 
   if (!summary || summary.rounds.length === 0) return null;
@@ -359,10 +357,11 @@ function RoundTimeline({
             <p className="text-body truncate font-semibold">
               {detail.track?.title ?? "Unknown track"}
             </p>
-            <p className="text-body-sm text-muted truncate">
-              {detail.track?.artist}
-              {detail.track?.releaseYear ? ` · ${detail.track.releaseYear}` : ""}
-            </p>
+            {/* The release year is gone. `round_reveal` publishes what a player is
+                allowed to know once a round closes — title, artist, artwork, category —
+                and the year lives on the private track row. Widening the reveal to carry
+                it would put a column on the wire for one line of a per-round expander. */}
+            <p className="text-body-sm text-muted truncate">{detail.track?.artist}</p>
             <div className="mt-1.5 flex flex-col gap-0.5">
               {detail.results.map((result) => {
                 const player = players.find(

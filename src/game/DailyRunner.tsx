@@ -1,13 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useGuessFeedback, useMatchState, useMe, useMyRoundStatus } from "@/app/db";
+import { useConfig } from "@/app/config";
 import { track } from "@/analytics";
-import type { Id } from "../../convex/_generated/dataModel";
 import { PHASE_DURATIONS_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
+import { tierForElapsed } from "@/engine/scoring";
 import { useRoundAudio } from "./useRoundAudio";
 import { useRoundLifecycle, rejectionMessage } from "./useRoundLifecycle";
 import { Stage } from "./ui";
@@ -17,7 +19,6 @@ import { useImmersive } from "@/app/immersive";
 import { usePrefetchTrackIndex } from "./track-index";
 import { LeaveMatch } from "./LeaveMatch";
 import { MATCH_CHROME_HEIGHT, MatchChrome } from "./MatchChrome";
-import { getGuestToken } from "@/app/guest";
 import { Meter } from "@/ui/Surface";
 import { snap } from "@/ui/motion";
 
@@ -37,7 +38,7 @@ import { snap } from "@/ui/motion";
  * This is also the only mode a signed-out player can reach, hence the guest token on
  * every call.
  */
-export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
+export function DailyRunner({ matchId }: { matchId: bigint }) {
   // Hides the app chrome for the duration. Clears on unmount, so finishing or
   // navigating away always restores the navigation — the daily used to have no way out
   // at all because nothing ever unmounted this.
@@ -45,12 +46,13 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
   // Safety net for the resume-an-active-run path; the daily page warms this earlier.
   usePrefetchTrackIndex();
 
-  const guestToken = getGuestToken();
-
-  const match = useQuery(api.matches.state, { matchId, guestToken });
-  const myStatus = useQuery(api.matches.myRoundStatus, { matchId, guestToken });
-  const submitGuess = useMutation(api.matches.submitGuess);
-  const passRound = useMutation(api.matches.pass);
+  const config = useConfig();
+  const match = useMatchState(matchId, config);
+  const myStatus = useMyRoundStatus(matchId);
+  const submitGuess = useStdbReducer(reducers.submitGuess);
+  const passRound = useStdbReducer(reducers.passRound);
+  const viewer = useMe();
+  const verdict = useGuessFeedback(matchId, viewer?.id);
 
   const phase = match?.phase ?? "guessing";
   const isGuessing = phase === "guessing";
@@ -85,7 +87,6 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
     isGuessing,
     nextAudioUrl: match?.nextAudioUrl ?? null,
     audio,
-    guestToken,
     onRoundStart: () => setFeedback(null),
   });
 
@@ -100,35 +101,58 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
   /** Narrowed to the number for the same reason as RoundRunner — see the note there. */
   const currentRound = match?.currentRound ?? 0;
 
+  /** The elapsed time the guess claimed, so the verdict can be labelled. See RoundRunner. */
+  const lastElapsedRef = useRef(0);
+
   const onGuess = useCallback(
     async (text: string) => {
       try {
-        const result = await submitGuess({
+        lastElapsedRef.current = audio.elapsedMs();
+        await submitGuess({
           matchId,
           roundIndex: currentRound,
           text,
-          clientElapsedMs: audio.elapsedMs(),
-          guestToken,
+          clientElapsedMs: lastElapsedRef.current,
         });
-
-        if (result.status === "correct") {
-          play(result.tier === "snap" ? "snap" : "correct");
-          setFeedback(`${result.tierLabel} · +${result.points}`);
-          audio.stop();
-        } else if (result.status === "wrong") {
-          play("wrong");
-          setFeedback("Not it");
-        } else {
-          setFeedback(rejectionMessage(result.reason));
-        }
-        return result;
+        return { status: "sent" as const, keepText: false };
       } catch {
         setFeedback("That didn't send — try again");
         return { status: "error" as const, keepText: true };
       }
     },
-    [submitGuess, matchId, currentRound, audio, guestToken],
+    [submitGuess, matchId, currentRound, audio],
   );
+
+  /**
+   * The verdict, which arrives rather than being returned — the same mechanism the duel
+   * uses, for the same reason. See the long note in RoundRunner.
+   */
+  const seenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!verdict) return;
+    if (verdict.roundIndex !== currentRound) return;
+
+    const key = `${verdict.roundIndex}:${verdict.outcome}:${verdict.points}:${verdict.rejectionReason ?? ""}`;
+    if (seenRef.current === key) return;
+    seenRef.current = key;
+
+    if (verdict.outcome === "correct") {
+      const tier = tierForElapsed(lastElapsedRef.current, config);
+      play(tier.id === "snap" ? "snap" : "correct");
+      setFeedback(`${tier.label} · +${Math.round(verdict.points)}`);
+      audio.stop();
+      return;
+    }
+
+    if (verdict.outcome === "wrong") {
+      play("wrong");
+      setFeedback("Not it");
+      return;
+    }
+
+    setFeedback(rejectionMessage(verdict.rejectionReason ?? "unknown"));
+  }, [verdict, currentRound, config, audio]);
 
   if (match === undefined) return <Centered>Loading…</Centered>;
   if (match === null) return <Centered>Run not found.</Centered>;
@@ -179,9 +203,13 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
             audio={audio}
             solved={myStatus?.solved ?? false}
             passed={me?.passedRound === match.currentRound}
-            tierThisRound={myStatus?.tierThisRound ?? null}
+            tierThisRound={null}
             pointsThisRound={myStatus?.pointsThisRound ?? 0}
-            lockedUntil={myStatus?.lockedUntil ?? 0}
+            lockedUntil={
+              myStatus?.lockedUntil === undefined
+                ? 0
+                : Number(myStatus.lockedUntil.microsSinceUnixEpoch / 1_000n)
+            }
             feedback={feedback}
             onGuess={onGuess}
             onPass={() => {
@@ -189,7 +217,6 @@ export function DailyRunner({ matchId }: { matchId: Id<"matches"> }) {
               void passRound({
                 matchId,
                 roundIndex: match.currentRound,
-                guestToken,
               }).catch(() => setFeedback("Couldn't pass — try again"));
             }}
           />

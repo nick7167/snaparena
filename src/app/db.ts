@@ -1030,3 +1030,77 @@ export function useDraftState(matchId: bigint | undefined) {
     };
   }, [matchId, match, categories, me, users, usersReady]);
 }
+
+/**
+ * The round-by-round timeline of a finished match.
+ *
+ * REPLACES `api.matches.summary`. The module already writes a `round_log` row per round
+ * carrying the outcome, the winner, the time gap, the multiplier and the per-player
+ * damage and points — the query assembled the same thing from guesses on every read, so
+ * this is the cheaper half of the same shape.
+ */
+export function useMatchSummary(matchId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.roundLog.where((row) => row.matchId.eq(matchId ?? 0n)),
+    { enabled: matchId !== undefined },
+  );
+  const [reveals, revealsReady] = useTable(
+    tables.roundReveal.where((row) => row.matchId.eq(matchId ?? 0n)),
+    { enabled: matchId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (matchId === undefined) return null;
+    if (!ready || !revealsReady) return undefined;
+
+    const rounds = [...rows]
+      .sort((a, b) => a.roundIndex - b.roundIndex)
+      .map((row) => {
+        // The track is safe to name here: every round in the log has closed, so its
+        // reveal row already carries the answer.
+        const reveal = reveals.find((entry) => entry.roundIndex === row.roundIndex);
+
+        return {
+          roundIndex: row.entry.roundIndex,
+          outcome: row.entry.outcome,
+          winnerId: row.entry.winnerId ?? null,
+          timeGapMs: row.entry.timeGapMs ?? null,
+          multiplier: row.entry.multiplier,
+          damage: row.entry.damage,
+          results: row.entry.results,
+          track:
+            reveal?.title === undefined
+              ? null
+              : {
+                  title: reveal.title,
+                  artist: reveal.artist ?? "",
+                  artworkUrl: reveal.artworkUrl ?? "",
+                },
+        };
+      });
+
+    /** The quickest solve of the match, across everyone who solved anything. */
+    let fastest: { roundIndex: number; elapsedMs: number } | null = null;
+    for (const round of rounds) {
+      for (const result of round.results) {
+        if (!result.solved || result.elapsedMs === undefined) continue;
+        if (fastest === null || result.elapsedMs < fastest.elapsedMs) {
+          fastest = { roundIndex: round.roundIndex, elapsedMs: result.elapsedMs };
+        }
+      }
+    }
+
+    /** The single heaviest hit anyone took. */
+    let costliest: { roundIndex: number; damage: number } | null = null;
+    for (const round of rounds) {
+      for (const hit of round.damage) {
+        if (hit.damage <= 0) continue;
+        if (costliest === null || hit.damage > costliest.damage) {
+          costliest = { roundIndex: round.roundIndex, damage: Math.round(hit.damage) };
+        }
+      }
+    }
+
+    return { rounds, fastest, costliest };
+  }, [matchId, ready, rows, reveals, revealsReady]);
+}
