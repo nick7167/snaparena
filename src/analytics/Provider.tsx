@@ -1,9 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { api } from "../../convex/_generated/api";
+import { useMe } from "@/app/db";
 import { identify, initAnalytics, resetIdentity, trackPageview } from "./index";
 
 /**
@@ -19,7 +18,7 @@ export function AnalyticsProvider() {
    * `requireUser`. That matters because the most valuable thing this measures is the guest
    * funnel, which happens entirely before an account exists.
    */
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
   const pathname = usePathname();
   const identified = useRef<string | null>(null);
 
@@ -43,15 +42,20 @@ export function AnalyticsProvider() {
 
     // Guarded so this fires once per player rather than on every `me` invalidation —
     // which, on a query this widely subscribed, is a great many times per session.
-    if (identified.current === me._id) return;
-    identified.current = me._id;
+    // The id is a u64 rather than a document string now, so it is stringified once
+    // here — PostHog wants a string distinct id, and comparing bigints in a ref works
+    // either way.
+    const distinctId = String(me.id);
+
+    if (identified.current === distinctId) return;
+    identified.current = distinctId;
 
     /**
      * Handle and level only. No email, no display name, no avatar URL: the handle is
      * already public on every leaderboard in the app, and anything beyond it would be
      * putting personal data into a third party for no analytical gain.
      */
-    identify(me._id, { handle: me.handle, level: me.level ?? 1 });
+    identify(distinctId, { handle: me.handle, level: me.level });
   }, [me]);
 
   /**

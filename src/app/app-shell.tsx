@@ -2,12 +2,13 @@
 
 import { useClerk, useUser } from "@clerk/nextjs";
 import { SignedIn, SignedOut } from "./auth-gate";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { api } from "../../convex/_generated/api";
+import { reducers } from "@/module_bindings";
+import { useLadderEntry, useMatchHistory, useMe } from "./db";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
 import { RankEmblem } from "@/ui/RankEmblem";
@@ -464,8 +465,16 @@ function PlayButton({ href, caption }: { href: string; caption: string }) {
  * the same way for the same reason.
  */
 function RankedPlayButton({ href }: { href: string }) {
-  const me = useQuery(api.users.me, {});
-  const delta = useQuery(api.users.lastRatingChange, {});
+  const me = useMe();
+  /**
+   * The rating swing from the last finished ranked match.
+   *
+   * `api.users.lastRatingChange` was a query that opened the most recent match; the
+   * delta is denormalised onto `match_player`, so the history subscription already
+   * holds it and no extra read is needed.
+   */
+  const history = useMatchHistory(me?.id, 1);
+  const delta = history?.[0]?.ratingDelta;
   const queue = useQueue();
 
   const rank = me ? rankForElo(me.elo) : null;
@@ -623,11 +632,11 @@ function Labelled({
  * their first five matches.
  */
 function LevelBlock() {
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
   const config = useConfig();
   if (!me) return null;
 
-  const level = levelForXp(me.xp ?? 0, config);
+  const level = levelForXp(me.xp, config);
   const remaining = Math.max(0, level.xpForNextLevel - level.xpIntoLevel);
 
   return (
@@ -679,8 +688,8 @@ function UserMenu({
   /** The collapsed rail: emblem only, since 64px has no room for a handle or a rank. */
   compact?: boolean;
 }) {
-  const me = useQuery(api.users.me, {});
-  const isAdmin = useQuery(api.roles.amIAdmin, {});
+  const me = useMe();
+  const isAdmin = me?.role === "admin";
   const { openUserProfile, signOut } = useClerk();
   const muted = useSyncExternalStore(subscribeMute, getMuteSnapshot, getMuteServerSnapshot);
 
@@ -767,10 +776,10 @@ function UserMenu({
       {/*
         The only route into /admin. The page has existed since the role landed and nothing
         linked to it, so it could only be reached by typing the URL — which made a working
-        screen look missing. Gated on the role rather than merely hidden: `amIAdmin` returns
-        a bare boolean and every query behind the page checks it again server-side.
+        screen look missing. Gated on the role rather than merely hidden: the role is read
+        straight off `me` now, and every reducer behind the page checks it again itself.
       */}
-      {isAdmin?.admin && (
+      {isAdmin && (
         <MenuItem glyph="settings" href="/admin">
           Admin
         </MenuItem>
@@ -1161,9 +1170,9 @@ function Wordmark({ size = "bar" }: { size?: "bar" | "brand" | "mark" }) {
  */
 function Provisioner() {
   const { user, isLoaded } = useUser();
-  const me = useQuery(api.users.me, {});
-  const ensureUser = useMutation(api.users.ensureUser);
-  const claimGuestRun = useMutation(api.daily.claimGuestRun);
+  const me = useMe();
+  const ensureUser = useStdbReducer(reducers.ensureUser);
+  const claimGuestRuns = useStdbReducer(reducers.claimGuestRuns);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -1187,23 +1196,25 @@ function Provisioner() {
     const token = getGuestToken();
     if (!token) return;
 
-    void claimGuestRun({ guestToken: token })
-      .then((result) => {
+    /**
+     * The last step of the guest funnel, and the only one that proves the mechanism
+     * worked end to end — a signup that fails to carry the run across is a conversion
+     * the player experiences as having lost their score.
+     *
+     * The run COUNT is gone from this event, because a reducer returns nothing: the
+     * outcome now arrives as the claimed run appearing under this account, not as a
+     * return value. What is still worth recording is that the attempt was made and
+     * whether it threw.
+     */
+    void claimGuestRuns({ token })
+      .then(() => {
         clearGuestToken();
-        /**
-         * The last step of the guest funnel, and the only one that proves the mechanism
-         * worked end to end — a signup that fails to carry the run across is a conversion
-         * the player experiences as having lost their score.
-         *
-         * `claimed` is a COUNT of runs moved, and zero is a real outcome rather than a
-         * failure: it is what a token with nothing behind it returns.
-         */
-        track("guest_run_claimed", { runs: result?.claimed ?? 0 });
+        track("guest_run_claimed", {});
       })
-      // Previously an unhandled rejection. It stays non-fatal — a failed claim must not
-      // break the first screen of a new account — but it is no longer invisible.
-      .catch(() => track("guest_run_claimed", { runs: 0, failed: true }));
-  }, [me, claimGuestRun]);
+      // Non-fatal — a failed claim must not break the first screen of a new account —
+      // but not invisible either.
+      .catch(() => track("guest_run_claimed", { failed: true }));
+  }, [me, claimGuestRuns]);
 
   return null;
 }

@@ -1,9 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { api } from "../../convex/_generated/api";
+import { useMe } from "./db";
 
 /**
  * Sends a brand-new account into the welcome flow.
@@ -24,7 +23,7 @@ import { api } from "../../convex/_generated/api";
  * Renders nothing.
  */
 export function WelcomeGate() {
-  const me = useQuery(api.users.me, {});
+  const me = useMe();
   const pathname = usePathname();
   const router = useRouter();
 
