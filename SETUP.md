@@ -51,6 +51,26 @@ Publishing captures the publisher's identity in the `module_owner` table. That
 identity is what the import and seed scripts authenticate as, and it is who grants
 the first admin — so publish as the account you intend to operate the game from.
 
+**The capture only happens on a FIRST publish.** `init` — the reducer that writes
+`module_owner` — runs once when a database is created, and again only when its data
+is cleared. Publishing over a database that already exists is an *update*: the
+migration creates the tables, `init` does not run, and `module_owner` stays empty.
+Every owner-gated call then fails with `Module owner only`, including the
+`set_auth_issuer` call in the next section, and there is no way to grant yourself
+past it — the empty table refuses everyone.
+
+If you hit that, republish with the data cleared so `init` runs:
+
+```bash
+spacetime publish snaparena-740t8 --server maincloud -c --yes
+spacetime sql snaparena-740t8 "SELECT * FROM module_owner" --server maincloud
+```
+
+The `sql` call should print the same identity `spacetime login` reported. `-c`
+DESTROYS all data in the database, so it is free before the first import and
+expensive afterwards — check `module_owner` right after publishing, while clearing
+still costs nothing.
+
 ## 3. Clerk
 
 The app already uses Clerk for Google and Discord one-click sign-in; that part is

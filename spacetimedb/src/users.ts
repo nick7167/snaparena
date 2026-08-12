@@ -2,6 +2,7 @@ import { t } from "spacetimedb/server";
 import { ScheduleAt } from "spacetimedb";
 import { spacetimedb, user } from "./schema";
 import type { ReducerCtx, ViewCtx } from "./ctx";
+import { armGuestCleanup } from "./guests";
 import {
   AVATAR_COLOUR_PATTERN,
   HANDLE_PATTERN,
@@ -106,6 +107,13 @@ export const init = spacetimedb.init((ctx) => {
       capturedAt: ctx.timestamp,
     });
   }
+
+  // Recurring work has to be armed from somewhere, and `init` is the only hook
+  // that runs without a caller. The Convex equivalent was `crons.ts`, which the
+  // platform read declaratively; here an interval is a row, and a row needs
+  // someone to insert it. Each arming function is idempotent, because `init` runs
+  // again on every `publish -c`.
+  armGuestCleanup(ctx);
 });
 
 /**

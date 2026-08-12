@@ -25,6 +25,7 @@ import {
   devbot_refill_schedule,
 } from "./schema";
 import { runAdvancePhase, runDraftWatchdog, runWaitForReady } from "./phases";
+import { runCleanupGuests } from "./guests";
 
 export const advancePhase = spacetimedb.reducer(
   { row: phase_advance_schedule.rowType },
@@ -72,8 +73,9 @@ export const finalizeMatch = spacetimedb.reducer(
 
 export const cleanupGuests = spacetimedb.reducer(
   { row: guest_cleanup_schedule.rowType },
-  (_ctx, { row }) => {
+  (ctx, { row }) => {
     void row;
+    runCleanupGuests(ctx);
   },
 );
 

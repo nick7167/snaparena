@@ -33,5 +33,15 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  /*
+   * `spacetimedb/` is typechecked by its own tsconfig, not this one.
+   *
+   * The module targets ESNext because SpacetimeDB requires it, and its code uses
+   * BigInt literals throughout — every `u64` column is a bigint. The app targets
+   * ES2017, so pulling the module in here reported 25 "BigInt literals are not
+   * available" errors against code that is perfectly valid under the config it
+   * actually builds with. That noise made `npm run typecheck` useless as a gate,
+   * which is worse than not running it. `npm run typecheck` now runs both.
+   */
+  "exclude": ["node_modules", "spacetimedb"]
 }
