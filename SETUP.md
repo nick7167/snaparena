@@ -36,13 +36,16 @@ npm run dev                           # publishes the module and starts Next.js
 
 ```bash
 spacetime login
-spacetime publish <your-database-name> --server maincloud
+spacetime publish snaparena-740t8 --server maincloud
 ```
 
-**Database names are global on Maincloud.** If the name is taken you will get a 401
-or 403 that reads like an auth failure but is not — pick another name. Whatever name
-you land on goes in two places: `NEXT_PUBLIC_SPACETIMEDB_DB`, and the `snaparena`
-literal in the `stdb:*` scripts in `package.json`.
+This project's database is **`snaparena-740t8`** (identity
+`c2008240fdcacf07b61461af986544193d77657844148219b4485d0cf077278b`). It is already
+wired into `NEXT_PUBLIC_SPACETIMEDB_DB` and the `stdb:*` scripts.
+
+Database names are global on Maincloud, which is why this one carries a suffix — a
+name someone else holds fails with a 401 or 403 that reads like an auth problem but
+is not.
 
 Publishing captures the publisher's identity in the `module_owner` table. That
 identity is what the import and seed scripts authenticate as, and it is who grants
@@ -86,7 +89,7 @@ unchanged. What changed is the bridge to the backend.
 4. **Grant yourself admin**, as the identity that published the database:
 
    ```bash
-   spacetime call <your-database-name> set_role '"your-handle"' 'true'
+   spacetime call snaparena-740t8 set_role '"your-handle"' 'true'
    ```
 
 ## 4. Environment variables
@@ -199,7 +202,7 @@ The first admin is granted by whoever published the database — the identity ca
 in `module_owner`. There is no shared secret any more:
 
 ```bash
-spacetime call <your-database-name> set_role '"your-handle"' 'true'
+spacetime call snaparena-740t8 set_role '"your-handle"' 'true'
 ```
 
 After that, `/admin` grants the role to anyone else.

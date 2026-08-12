@@ -7,10 +7,10 @@
     "dev:stdb": "spacetime dev --client-lang typescript --module-bindings-path ./src/module_bindings",
     "dev:next": "next dev",
     "stdb:build": "spacetime build",
-    "stdb:publish": "spacetime publish snaparena --yes",
+    "stdb:publish": "spacetime publish snaparena-740t8 --yes",
     "stdb:generate": "spacetime generate --lang typescript --out-dir ./src/module_bindings --module-path ./spacetimedb --yes",
-    "stdb:logs": "spacetime logs snaparena -f",
-    "stdb:sql": "spacetime sql snaparena",
+    "stdb:logs": "spacetime logs snaparena-740t8 -f",
+    "stdb:sql": "spacetime sql snaparena-740t8",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -30,7 +30,7 @@
     "e2e:ui": "npm run build && playwright test --ui",
     "emblem-preview": "node scripts/emblem-preview.ts",
     "build-icon": "node scripts/build-icon.ts",
-    "stdb:auth": "spacetime call snaparena set_auth_issuer"
+    "stdb:auth": "spacetime call snaparena-740t8 set_auth_issuer"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",

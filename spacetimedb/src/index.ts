@@ -55,6 +55,13 @@ export {
 export { nudge } from "./phases";
 
 export {
+  submitGuess,
+  passRound,
+  reportReady,
+  myRoundStatus,
+} from "./guesses";
+
+export {
   saveConfig,
   revertConfig,
   resetConfig,
