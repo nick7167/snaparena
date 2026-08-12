@@ -162,9 +162,40 @@ function useFreshTokenBuilder() {
 function SpacetimeBridge({ children }: { children: ReactNode }) {
   const { builder, tokenEpoch } = useFreshTokenBuilder();
 
+  /**
+   * The token epoch the mounted provider was built for.
+   *
+   * When it falls behind, the provider is unmounted for one tick and remounted —
+   * see `IdentitySwitchGuard` for why that, and not `disconnect()`, is what
+   * actually replaces a connection.
+   */
+  const [live, setLive] = useState(0);
+
+  useEffect(() => {
+    if (live === tokenEpoch) return;
+
+    /**
+     * One tick is enough, and the ordering is guaranteed rather than lucky.
+     *
+     * Unmounting runs the provider's cleanup, which calls `release()`, which defers
+     * its own teardown with `setTimeout(0)`. React runs cleanups before it runs the
+     * effects of the same commit, so `release`'s timer is always scheduled before
+     * this one — and timers fire in scheduling order. By the time this fires, the
+     * old connection is closed and its pool entry deleted, so the remount's
+     * `retain()` has nothing to hand back and builds afresh from the builder, which
+     * by now holds the token.
+     */
+    const handle = setTimeout(() => setLive(tokenEpoch), 0);
+    return () => clearTimeout(handle);
+  }, [live, tokenEpoch]);
+
+  // The one-tick gap. Rendering nothing here is deliberate: every hook below needs
+  // the provider, and this only ever happens after hydration, on a sign-in or
+  // sign-out, for a single frame.
+  if (live !== tokenEpoch) return null;
+
   return (
     <SpacetimeDBProvider connectionBuilder={builder}>
-      <IdentitySwitchGuard epoch={tokenEpoch} />
       <ConnectionMonitor />
       {/* Inside the SpacetimeDB provider because it identifies against the module's
           user row, not the Clerk one — every other system in the app keys on that
@@ -178,56 +209,42 @@ function SpacetimeBridge({ children }: { children: ReactNode }) {
 }
 
 /**
- * Rebuilds the socket whenever the builder gains or loses a token.
+ * WHY THE PROVIDER IS REMOUNTED RATHER THAN THE SOCKET DISCONNECTED.
  *
  * Identity is settled at CONNECT. A socket opened without a token is anonymous for
- * its whole life, no matter what the builder holds afterwards — so any crossing
- * between token and no-token leaves the open connection speaking as the wrong
- * identity, and only a reconnect fixes it.
+ * its whole life, no matter what the builder holds afterwards, so any crossing
+ * between token and no-token leaves the connection speaking as the wrong identity.
+ * The first connection of every page load is one of these: `SpacetimeDBProvider`
+ * calls `ConnectionManager.retain()` in its own effect, React runs child effects
+ * before parent ones, and `getToken` is asynchronous on top of that — so the first
+ * connect cannot carry a token even in principle.
  *
- * THIS USED TO WATCH `isSignedIn` AND IT MISSED THE CASE THAT MATTERS MOST — a
- * signed-in player loading the page. `SpacetimeDBProvider` calls
- * `ConnectionManager.retain()` in its own effect, and React runs child effects
- * before parent ones, so the socket is opened before the parent's token effect has
- * run at all; and `getToken` is asynchronous on top of that, so the first connect
- * cannot carry a token even in principle. Watching `isSignedIn` for a *transition*
- * then found none — the player was already signed in when the page loaded — and the
- * connection stayed anonymous for the entire session.
+ * Two attempts got this wrong, and the second is the interesting one.
  *
- * The visible result was the whole app rendering blank: `ensureUser` rejects an
- * anonymous caller with "Not signed in", so no player row was ever created, `me`
- * stayed empty, and every screen that reads it drew nothing. The signed-out landing
- * page did not appear either, because Clerk's cookie says signed in.
+ * The first watched `isSignedIn` for a TRANSITION, which never happens for a player
+ * who was already signed in when the page loaded. The connection stayed anonymous
+ * for the whole session, `ensureUser` rejected it with "Not signed in", and every
+ * screen that reads `me` rendered blank.
  *
- * Watching the token itself covers sign-in, sign-out and first load with one rule.
+ * The second watched the token instead — correct — and called `disconnect()` to
+ * force a rebuild, on the strength of a comment claiming the manager reconnects from
+ * `onDisconnect`. It does not, and says so:
  *
- * Dropping the socket is enough — the manager's `onDisconnect` schedules a rebuild
- * from the same builder, which by then holds the new token. A page reload would also
- * work and is what a first attempt did, but it fires in the middle of the one flow
- * that matters most: a guest signing in to claim the daily run they just finished,
- * with their score on screen.
+ *     // The application asked this connection to close; don't fight it. A
+ *     // subsequent retain() will still build a fresh connection.
+ *     if (connection?.isDisconnectRequested) return;
+ *
+ * An explicit disconnect is honoured as final. So the app connected, dropped itself,
+ * and sat there — which the console showed exactly: active true, then active false,
+ * with no error and no third attempt.
+ *
+ * `ConnectionManager.rebuild()` exists for precisely this and its own docstring
+ * names the case ("swapping an anonymous session for a signed-in one after an auth
+ * change"), but it is not exported from `spacetimedb/sdk` and the React layer never
+ * wires it up. What IS supported is the sentence in the comment above: a subsequent
+ * `retain()` builds fresh. So the provider is unmounted and remounted, which is
+ * release-then-retain, which is that path.
  */
-function IdentitySwitchGuard({ epoch }: { epoch: number }) {
-  // No type argument: the docs show `useSpacetimeDB<DbConnection>()`, but the
-  // shipped 2.8 typings declare it without one.
-  const { getConnection } = useSpacetimeDB();
-  const handled = useRef(0);
-
-  useEffect(() => {
-    // Zero means no token has been applied yet, which for a signed-out visitor is
-    // the steady state and not something to reconnect over.
-    if (epoch === 0) return;
-    if (handled.current === epoch) return;
-    handled.current = epoch;
-
-    // Deferred a tick so the token effect has finished writing to the builder
-    // before the manager rebuilds from it.
-    const handle = setTimeout(() => getConnection()?.disconnect(), 0);
-    return () => clearTimeout(handle);
-  }, [epoch, getConnection]);
-
-  return null;
-}
 
 /**
  * Reports the connection's state to the console, once per transition.
