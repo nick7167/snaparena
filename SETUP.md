@@ -305,8 +305,17 @@ row is consumed when it is matched, so an interval tops it back up. Expect about
 seconds of searching before one answers; that floor is deliberate, so a permanently
 stocked queue still reads as a search rather than teleporting you into a duel.
 
-They arrive with no career: `0W · 0L`, Level 1, no badges. That half of the Convex
-backend is not ported — see "What is not here yet" in `spacetimedb/README.md`.
+They arrive with a career — a record, a level, badges, category strengths, an avatar and
+their last eight matches, all browsable. None of it is invented: `src/engine/bot-career.ts`
+plays each persona's whole past through the same scoring, duel, Elo, XP and badge
+functions a live match runs on, so a bot's level always matches its XP and its strongest
+categories are genuinely the ones it scored in.
+
+**Seed the catalogue first.** The careers are played against real tracks, because a round
+in a bot's history opens a real results screen with a real song on it. Seeding a roster
+before `npm run import-tracks` gives you the accounts with no history; re-run the seed
+afterwards and the histories appear. `npm run seed-bots` is the same story for the twelve
+practice bots.
 
 `e2e/dev-rank-bots.spec.ts` needs the switch on and the roster seeded, and the e2e suite
 runs against the deployed backend, so both have to be true there rather than locally.

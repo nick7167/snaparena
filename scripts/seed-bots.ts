@@ -26,6 +26,16 @@ async function main() {
      * answers the same question against what was actually written.
      */
     console.log("Bot roster seeded from the personas in src/engine/bots.ts");
+
+    /**
+     * Careers are seeded in the same call, but only if there is a catalogue to play them
+     * against — a bot's match history opens a real results screen with a real song on it,
+     * so the writer is a no-op on an empty `track` table rather than a failure. The
+     * natural order on a fresh deployment is seed-then-import, which is exactly the case
+     * that would otherwise leave a roster with no past and no explanation.
+     */
+    console.log("Careers seeded too, if the catalogue is loaded. If you ran this before");
+    console.log("`npm run import-tracks`, run it again now to fill in their histories.");
   });
 }
 

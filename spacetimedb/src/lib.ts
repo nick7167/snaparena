@@ -53,6 +53,18 @@ export function timestampFrom(now: Timestamp, deltaMs: number): Timestamp {
   return new Timestamp(microsFrom(now, deltaMs));
 }
 
+/**
+ * An ABSOLUTE millisecond epoch value as a `Timestamp`.
+ *
+ * Distinct from `timestampFrom`, which takes an offset and clamps it at zero so a
+ * schedule can never be armed in the past. That clamp is right there and wrong here:
+ * the only caller is the bot-career writer, whose whole job is to write timestamps
+ * months in the past.
+ */
+export function timestampAtMs(ms: number): Timestamp {
+  return new Timestamp(msToMicros(ms));
+}
+
 const GAME_MODES: readonly GameMode[] = ["ranked", "room", "daily", "practice"];
 
 /**

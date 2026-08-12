@@ -78,6 +78,9 @@ async function main() {
      */
     console.log("Sixteen rank bots seeded from their personas in src/engine/dev-rank-bots.ts");
     console.log("They join the ranked queue within fifteen seconds.");
+    // Same caveat as `npm run seed-bots`: the careers need a catalogue to be played
+    // against, so a seed that ran before the import writes accounts with no past.
+    console.log("Run this again after `npm run import-tracks` if their records read 0W-0L.");
   });
 }
 

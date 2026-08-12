@@ -12,6 +12,7 @@ import { reject, toMs } from "./lib";
 import { requireFullAccount, requireOwnerOrAdmin } from "./users";
 import { requireCatalogue } from "./catalogue";
 import { createDuel } from "./matchmaking";
+import { seedBotProfiles } from "./botprofiles";
 import {
   BOT_PERSONAS,
   botBanDelayMs,
@@ -394,6 +395,16 @@ export const seedBots = spacetimedb.reducer({}, (ctx) => {
      * "log in as a bot" question does not arise.
      */
   }
+
+  /**
+   * Careers, avatars, badges and history — written after the rows exist, because the
+   * writer looks each persona up by handle.
+   *
+   * A no-op while the catalogue is empty, deliberately: seeding the roster is worth
+   * doing on its own, and the natural order on a fresh deployment is seed-then-import.
+   * Re-run this once tracks are in and the histories appear.
+   */
+  seedBotProfiles(ctx, BOT_PERSONAS);
 });
 
 /**

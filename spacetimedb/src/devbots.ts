@@ -6,6 +6,7 @@ import { microsFrom, reject, toMs } from "./lib";
 import { requireAdmin, requireOwnerOrAdmin } from "./users";
 import { DEV_BOT_REFILL_INTERVAL_MS, devFeaturesEnabled } from "./config";
 import { finishMatch } from "./phases";
+import { seedBotProfiles } from "./botprofiles";
 import {
   DEV_BOT_MIN_WAIT_MS,
   DEV_RANK_BOT_PERSONAS,
@@ -149,19 +150,20 @@ export const seedDevRankBots = spacetimedb.reducer({}, (ctx) => {
       guestClaimToken: undefined,
     });
 
-    /**
-     * No `account` row, and no career either.
-     *
-     * The account is deliberate — see `seedBots`. The career is a GAP: Convex called
-     * `seedBotProfiles` here, which played out a simulated past so a bot read as an
-     * account rather than a placeholder, and `convex/botprofiles.ts` has not been
-     * ported. `src/engine/bot-career.ts` — the pure half, and the part with the tests —
-     * is untouched and still generates the same careers, so the port is a writer over
-     * these tables rather than a rewrite. Until then every bot shows `0W · 0L`, Level 1
-     * and no badges, which affects how the profile and VS screens LOOK and nothing at
-     * all about how ranked BEHAVES.
-     */
+    // No `account` row, and that is the point — see `seedBots`.
   }
+
+  /**
+   * Careers, avatars, badges and history — the same writer the shipping roster uses, so a
+   * rank bot on the leaderboard reads as an account rather than a placeholder. It runs
+   * after the rows exist, because it looks each persona up by handle, and it is a no-op
+   * while the catalogue is empty.
+   *
+   * It also RE-ANCHORS, which is why it belongs on the reset path and not only on the
+   * first seed: `writeCareerStats` sets `elo` to `career.elo`, which the simulator settles
+   * exactly on the persona's anchor. A drifted bot is put back by this line.
+   */
+  seedBotProfiles(ctx, DEV_RANK_BOT_PERSONAS);
 
   // Seeding a roster while the refill is disarmed would leave them out of the queue
   // until the next toggle. Cheap to arm here; the guard makes a second call a no-op.
