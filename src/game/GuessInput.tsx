@@ -1,8 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../convex/_generated/api";
 import { AUTOCOMPLETE_MIN_CHARS } from "@/engine/config";
 import { isSearchableTerm, searchTitles } from "@/engine/autocomplete";
 import { useTrackIndex } from "./track-index";
@@ -91,28 +89,21 @@ export function GuessInput({
   const local = index ? searchTitles(index, text, MAX_SUGGESTIONS) : null;
 
   /**
-   * Server fallback, live only in the moment before the index lands — and permanently if it
-   * never does. `local === null` is the only condition that arms it, so once the index is
-   * loaded this query is skipped for the rest of the session.
-   */
-  const remote = useQuery(
-    api.tracks.autocomplete,
-    local === null && isSearchableTerm(text) ? { term: text, limit: MAX_SUGGESTIONS } : "skip",
-  );
-
-  /**
-   * The bug this component existed to cause.
+   * THE SERVER FALLBACK IS GONE, and it is not coming back.
    *
-   * `useQuery` returns undefined while a query is in flight, and every keystroke changes the
-   * args — so collapsing undefined into [] closed the list on every single character, and a
-   * player typing faster than the round-trip never saw it at all. Holding the last resolved
-   * result means loading can no longer empty the list.
+   * `tracks.autocomplete` searched the catalogue per keystroke while the local index was
+   * still loading. `track` is a private table here — that is the anti-cheat boundary, and
+   * the reason the guess box cannot simply subscribe to titles — so the only way to offer
+   * the same thing would be a per-viewer view re-materialising a substring search over
+   * private rows on every character typed. That is a great deal of machinery to cover the
+   * second before a single-row subscription lands.
    *
-   * State adjusted during render rather than in an effect: the codebase's own pattern (see
-   * useRoundAudio), and unlike a ref it is safe under concurrent rendering.
+   * So suggestions are local or absent. The degradation is honest: for the moment before
+   * `track_index` arrives the player types without help, exactly as they do today when the
+   * index is truncated, and the SERVER still decides whether what they typed was right.
+   * Autocomplete was never the thing that scored the round.
    */
-  const [heldRemote, setHeldRemote] = useState<readonly string[]>(NO_OPTIONS);
-  if (remote !== undefined && remote !== heldRemote) setHeldRemote(remote);
+  const heldRemote: readonly string[] = NO_OPTIONS;
 
   useEffect(() => {
     const update = () => setLockRemaining(Math.max(0, lockedUntil - Date.now()));
@@ -130,7 +121,7 @@ export function GuessInput({
   }, [inputDisabled]);
 
   const gateOpen = text.trim().length >= AUTOCOMPLETE_MIN_CHARS;
-  const matched = gateOpen ? (local ?? remote ?? heldRemote) : NO_OPTIONS;
+  const matched = gateOpen ? (local ?? heldRemote) : NO_OPTIONS;
 
   /**
    * The real path is untouched.
@@ -146,7 +137,7 @@ export function GuessInput({
   const options = pinnedSuggestion
     ? text.trim().length === 0
       ? NO_OPTIONS
-      : [pinnedSuggestion, ...matched.filter((title) => title !== pinnedSuggestion)]
+      : [pinnedSuggestion, ...matched.filter((title: string) => title !== pinnedSuggestion)]
     : matched;
 
   const open = options.length > 0;

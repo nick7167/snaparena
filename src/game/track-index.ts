@@ -8,9 +8,11 @@
  *  - A context in `AppShell` would be simpler, but `AppShell` wraps the landing page, so
  *    every anonymous visitor would pay for an index they never reach. Triggering the fetch
  *    from the runners keeps the cost on players who are about to type.
- *  - `useQuery` would hold a live subscription retaining the whole payload for the session,
- *    to watch a table nothing mutates at runtime. One shot over the already-open socket
- *    costs the same request and none of the retention.
+ *  - The index is built ONCE from the row and kept as a prepared structure. The
+ *    subscription that delivers it is narrow — `track_index` is a single row — and the
+ *    catalogue does not change at runtime, so it is a one-time cost either way. What the
+ *    singleton buys is that `buildTitleIndex` runs once per session rather than once per
+ *    component that wants to search.
  *  - `localStorage` would save roughly one round-trip in exchange for a synchronous read on
  *    a hot path and a staleness problem, since the catalogue can be re-imported without a
  *    client rebuild.
@@ -18,20 +20,17 @@
  * A singleton also survives client-side navigation, which a route-scoped provider would not.
  */
 
-import { useConvex } from "convex/react";
+import { useTable } from "spacetimedb/react";
 import { useEffect, useSyncExternalStore } from "react";
-import { api } from "../../convex/_generated/api";
+import { tables } from "@/module_bindings";
 import { buildTitleIndex, type TitleIndex } from "@/engine/autocomplete";
-
-type Client = ReturnType<typeof useConvex>;
 
 let index: TitleIndex | null = null;
 /**
- * Set when the catalogue outgrew the query's read ceiling, or when the fetch failed.
- * Either way the local index is incomplete, so callers must keep the server search armed.
+ * Set when the catalogue outgrew the index's ceiling. The local index is then incomplete,
+ * so callers must keep the server-side match armed to cover the tail.
  */
 let partial = false;
-let inFlight: Promise<void> | null = null;
 
 const listeners = new Set<() => void>();
 
@@ -54,41 +53,41 @@ function getServerSnapshot(): TitleIndex | null {
 }
 
 /**
- * Starts the fetch if it has not started already. Safe to call from anywhere, any number
- * of times — every call after the first joins the in-flight request or no-ops.
+ * Builds the index from the delivered row, once.
+ *
+ * Idempotent on the row's build time: a re-import republishes the row with a new
+ * `builtAt`, and that is the only thing that should cost a rebuild.
  */
-export function ensureTrackIndex(client: Client): void {
-  if (index !== null || inFlight !== null) return;
+let builtFrom: bigint | null = null;
 
-  inFlight = client
-    .query(api.tracks.titleIndex, {})
-    .then((result) => {
-      index = buildTitleIndex(result.titles);
-      partial = result.truncated;
-      notify();
-    })
-    .catch(() => {
-      // Leave the index null so every caller falls back to the server for the rest of the
-      // session. A failed prefetch must degrade to slower suggestions, never to none.
-      partial = true;
-      notify();
-    })
-    .finally(() => {
-      inFlight = null;
-    });
+export function ensureTrackIndex(row: {
+  titles: string[];
+  truncated: boolean;
+  builtAt: { microsSinceUnixEpoch: bigint };
+}): void {
+  if (builtFrom === row.builtAt.microsSinceUnixEpoch) return;
+
+  builtFrom = row.builtAt.microsSinceUnixEpoch;
+  index = buildTitleIndex(row.titles);
+  partial = row.truncated;
+  notify();
 }
 
 /**
- * Warms the index without subscribing to it.
+ * Warms the index without handing it back.
  *
  * Deliberately returns nothing: the runners that call this re-render on every animation
  * frame, and handing them a value they do not use would be one more thing to invalidate.
+ * They read it through `useTrackIndex`, which is an external store and therefore does not
+ * re-render them when the row arrives — only when the index they actually read changes.
  */
 export function usePrefetchTrackIndex(): void {
-  const client = useConvex();
+  const [rows] = useTable(tables.trackIndex);
+  const row = rows[0];
+
   useEffect(() => {
-    ensureTrackIndex(client);
-  }, [client]);
+    if (row) ensureTrackIndex(row);
+  }, [row]);
 }
 
 /** The loaded index, or null while it is still in flight or if it failed. */

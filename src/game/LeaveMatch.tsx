@@ -1,13 +1,11 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
 import { SURRENDER_FROM_ROUND } from "@/engine/config";
 import { useQueue } from "@/app/queue-driver";
-import { getGuestToken } from "@/app/guest";
 import { Button } from "@/ui/Button";
 import { Dialog } from "@/ui/Dialog";
 import { Glyph } from "@/ui/Glyph";
@@ -77,7 +75,7 @@ export function LeaveMatch({
   mode: LeaveMode;
   /** Needed by every mode that writes something on the way out — resigning, or recording
       an abandoned daily. Optional only so a caller with no match yet can still render. */
-  matchId?: Id<"matches">;
+  matchId?: bigint;
   /** Zero-indexed. Decides whether the server will accept a clean resignation. Duels only. */
   currentRound?: number;
   /** False once the match is over — nothing is at stake, so leaving needs no confirm. */
@@ -85,8 +83,8 @@ export function LeaveMatch({
 }) {
   const router = useRouter();
   const queue = useQueue();
-  const surrender = useMutation(api.ranked.surrender);
-  const forfeitDaily = useMutation(api.daily.forfeit);
+  const surrender = useStdbReducer(reducers.surrender);
+  const forfeitDaily = useStdbReducer(reducers.forfeitDaily);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
   /** Lets the unload guard stand down for a departure the player already agreed to. */
@@ -129,7 +127,8 @@ export function LeaveMatch({
      */
     if (mode === "daily" && matchId && live) {
       try {
-        await forfeitDaily({ matchId, guestToken: getGuestToken() });
+        // No token: an anonymous caller is identified by its own connection now.
+        await forfeitDaily({ matchId });
       } catch {
         // Never trap someone in a run because the write failed. The server-side round
         // expiry still denies the replay this was protecting against.

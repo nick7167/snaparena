@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
+import { reducers } from "@/module_bindings";
 import type { useRoundAudio } from "./useRoundAudio";
 import { useOnForeground } from "./usePageLifecycle";
 
@@ -26,21 +25,19 @@ export function useRoundLifecycle({
   isGuessing,
   nextAudioUrl,
   audio,
-  guestToken,
   onRoundStart,
 }: {
-  matchId: Id<"matches">;
+  matchId: bigint;
   currentRound: number | undefined;
   phaseEndsAt: number | null | undefined;
   isGuessing: boolean;
   /** The following round's clip, buffered during the between-round beats. */
   nextAudioUrl: string | null;
   audio: ReturnType<typeof useRoundAudio>;
-  guestToken: string | undefined;
   onRoundStart?: () => void;
 }): void {
-  const reportReady = useMutation(api.matches.reportReady);
-  const nudge = useMutation(api.phases.nudge);
+  const reportReady = useStdbReducer(reducers.reportReady);
+  const nudge = useStdbReducer(reducers.nudge);
 
   const startedRoundRef = useRef<string | null>(null);
   const reportedRoundRef = useRef<string | null>(null);
@@ -65,8 +62,8 @@ export function useRoundLifecycle({
     if (reportedRoundRef.current === key) return;
 
     reportedRoundRef.current = key;
-    void reportReady({ matchId, roundIndex: currentRound, guestToken });
-  }, [audioReady, currentRound, matchId, reportReady, guestToken]);
+    void reportReady({ matchId, roundIndex: currentRound });
+  }, [audioReady, currentRound, matchId, reportReady]);
 
   /**
    * Starts the round's audio once the server has opened the round and the clip is buffered.
