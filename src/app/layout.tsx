@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
+import { auth } from "@clerk/nextjs/server";
 import { Archivo, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Providers } from "./providers";
+import { CLERK_JWT_TEMPLATE, Providers } from "./providers";
 import { AppShell, MobileTopBar, UserProvisioner } from "./app-shell";
 import { ImmersiveProvider } from "./immersive";
 import { WelcomeGate } from "./welcome-gate";
@@ -81,18 +82,53 @@ export const viewport: Viewport = {
   themeColor: "#0e1017",
 };
 
-export default function RootLayout({
+/**
+ * The connection token, minted on the server so the FIRST socket is already the
+ * player's.
+ *
+ * A Clerk token can otherwise only be had asynchronously, in the browser, after
+ * Clerk's script loads — while `SpacetimeDBProvider` opens its socket the moment it
+ * mounts. So the first connection was necessarily anonymous, and since SpacetimeDB
+ * settles identity at connect and a live socket cannot be upgraded, it then had to
+ * be torn down and rebuilt. Every subscription ran twice and the tree unmounted in
+ * between, which is exactly as smooth as it sounds.
+ *
+ * THE COST, stated because it is not local: reading a cookie here opts the whole
+ * route tree out of static prerendering, so every page is server-rendered on demand.
+ * That was a deliberate trade — a small, uniform latency cost against a visible
+ * reconnect on every load.
+ *
+ * The token is short-lived (about a minute) and belongs to the person receiving it,
+ * so putting it in their own HTML is the same exposure as the session cookie Clerk
+ * already sets. It is safe only because this render is per-request and uncacheable,
+ * which the `auth()` call itself guarantees.
+ */
+async function connectionToken(): Promise<string | undefined> {
+  try {
+    const { getToken } = await auth();
+    return (await getToken({ template: CLERK_JWT_TEMPLATE })) ?? undefined;
+  } catch {
+    // A signed-out visitor, or Clerk being unreachable. Neither is a failure: the
+    // client connects anonymously, which is the correct state for a stranger and a
+    // recoverable one for everybody else.
+    return undefined;
+  }
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const initialToken = await connectionToken();
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${archivo.variable} h-full antialiased`}
     >
       <body className="bg-ink-800 text-paper min-h-full">
-        <Providers>
+        <Providers initialToken={initialToken}>
           <ImmersiveProvider>
             {/* Creates the user row on first sign-in. Mounted at the root so it does
                 not depend on which piece of chrome happens to be visible. */}

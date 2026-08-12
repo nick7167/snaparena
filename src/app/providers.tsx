@@ -22,7 +22,7 @@ import { ConfigProvider } from "./config";
  * module with `npm run stdb:auth` — the module refuses tokens from issuers it does
  * not know, which is the same deliberate loud failure `auth.config.ts` had.
  */
-const CLERK_JWT_TEMPLATE = "spacetimedb";
+export const CLERK_JWT_TEMPLATE = "spacetimedb";
 
 /**
  * How often to pull a fresh token from Clerk.
@@ -95,21 +95,30 @@ const CLERK_APPEARANCE = {
  *     network — and an unauthenticated connect does not fail closed, it succeeds as
  *     a NEW anonymous identity. A player would silently come back as a guest.
  *
- * So the builder instance is deliberately stable — created once, never replaced,
- * because the provider keys its connection on (uri, module) and swapping the object
- * would not reconnect anyway — while `withToken` is called on it as Clerk rotates.
- * `withToken` mutates the builder and `build()` reads the token at call time, so the
- * next reconnect picks up whatever is current.
+ * So the builder instance is stable for the life of the page — the provider keys its
+ * connection on (uri, module), so swapping the object would not reconnect anyway —
+ * while `withToken` is called on it as Clerk rotates. `withToken` mutates the builder
+ * and `build()` reads the token at call time, so the next reconnect picks up whatever
+ * is current. (`initialToken` is in the memo's dependencies for correctness, but it
+ * arrives from the server render and does not change without a fresh document.)
  */
-function useFreshTokenBuilder() {
+function useFreshTokenBuilder(initialToken: string | undefined) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
+  /**
+   * Seeded synchronously, which is the whole point of `initialToken`.
+   *
+   * `useMemo` runs during render, before any effect and therefore before the
+   * provider below mounts and opens its socket. So the first connection carries the
+   * player's token rather than being anonymous and needing to be replaced.
+   */
   const builder = useMemo(
     () =>
       DbConnection.builder()
         .withUri(process.env.NEXT_PUBLIC_SPACETIMEDB_URI!)
-        .withDatabaseName(process.env.NEXT_PUBLIC_SPACETIMEDB_DB!),
-    [],
+        .withDatabaseName(process.env.NEXT_PUBLIC_SPACETIMEDB_DB!)
+        .withToken(initialToken),
+    [initialToken],
   );
 
   /**
@@ -122,7 +131,12 @@ function useFreshTokenBuilder() {
    * identity.
    */
   const [tokenEpoch, setTokenEpoch] = useState(0);
-  const hasToken = useRef(false);
+  /**
+   * Starts from what the server already put on the builder, so the client's first
+   * refresh — which fetches the same token for the same session — is not read as a
+   * crossing and does not rebuild the connection it just seeded.
+   */
+  const hasToken = useRef(initialToken !== undefined);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -159,8 +173,14 @@ function useFreshTokenBuilder() {
   return { builder, tokenEpoch };
 }
 
-function SpacetimeBridge({ children }: { children: ReactNode }) {
-  const { builder, tokenEpoch } = useFreshTokenBuilder();
+function SpacetimeBridge({
+  children,
+  initialToken,
+}: {
+  children: ReactNode;
+  initialToken: string | undefined;
+}) {
+  const { builder, tokenEpoch } = useFreshTokenBuilder(initialToken);
 
   /**
    * The token epoch the mounted provider was built for.
@@ -289,10 +309,21 @@ function ConnectionMonitor() {
   return null;
 }
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({
+  children,
+  initialToken,
+}: {
+  children: ReactNode;
+  /**
+   * The player's Clerk token, minted on the server. Undefined for a signed-out
+   * visitor, which is a state rather than a failure. See `connectionToken` in
+   * layout.tsx for why this crosses the server boundary at all.
+   */
+  initialToken?: string;
+}) {
   return (
     <ClerkProvider appearance={CLERK_APPEARANCE}>
-      <SpacetimeBridge>{children}</SpacetimeBridge>
+      <SpacetimeBridge initialToken={initialToken}>{children}</SpacetimeBridge>
     </ClerkProvider>
   );
 }
