@@ -1,11 +1,12 @@
 "use client";
 
 import { SignedIn, SignedOut } from "../auth-gate";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import { useEffect, useRef, useState } from "react";
+import { reducers } from "@/module_bindings";
+import { useMe, useMyRooms } from "../db";
 import { MAX_DUEL_ROUNDS, ROOM_MAX_PLAYERS, ROOM_MIN_PLAYERS } from "@/engine/config";
 import { useNow } from "@/game/usePrefersReducedMotion";
 import { Button } from "@/ui/Button";
@@ -65,9 +66,32 @@ export default function RoomsPage() {
 }
 
 function CreateAndJoin() {
-  const create = useMutation(api.rooms.create);
-  const join = useMutation(api.rooms.join);
+  const create = useStdbReducer(reducers.createRoom);
+  const join = useStdbReducer(reducers.joinRoom);
   const router = useRouter();
+
+  const me = useMe();
+  const rooms = useMyRooms(me?.id);
+
+  /**
+   * Which rooms existed before this tab asked for a new one.
+   *
+   * `createRoom` returns nothing, so the only way to learn the code is to watch the
+   * subscription for a room that was not there a moment ago. Comparing against a
+   * captured set rather than "the newest" matters when the player is already in one.
+   */
+  const knownRooms = useRef<Set<bigint>>(new Set());
+  const awaitingCreate = useRef(false);
+
+  useEffect(() => {
+    if (!awaitingCreate.current || !rooms) return;
+
+    const fresh = rooms.find((room) => !knownRooms.current.has(room.id));
+    if (!fresh) return;
+
+    awaitingCreate.current = false;
+    router.push(`/rooms/${fresh.code}`);
+  }, [rooms, router]);
 
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -83,8 +107,15 @@ function CreateAndJoin() {
     setCreating(true);
     setError(null);
     try {
-      const room = await create({});
-      router.push(`/rooms/${room.code}`);
+      /**
+       * A reducer returns nothing, so the code does not come back from the call. The
+       * new room arrives through the rooms subscription instead, and the effect below
+       * routes into it — which is also what makes this survive a slow round trip that
+       * the old `await` would have raced.
+       */
+      knownRooms.current = new Set(rooms?.map((room) => room.id) ?? []);
+      awaitingCreate.current = true;
+      await create();
     } catch {
       setError("Could not create a room. Try again.");
       setCreating(false);
@@ -95,14 +126,16 @@ function CreateAndJoin() {
     setJoining(true);
     setError(null);
     try {
-      const result = await join({ code });
-      if (result.status === "joined") {
-        router.push(`/rooms/${code}`);
-        return;
-      }
-      setError(joinError(result.status));
-    } catch {
-      setError("Could not join.");
+      await join({ code });
+      router.push(`/rooms/${code}`);
+      return;
+    } catch (caught) {
+      /**
+       * The reason now travels as the reducer's own error rather than as a status
+       * string, so this shows what the module said — "That room is full", "That room is
+       * already in a match" — instead of mapping a code the client also had to know.
+       */
+      setError(caught instanceof Error ? caught.message : "Could not join.");
     }
     setJoining(false);
   }
@@ -156,7 +189,8 @@ function CreateAndJoin() {
  * match history rather than the rooms table, and what that costs.
  */
 function RecentRooms() {
-  const rooms = useQuery(api.rooms.recent, {});
+  const me = useMe();
+  const rooms = useMyRooms(me?.id);
   const now = useNow(60_000);
 
   if (rooms === undefined) return <Skeleton className="h-32 w-full" />;

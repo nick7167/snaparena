@@ -8,7 +8,11 @@ import { matchupLabel, rankForElo } from "@/engine/ranks";
 import { damageMultiplier, wonRound } from "@/engine/duel";
 import { revealBeatAt } from "@/engine/scoring";
 import type { ResolvedConfig } from "@/engine/config-merge";
-import { VETO_BANS_PER_PLAYER } from "@/engine/config";
+import {
+  ROOM_MAX_PLAYERS,
+  ROOM_MIN_PLAYERS,
+  VETO_BANS_PER_PLAYER,
+} from "@/engine/config";
 
 /**
  * The client's read layer.
@@ -259,14 +263,29 @@ export function useDailyCount(date = todayKey()) {
 /** The day's board, best first. Guests are excluded the way the old query was. */
 export function useDailyLeaderboard(date = todayKey(), limit = 50) {
   const [rows, ready] = useTable(tables.dailyRun.where((row) => row.date.eq(date)));
+  const [users, usersReady] = useTable(tables.user);
 
   return useMemo(() => {
-    if (!ready) return undefined;
+    if (!ready || !usersReady) return undefined;
+
+    const byId = new Map(users.map((row) => [row.id, row]));
+
     return [...rows]
       .filter((row) => !row.isGuest)
       .sort((a, b) => b.totalPoints - a.totalPoints)
-      .slice(0, limit);
-  }, [ready, rows, limit]);
+      .slice(0, limit)
+      .map((row, index) => {
+        const user = byId.get(row.userId);
+        return {
+          ...row,
+          rank: index + 1,
+          handle: user?.handle ?? "player",
+          displayName: user?.displayName ?? "Player",
+          avatarUrl: user ? publicAvatarUrl(user) : undefined,
+          level: user?.level ?? 1,
+        };
+      });
+  }, [ready, rows, users, usersReady, limit]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,7 +1193,19 @@ export function useMyRooms(userId: bigint | undefined, limit = 5) {
       .sort((a, b) =>
         a.createdAt.microsSinceUnixEpoch < b.createdAt.microsSinceUnixEpoch ? 1 : -1,
       )
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((row) => ({
+        ...row,
+        roomId: row.id,
+        memberCount: row.memberIds.length,
+        /**
+         * When the room was made, not when it last played. `rooms.recent` derived a
+         * last-played time by scanning match history; the lobby only orders and dates
+         * the list with it, and creation time orders it identically for a room that has
+         * not been reused.
+         */
+        lastPlayedAt: Number(row.createdAt.microsSinceUnixEpoch / 1_000n),
+      }));
   }, [userId, ready, rows, limit]);
 }
 
@@ -1205,4 +1236,135 @@ export function usePracticeCount(userId: bigint | undefined) {
       (row) => row.mode === "practice" && row.completedAt !== undefined,
     ).length;
   }, [userId, ready, rows]);
+}
+
+/**
+ * A room and the people in it, by code.
+ *
+ * REPLACES `api.rooms.state`, which denormalised every member's handle into its result
+ * because a query returns one payload. `room` and `user` are both public, so the lobby
+ * composes the roster from rows it already holds.
+ */
+export function useRoomState(code: string | undefined) {
+  const me = useMe();
+  const room = useRoomByCode(code);
+  const [users, usersReady] = useTable(tables.user, { enabled: code !== undefined });
+
+  return useMemo(() => {
+    if (code === undefined) return null;
+    if (room === undefined || me === undefined) return undefined;
+    if (!usersReady) return undefined;
+    if (room === null) return null;
+
+    const byId = new Map(users.map((row) => [row.id, row]));
+
+    const memberCount = room.memberIds.length;
+    const readyCount = room.readyIds.filter((id) => room.memberIds.includes(id)).length;
+
+    return {
+      roomId: room.id,
+      code: room.code,
+      /** Everyone present has said yes. A signal to the host, not a lock on the door. */
+      allReady: memberCount > 0 && readyCount === memberCount,
+      /** Enough people, and not already playing. Readiness deliberately does not gate. */
+      canStart: memberCount >= ROOM_MIN_PLAYERS && room.status === "lobby",
+      status: room.status,
+      hostId: room.hostId,
+      activeMatchId: room.activeMatchId ?? null,
+      isHost: me?.id === room.hostId,
+      isMember: me !== null && room.memberIds.includes(me.id),
+      maxPlayers: ROOM_MAX_PLAYERS,
+      minPlayers: ROOM_MIN_PLAYERS,
+      members: room.memberIds.map((id) => {
+        const user = byId.get(id);
+        // Derived from the rating, as everywhere else — a tier is a pure function of it.
+        const rank = rankForElo(user?.elo ?? 0);
+        return {
+          userId: id,
+          handle: user?.handle ?? "player",
+          displayName: user?.displayName ?? "Player",
+          avatarUrl: user ? publicAvatarUrl(user) : undefined,
+          elo: user?.elo ?? 0,
+          level: user?.level ?? 1,
+          placementsRemaining: user?.placementsRemaining ?? 0,
+          rankLabel: rank.label,
+          rankTierId: rank.tier.id,
+          rankDivision: rank.division,
+          rankAccent: rank.tier.accent,
+          isBot: user?.isBot ?? false,
+          isHost: id === room.hostId,
+          ready: room.readyIds.includes(id),
+          isReady: room.readyIds.includes(id),
+          isMe: me?.id === id,
+        };
+      }),
+    };
+  }, [code, room, me, users, usersReady]);
+}
+
+/**
+ * This player's unfinished daily match, if there is one.
+ *
+ * REPLACES `api.daily.activeRun`. `startDaily` resumes rather than restarts, so the
+ * client no longer needs this to decide what pressing Play does — but the page still
+ * wants to know which match to mount once it has one.
+ */
+export function useActiveDailyMatch(userId: bigint | undefined, date = todayKey()) {
+  const [memberships, membershipsReady] = useTable(
+    tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+  const [matches, matchesReady] = useTable(tables.match, {
+    enabled: userId !== undefined,
+  });
+
+  return useMemo(() => {
+    if (userId === undefined) return null;
+    if (!membershipsReady || !matchesReady) return undefined;
+
+    const mine = new Set(memberships.map((row) => row.matchId));
+
+    const live = matches.filter(
+      (match) =>
+        mine.has(match.id) &&
+        match.mode === "daily" &&
+        match.status === "active" &&
+        todayKey(Number(match.createdAt.microsSinceUnixEpoch / 1_000n)) === date,
+    );
+
+    return live[0] ?? null;
+  }, [userId, memberships, membershipsReady, matches, matchesReady, date]);
+}
+
+/**
+ * This player's run for a date, with the placing it earned.
+ *
+ * `daily.myRun` returned a rank and a denominator because it could count the day's rows
+ * server-side. The board on this page subscribes to those rows anyway, so the placing is
+ * a position in a list the screen already holds — which is why the dashboard card, which
+ * holds no such list, does without it.
+ */
+export function useMyDailyPlacing(userId: bigint | undefined, date = todayKey()) {
+  const [rows, ready] = useTable(tables.dailyRun.where((row) => row.date.eq(date)));
+
+  return useMemo(() => {
+    if (userId === undefined) return null;
+    if (!ready) return undefined;
+
+    const ranked = rows
+      .filter((row) => !row.isGuest)
+      .sort((a, b) => b.totalPoints - a.totalPoints);
+
+    const mine = rows.find((row) => row.userId === userId);
+    if (!mine) return null;
+
+    const index = ranked.findIndex((row) => row.userId === userId);
+
+    return {
+      ...mine,
+      // A guest is off the board, so they have a score but no placing.
+      rank: index >= 0 ? index + 1 : 0,
+      totalPlayers: ranked.length,
+    };
+  }, [userId, ready, rows, date]);
 }

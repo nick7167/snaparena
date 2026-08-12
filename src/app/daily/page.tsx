@@ -2,13 +2,22 @@
 
 import { SignedIn, SignedOut } from "../auth-gate";
 import { useUser } from "@clerk/nextjs";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { track } from "@/analytics";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import {
+  useActiveDailyMatch,
+  useDailyLeaderboard,
+  useMyDailyPlacing,
+  useDailyStreak,
+  useMatchState,
+  useMe,
+  useTodayStats,
+} from "../db";
+import { useConfig } from "../config";
 import { DailyRunner } from "@/game/DailyRunner";
 import { DailyResult } from "@/game/DailyResult";
 import { usePrefetchTrackIndex } from "@/game/track-index";
@@ -18,7 +27,7 @@ import { Avatar } from "@/game/ui";
 import { Button } from "@/ui/Button";
 import { Card, Empty, Panel, Skeleton } from "@/ui/Surface";
 import { Glyph } from "@/ui/Glyph";
-import { ensureGuestToken, getGuestToken } from "../guest";
+import { rememberGuestToken } from "../guest";
 import { useNow } from "@/game/usePrefersReducedMotion";
 import { Beat, CountUp } from "../dashboard/motion";
 import { STREAK_WINDOW_DAYS } from "@/engine/streak";
@@ -50,7 +59,6 @@ export default function DailyPage() {
 function Daily() {
   // Read rather than created: visiting the page must not mint an identity, only starting
   // a run does.
-  const guestToken = getGuestToken();
   // Only for the analytics split. `isSignedIn` is undefined until Clerk resolves, and by
   // the time anyone can press Start it has.
   const { isSignedIn } = useUser();
@@ -59,28 +67,52 @@ function Daily() {
   // opens on a 3-second countdown, which is not long enough to fetch it from scratch.
   usePrefetchTrackIndex();
 
-  const myRun = useQuery(api.daily.myRun, { guestToken });
+  const config = useConfig();
+  const me = useMe();
+  const myRun = useMyDailyPlacing(me?.id);
   // A run left in progress — from a refresh, a closed tab, or a second visit today.
-  const activeRun = useQuery(api.daily.activeRun, { guestToken });
-  const start = useMutation(api.daily.start);
-  const complete = useMutation(api.daily.complete);
+  const activeRun = useActiveDailyMatch(me?.id);
+  const start = useStdbReducer(reducers.startDaily);
+  const complete = useStdbReducer(reducers.completeDaily);
 
-  const [matchId, setMatchId] = useState<Id<"matches"> | null>(null);
+  /**
+   * Remember the claim ticket the module issued this guest.
+   *
+   * Written server-side onto the guest's own row and readable only through `me`, so
+   * this stores what we were given rather than inventing one. It is what lets the
+   * account created later inherit today's run.
+   */
+  useEffect(() => {
+    if (me?.isGuest && me.guestClaimToken) rememberGuestToken(me.guestClaimToken);
+  }, [me]);
+
+  const [matchId, setMatchId] = useState<bigint | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const match = useQuery(api.matches.state, matchId ? { matchId, guestToken } : "skip");
+  const match = useMatchState(matchId ?? undefined, config);
+
+  /**
+   * Mount the live run as soon as the subscription names one.
+   *
+   * This is what replaces the id the start call used to return, and it covers the
+   * reload case for free: a run left unfinished is picked up on load without the page
+   * needing to ask for it.
+   */
+  useEffect(() => {
+    if (activeRun && matchId !== activeRun.id) setMatchId(activeRun.id);
+  }, [activeRun, matchId]);
 
   // Record the run once the final round closes.
   useEffect(() => {
     if (!matchId || match?.status !== "complete") return;
-    void complete({ matchId, guestToken });
+    void complete({ matchId });
     // Fired here rather than on the result screen, which also renders for a run finished
     // hours ago on a revisit — that would count one completion every time someone came
     // back to look at their score.
     track("daily_finish", { is_guest: !isSignedIn });
-  }, [matchId, match?.status, complete, guestToken, isSignedIn]);
+  }, [matchId, match?.status, complete, isSignedIn]);
 
   /**
    * Starts, or resumes, today's run.
@@ -94,15 +126,20 @@ function Daily() {
     setStarting(true);
     setError(null);
     try {
-      // The one place a guest identity is created. Signed-in players still send a token if
-      // they have a stale one; the server ignores it in favour of the session.
-      const result = await start({ guestToken: ensureGuestToken() });
-      if (result.status === "started") {
-        setMatchId(result.matchId);
-        // `is_guest` is the whole point of this event: it is the denominator of the
-        // guest→signup funnel, and nothing in the app could previously report it.
-        track("daily_start", { is_guest: !isSignedIn, resumed: activeRun !== null });
-      } else setStatus(result.status);
+      /**
+       * The one place a guest identity is created — the module mints it for the
+       * anonymous connection when this runs, so there is no token to send.
+       *
+       * A reducer returns nothing, so the match id does not come back either.
+       * `startDaily` resumes an unfinished run rather than minting a second one, so
+       * whatever appears in `activeRun` is the right match whether it was just created
+       * or was already there, and the effect below mounts it.
+       */
+      await start();
+
+      // `is_guest` is the denominator of the guest-to-signup funnel, and nothing in the
+      // app could previously report it.
+      track("daily_start", { is_guest: !isSignedIn, resumed: activeRun !== null });
     } catch {
       setError("Could not start today's run. Check your connection and try again.");
     } finally {
@@ -110,7 +147,7 @@ function Daily() {
     }
   }
 
-  const runningId = matchId ?? activeRun?.matchId ?? null;
+  const runningId = matchId ?? activeRun?.id ?? null;
   if (runningId && !myRun) return <DailyRunner matchId={runningId} />;
 
   /**
@@ -185,7 +222,7 @@ function Landing({
   error: string | null;
   onStart: () => Promise<void>;
 }) {
-  const stats = useQuery(api.daily.todayStats, {});
+  const stats = useTodayStats();
   const now = useNow(60_000);
 
   return (
@@ -202,7 +239,7 @@ function Landing({
         {stats && stats.players > 0 && (
           <>
             <span>
-              {stats.atLeast ? "over " : ""}
+              
               {stats.players.toLocaleString()}{" "}
               {stats.players === 1 ? "player" : "players"} today
             </span>
@@ -242,7 +279,7 @@ function Landing({
 
 /** The run you are on, on the page that decides whether it survives the night. */
 function StreakBadge() {
-  const streak = useQuery(api.users.dailyStreak, {});
+  const streak = useDailyStreak(useMe()?.id);
   if (!streak || streak.current === 0) return null;
 
   return (
@@ -287,8 +324,8 @@ function DailyBoard({
   const date = isWithinWindow(requested, now) ? requested! : today;
   const isToday = date === today;
 
-  const board = useQuery(api.daily.leaderboard, { date, limit: 25 });
-  const me = useQuery(api.users.me, {});
+  const board = useDailyLeaderboard(date, 25);
+  const me = useMe();
 
   const setDate = (next: string) => {
     router.replace(next === today ? "/daily" : `/daily?d=${next}`, { scroll: false });

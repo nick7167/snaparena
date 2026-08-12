@@ -1,10 +1,10 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useMe, useRoomState } from "@/app/db";
 import { RoundRunner } from "@/game/RoundRunner";
 import { Avatar } from "@/game/ui";
 import { Button, ButtonLink } from "@/ui/Button";
@@ -22,11 +22,11 @@ export default function RoomPage() {
   const params = useParams<{ code: string }>();
   const code = (params.code ?? "").toUpperCase();
 
-  const room = useQuery(api.rooms.state, { code });
-  const me = useQuery(api.users.me, {});
-  const join = useMutation(api.rooms.join);
-  const start = useMutation(api.rooms.start);
-  const returnToLobby = useMutation(api.rooms.returnToLobby);
+  const room = useRoomState(code);
+  const me = useMe();
+  const join = useStdbReducer(reducers.joinRoom);
+  const start = useStdbReducer(reducers.startRoomMatch);
+  const returnToLobby = useStdbReducer(reducers.returnToLobby);
 
   /**
    * Arriving via a shared link should put you in the room, not just show it to you.
@@ -48,7 +48,7 @@ export default function RoomPage() {
   useEffect(() => {
     if (!room || !me) return;
     if (room.status === "closed") return;
-    if (room.members.some((member) => member.userId === me._id)) return;
+    if (room.members.some((member) => member.userId === me.id)) return;
 
     const shape = `${code}:${room.status}:${room.members.length}`;
     if (attempted.current === shape) return;
@@ -105,8 +105,8 @@ export default function RoomPage() {
     );
   }
 
-  const isHost = me?._id === room.hostId;
-  const isMember = me ? room.members.some((member) => member.userId === me._id) : false;
+  const isHost = me?.id === room.hostId;
+  const isMember = me ? room.members.some((member) => member.userId === me.id) : false;
 
   if (room.status === "in_match" && room.activeMatchId) {
     return (
@@ -158,7 +158,7 @@ export default function RoomPage() {
                   <Card
                     as="li"
                     key={member.userId}
-                    you={member.userId === me?._id}
+                    you={member.userId === me?.id}
                     // Each member's OWN accent. Every row used to carry the viewer's,
                     // which is eight rows of one colour saying nothing about anyone.
                     accent={placing ? undefined : member.rankAccent}
@@ -228,7 +228,7 @@ export default function RoomPage() {
         </Beat>
 
         <Beat index={2} className="flex flex-col gap-3">
-          {isMember && <ReadyToggle roomId={room.roomId} ready={!!me && room.members.find((m) => m.userId === me._id)?.isReady} />}
+          {isMember && <ReadyToggle roomId={room.roomId} ready={!!me && room.members.find((m) => m.userId === me.id)?.isReady} />}
 
           {isHost ? (
             <Button
@@ -323,8 +323,8 @@ function RoomCode({ code }: { code: string }) {
 }
 
 /** Advisory readiness. See the `readyIds` note in the schema for why it is not a gate. */
-function ReadyToggle({ roomId, ready }: { roomId: Id<"rooms">; ready?: boolean }) {
-  const setReady = useMutation(api.rooms.setReady);
+function ReadyToggle({ roomId, ready }: { roomId: bigint; ready?: boolean }) {
+  const setReady = useStdbReducer(reducers.setRoomReady);
 
   return (
     <Button
@@ -339,8 +339,8 @@ function ReadyToggle({ roomId, ready }: { roomId: Id<"rooms">; ready?: boolean }
   );
 }
 
-function LeaveRoom({ roomId, isHost }: { roomId: Id<"rooms">; isHost: boolean }) {
-  const leave = useMutation(api.rooms.leave);
+function LeaveRoom({ roomId, isHost }: { roomId: bigint; isHost: boolean }) {
+  const leave = useStdbReducer(reducers.leaveRoom);
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
