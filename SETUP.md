@@ -59,32 +59,50 @@ unchanged. What changed is the bridge to the backend.
 1. **Create a JWT template.** Clerk dashboard → **Configure** → **JWT Templates** →
    **New template** → **Blank**.
    - Name it exactly **`spacetimedb`**. `src/app/providers.tsx` asks for it by name.
-   - Leave the signing algorithm on Clerk's default (RS256). SpacetimeDB fetches
-     the public keys from the issuer's OIDC discovery document, so a custom signing
-     key would have to be published somewhere it can reach.
-   - Optionally set an **audience**. Prefer to: without it, a token another
-     application legitimately issued to the same user could be replayed against
-     this database.
-   - The default token lifetime (60s) is fine. The client refreshes on a timer and
+   - Leave the signing algorithm on Clerk's default (RS256). SpacetimeDB fetches the
+     public keys from the issuer's OIDC discovery document, so a custom signing key
+     would have to be published somewhere it can reach.
+   - The default token lifetime (60s) is fine. The client refreshes on a timer, and
      the token is only checked when a socket opens — see the long note in
      `src/app/providers.tsx`.
+   - **Leave the claims empty.** There is no audience field in the UI; `aud` would
+     have to be added by hand to the claims JSON, and it is not worth it here. See
+     below.
 
-2. **Copy the Issuer URL** from that template. It looks like
-   `https://your-app.clerk.accounts.dev`.
+2. **Copy the Issuer URL.** For this project it is
+   `https://trusting-ewe-58.clerk.accounts.dev`.
 
-3. **Register it on the database.** This is the step that replaces
+3. **Register it on the database.** This replaces
    `npx convex env set CLERK_JWT_ISSUER_DOMAIN`:
 
    ```bash
-   npm run stdb:auth -- '"https://your-app.clerk.accounts.dev"' '"your-audience"'
+   spacetime login
+   npm run stdb:auth -- '"https://trusting-ewe-58.clerk.accounts.dev"' '""'
    ```
 
-   Pass `'""'` as the audience to accept any `aud` from that issuer.
-
-   **Until you do this, every sign-in fails with "Unauthorized issuer".** That is
-   the intended failure mode, and the same call the Convex setup made: an empty
+   **Until you do this, every sign-in fails with "Unauthorized issuer".** That is the
+   intended failure mode, and the same call the Convex setup made: an empty
    allow-list deliberately does not mean "accept anything", because that would
    accept a token minted by any OIDC provider on the internet.
+
+   ### Why the audience is empty
+
+   `""` means "accept any `aud` from this issuer", and for this app that is the right
+   setting rather than a shortcut.
+
+   An audience check answers one question: was this token minted for *me*, or for
+   some other application that happens to share my issuer? That matters on a shared
+   issuer — `accounts.google.com` mints tokens for everybody. It does not matter
+   here, because `trusting-ewe-58.clerk.accounts.dev` is this project's own Clerk
+   instance and issues tokens for nothing else. Pinning the issuer already answers
+   the question the audience would.
+
+   Setting one anyway would mean hand-editing `aud` into the template's claims JSON,
+   and Clerk has a known failure where a custom `aud` on a session token breaks its
+   own `getAuth()`. That is a real cost against no real gain.
+
+   If a second application is ever added to this Clerk instance, set an audience
+   then and re-run the command with it — the module already checks it when non-empty.
 
 4. **Grant yourself admin**, as the identity that published the database:
 
