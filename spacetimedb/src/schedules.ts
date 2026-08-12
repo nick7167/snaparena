@@ -27,6 +27,7 @@ import {
 import { runAdvancePhase, runDraftWatchdog, runWaitForReady } from "./phases";
 import { runCleanupGuests } from "./guests";
 import { runSweepMatchmaking } from "./matchmaking";
+import { runFinalizeMatch } from "./progression";
 
 export const advancePhase = spacetimedb.reducer(
   { row: phase_advance_schedule.rowType },
@@ -68,9 +69,7 @@ export const sweepForfeits = spacetimedb.reducer(
 
 export const finalizeMatch = spacetimedb.reducer(
   { row: finalize_schedule.rowType },
-  (_ctx, { row }) => {
-    void row;
-  },
+  (ctx, { row }) => runFinalizeMatch(ctx, row.matchId),
 );
 
 export const cleanupGuests = spacetimedb.reducer(

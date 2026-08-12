@@ -1,5 +1,6 @@
 import { SenderError } from "spacetimedb/server";
 import { Timestamp } from "spacetimedb";
+import type { GameMode } from "../../src/engine/config";
 
 /**
  * Shared helpers. Nothing here defines a reducer, a view or a table, so this
@@ -50,6 +51,25 @@ export function microsFrom(now: Timestamp, deltaMs: number): bigint {
  */
 export function timestampFrom(now: Timestamp, deltaMs: number): Timestamp {
   return new Timestamp(microsFrom(now, deltaMs));
+}
+
+const GAME_MODES: readonly GameMode[] = ["ranked", "room", "daily", "practice"];
+
+/**
+ * Narrows the stored mode to the engine's union.
+ *
+ * `match.mode` is a plain string column — SpacetimeDB columns have no enum — while
+ * every engine function that branches on mode takes `GameMode`. All four writers of
+ * that column use one of these values, so this is a boundary assertion rather than a
+ * branch anyone should reach.
+ *
+ * An unrecognised mode falls back to `"ranked"` rather than throwing. This is called
+ * from `finalizeMatch`, which runs on a schedule with no caller to report an error to:
+ * throwing would abort the transaction and the match would never pay out at all, which
+ * is a worse failure than paying out under the wrong mode's rules.
+ */
+export function gameModeOf(mode: string): GameMode {
+  return GAME_MODES.includes(mode as GameMode) ? (mode as GameMode) : "ranked";
 }
 
 /**
