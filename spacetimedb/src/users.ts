@@ -376,6 +376,71 @@ function guestHandle(ctx: ReducerCtx, token: string): string {
 }
 
 /**
+ * Distinct reporters required before a profile field is auto-hidden.
+ *
+ * Hiding on a single report let any one player silence any other instantly and
+ * repeatedly, and contradicted the `report` table's own purpose — manual review, not
+ * automated takedown. A threshold is still only a stopgap; the real answer is a review
+ * queue over the rows this writes.
+ */
+export const REPORTS_TO_HIDE = 3;
+
+/** How much of a reason is kept. Enough to triage, not enough to be an essay. */
+const REASON_MAX_LENGTH = 200;
+
+/**
+ * Reports a player's bio or avatar.
+ *
+ * `kind` is counted separately, so three people objecting to a tagline do not also take
+ * down a picture nobody complained about.
+ */
+export const reportProfile = spacetimedb.reducer(
+  { userId: t.u64(), reason: t.string(), kind: t.string() },
+  (ctx, { userId, reason, kind }) => {
+    const reporter = requireFullAccount(ctx);
+    if (reporter.id === userId) reject("You cannot report yourself");
+    if (kind !== "bio" && kind !== "avatar") reject("Unknown report kind");
+
+    const target = ctx.db.user.id.find(userId);
+    if (!target) reject("No such player");
+
+    const sameKind = [...ctx.db.report.reportedUserId.filter(userId)].filter(
+      (row) => row.kind === kind,
+    );
+
+    // One report per person per target per kind. Without this a single reporter could
+    // reach any threshold alone, just by pressing the button repeatedly.
+    if (sameKind.some((row) => row.reporterUserId === reporter.id)) return;
+
+    ctx.db.report.insert({
+      id: 0n,
+      reportedUserId: userId,
+      reporterUserId: reporter.id,
+      kind,
+      reason: reason.slice(0, REASON_MAX_LENGTH),
+      createdAt: ctx.timestamp,
+      resolvedAt: undefined,
+    });
+
+    const distinctReporters = new Set([
+      ...sameKind.map((row) => row.reporterUserId),
+      reporter.id,
+    ]).size;
+
+    if (distinctReporters < REPORTS_TO_HIDE) return;
+
+    const current = ctx.db.user.id.find(userId);
+    if (!current) return;
+
+    ctx.db.user.id.update(
+      kind === "bio"
+        ? { ...current, bioHidden: true }
+        : { ...current, avatarHidden: true },
+    );
+  },
+);
+
+/**
  * Completes first-run onboarding.
  *
  * Only the username is required — avatar, bio and genres are all editable later,

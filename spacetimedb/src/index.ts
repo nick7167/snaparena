@@ -40,6 +40,7 @@ export {
   setAuthIssuer,
   removeAuthIssuer,
   setRole,
+  reportProfile,
   // views
   me,
   myHandleProbe,
