@@ -718,6 +718,80 @@ export const setRole = spacetimedb.reducer(
   },
 );
 
+/** Handles the e2e suite is allowed to create, and therefore allowed to purge. */
+const TEST_HANDLE_PREFIX = "e2e";
+
+/**
+ * Deletes a throwaway account the e2e suite created. Owner or admin.
+ *
+ * Deleting the Clerk user is not enough on its own. The player row survives it, and with
+ * it that account's daily run — which, unlike the global leaderboard, the daily board does
+ * not filter. Without this, every run of the suite parks another synthetic top score on a
+ * board real players read.
+ *
+ * THE PREFIX IS THE WHOLE SAFETY PROPERTY. This is a reducer that deletes an account by
+ * handle, so it refuses every handle outside `e2e`. The role check says who may call it;
+ * the prefix says what they may point it at, and an operator who mistypes a handle gets a
+ * rejection rather than a deleted player.
+ */
+export const purgeTestUser = spacetimedb.reducer(
+  { handle: t.string() },
+  (ctx, { handle }) => {
+    requireOwnerOrAdmin(ctx);
+
+    const wanted = handle.toLowerCase().trim();
+    if (!wanted.startsWith(TEST_HANDLE_PREFIX)) {
+      reject(`Refusing to purge a handle outside "${TEST_HANDLE_PREFIX}"`);
+    }
+
+    const user = ctx.db.user.handle.find(wanted);
+    if (!user) return;
+
+    for (const run of [...ctx.db.daily_run.userId.filter(user.id)]) {
+      /**
+       * The tally the landing page reads is maintained, not counted, so a deletion has
+       * to be reported to it or "N played today" drifts up by one per suite run.
+       */
+      const counter = ctx.db.daily_count.date.find(run.date);
+      if (counter) {
+        ctx.db.daily_count.id.update({
+          ...counter,
+          players: Math.max(0, counter.players - 1),
+        });
+      }
+      ctx.db.daily_run.id.delete(run.id);
+    }
+
+    for (const badge of [...ctx.db.user_badge.userId.filter(user.id)]) {
+      ctx.db.user_badge.id.delete(badge.id);
+    }
+    for (const rating of [...ctx.db.category_rating.userId.filter(user.id)]) {
+      ctx.db.category_rating.id.delete(rating.id);
+    }
+
+    /**
+     * Rows the Convex version had no equivalent of, and would have orphaned.
+     *
+     * `account` is the identity mapping — leaving it would let the next sign-in with the
+     * same Clerk id resolve to a player row that no longer exists. `queue_entry` would
+     * leave the sweeper tripping over a missing user on every pass, and `ladder_entry`
+     * would keep a deleted account on the board until the next rebuild.
+     */
+    ctx.db.account.userId.delete(user.id);
+    ctx.db.queue_entry.userId.delete(user.id);
+    ctx.db.ladder_entry.userId.delete(user.id);
+    ctx.db.user_preference.userId.delete(user.id);
+
+    /**
+     * Matches are deliberately left alone, matching the Convex behaviour and for its
+     * reason: an orphaned daily run is inert once deleted above, and a duel this account
+     * played is the OPPONENT's history too. Deleting it would punch a hole in a real
+     * player's record to tidy up after a test.
+     */
+    ctx.db.user.id.delete(user.id);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Views
 // ---------------------------------------------------------------------------

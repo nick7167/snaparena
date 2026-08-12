@@ -7,7 +7,7 @@ import {
   guessLikeAHuman,
   hideDevOverlay,
   loadDailyAnswers,
-  purgeConvexUser,
+  purgeTestUser,
   signInAs,
 } from "./helpers";
 
@@ -32,10 +32,10 @@ let userId: string | undefined;
 let handle: string | undefined;
 
 test.afterAll(async () => {
-  // Both halves. Deleting the Clerk user alone leaves the Convex row and its daily run
+  // Both halves. Deleting the Clerk user alone leaves the player row and its daily run
   // behind, and the daily board has no placement filter to hide it.
   if (userId) await deleteClerkUser(userId);
-  if (handle) await purgeConvexUser(handle);
+  if (handle) await purgeTestUser(handle);
 });
 
 test("a new account is onboarded, then plays its first daily", async ({ page }) => {

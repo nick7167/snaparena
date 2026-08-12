@@ -5,6 +5,9 @@ import path from "node:path";
 import { createClerkClient } from "@clerk/backend";
 import { clerk } from "@clerk/testing/playwright";
 import { expect, type Page } from "@playwright/test";
+// Authenticated, so it can read the answer key. `track` and `daily_challenge` are private
+// tables — the app's own `src/app/sql.ts` deliberately cannot see them.
+import { ownerSql } from "../scripts/stdb-token.ts";
 
 const run = promisify(execFile);
 
@@ -61,26 +64,42 @@ export async function deleteClerkUser(userId: string): Promise<void> {
 }
 
 /**
- * Removes the Convex side of a throwaway account.
+ * Removes the database side of a throwaway account.
  *
- * Deleting the Clerk user is not enough. The Convex row survives it, and with it the
- * account's `dailyRuns` entry — which, unlike the global leaderboard, the daily board
- * does not filter. Without this, every run of this suite parks another synthetic top
- * score on the board a real player sees.
+ * Deleting the Clerk user is not enough. The player row survives it, and with it the
+ * account's daily run — which, unlike the global leaderboard, the daily board does not
+ * filter. Without this, every run of this suite parks another synthetic top score on the
+ * board a real player sees.
+ *
+ * NO SECRET ANY MORE. This shelled out to `npx convex run admin:purgeTestUser` with
+ * ADMIN_IMPORT_SECRET, a password shared between `.env.local` and the deployment. The
+ * module checks `ctx.sender` against `module_owner` instead, so the CLI's own login is
+ * the credential and `spacetime call` is the whole thing. The reducer refuses any handle
+ * outside the `e2e` prefix, which is the property that makes an account-deleting call
+ * safe to have at all.
  */
-export async function purgeConvexUser(handle: string): Promise<void> {
-  const secret = process.env.ADMIN_IMPORT_SECRET;
-  if (!secret) {
-    console.warn("ADMIN_IMPORT_SECRET not set locally — leaving the test row behind");
+export async function purgeTestUser(handle: string): Promise<void> {
+  const database = process.env.NEXT_PUBLIC_SPACETIMEDB_DB;
+  if (!database) {
+    console.warn("NEXT_PUBLIC_SPACETIMEDB_DB not set — leaving the test row behind");
     return;
   }
 
   try {
-    await run("npx", [
-      "convex", "run", "admin:purgeTestUser",
-      JSON.stringify({ secret, handle }),
-    ], { cwd: path.join(__dirname, "..") });
+    await run(
+      "spacetime",
+      [
+        "call",
+        database,
+        "--server",
+        process.env.SPACETIMEDB_SERVER ?? "maincloud",
+        "purge_test_user",
+        JSON.stringify(handle),
+      ],
+      { cwd: path.join(__dirname, "..") },
+    );
   } catch (error) {
+    // A failed cleanup must never fail the run it is cleaning up after.
     console.warn(`could not purge ${handle}:`, error);
   }
 }
@@ -263,33 +282,40 @@ export async function captureDailyAnswers(): Promise<DailyAnswers | null> {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
-    const challenges = await convexData<{ date: string; trackIds: string[] }>(
-      "dailyChallenges",
-    );
-    const todays = challenges.find((row) => row.date === today);
-    if (!todays) return null;
-
     /**
-     * The limit has to clear the whole catalogue, and it silently did not.
+     * A JOIN rather than two reads and a lookup table.
      *
-     * `convex data` truncates at `--limit`, so any daily track sitting past the cut
-     * resolved to `""` — and an empty answer is falsy, so the specs quietly passed that
-     * round instead of solving it. A run that should have scored five ended up scoring
-     * two, which looked like broken guess submission rather than a short read. It was
-     * 2000 against a catalogue of 2244.
+     * The Convex version could not do this — `convex data` dumps one table at a time —
+     * so it pulled the whole catalogue and matched in memory, and truncated at `--limit`
+     * while doing it. Any daily track past the cut resolved to `""`, and an empty answer
+     * is falsy, so the specs quietly PASSED that round instead of solving it: a run that
+     * should have scored five scored two, and it looked like broken guess submission
+     * rather than a short read. Asking the database for the five rows that matter cannot
+     * have that failure.
      *
-     * Kept well ahead of the catalogue rather than exact, and the shortfall is now
-     * reported instead of being absorbed into a blank string.
+     * The setlist is not ordered by the join, so the ids are re-sorted below into the
+     * order the challenge stores them — which is the order the rounds are played in.
      */
-    const tracks = await convexData<{ _id: string; title: string }>("tracks", 20_000);
-    const byId = new Map(tracks.map((track) => [track._id, track.title]));
+    const setlist = await ownerSql(
+      `SELECT trackIds FROM daily_challenge WHERE date = '${today.replace(/'/g, "")}'`,
+    );
+    const trackIds = setlist.rows[0]?.[0] as (string | number | bigint)[] | undefined;
+    if (!trackIds || trackIds.length === 0) return null;
 
-    const titles = todays.trackIds.map((id) => byId.get(id) ?? "");
+    const idList = trackIds.map((id) => String(id));
+    const titleRows = await ownerSql(
+      `SELECT id, title FROM track WHERE id IN (${idList.join(", ")})`,
+    );
+
+    const byId = new Map<string, string>();
+    for (const row of titleRows.rows) byId.set(String(row[0]), String(row[1]));
+
+    const titles = idList.map((id) => byId.get(id) ?? "");
     const missing = titles.filter((title) => title === "").length;
     if (missing > 0) {
       console.warn(
-        `${missing} of ${titles.length} daily answers could not be resolved from ` +
-          `${tracks.length} tracks — those rounds will be passed rather than solved.`,
+        `${missing} of ${titles.length} daily answers could not be resolved — ` +
+          `those rounds will be passed rather than solved.`,
       );
     }
 
@@ -301,29 +327,3 @@ export async function captureDailyAnswers(): Promise<DailyAnswers | null> {
   }
 }
 
-/**
- * `npx convex data <table> --format jsonLines`, parsed.
- *
- * `jsonLines` rather than the default `pretty`: the human format is a padded column
- * table whose cells would have to be split on `|`, and a track title containing that
- * character would silently corrupt the row.
- */
-async function convexData<T>(table: string, limit = 100): Promise<T[]> {
-  const { stdout } = await run(
-    "npx",
-    ["convex", "data", table, "--limit", String(limit), "--format", "jsonLines"],
-    { cwd: path.join(__dirname, ".."), maxBuffer: 64 * 1024 * 1024 },
-  );
-
-  const rows: T[] = [];
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) continue;
-    try {
-      rows.push(JSON.parse(trimmed) as T);
-    } catch {
-      // Not a document line.
-    }
-  }
-  return rows;
-}

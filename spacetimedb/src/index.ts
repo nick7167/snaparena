@@ -40,6 +40,7 @@ export {
   setAuthIssuer,
   removeAuthIssuer,
   setRole,
+  purgeTestUser,
   reportProfile,
   setAvatarImage,
   // views
