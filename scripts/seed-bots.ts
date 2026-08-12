@@ -21,9 +21,13 @@ async function main() {
 
     /**
      * No counts to report. A reducer returns nothing, so "12 created, 4 updated" is not
-     * available — and the roster itself is the better confirmation anyway: it shows up
-     * in the practice list, and `spacetime sql "SELECT handle FROM user WHERE is_bot"`
-     * answers the same question against what was actually written.
+     * available — and the roster itself is the better confirmation anyway: it shows up in
+     * the practice list, and the careers below give a countable answer that needs no
+     * column names, which SpacetimeDB's SQL is fussier about than its table names:
+     *
+     *   npm run stdb:sql -- "SELECT COUNT(*) AS matches FROM match"
+     *
+     * Twelve bots carry eight persisted matches each, so a seeded roster is ~96 there.
      */
     console.log("Bot roster seeded from the personas in src/engine/bots.ts");
 
