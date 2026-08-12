@@ -142,7 +142,7 @@ events.
 
 ---
 
-## 2. Content pipeline (works today, no credentials needed for stage 1)
+## 5. Content pipeline
 
 ```bash
 npm run ingest:smoke   # ~30s, 8 API calls, sanity check
@@ -163,7 +163,7 @@ reproducible and reviewable before anything touches the database.
 
 ---
 
-## 3. Run it
+## 6. Run it
 
 ```bash
 npm run dev
@@ -190,7 +190,7 @@ npm run dev:next
 
 ---
 
-## 4. The admin console
+## 7. The admin console
 
 `/admin`, reachable from the account menu once your account holds the admin role.
 Nothing else links to it.
