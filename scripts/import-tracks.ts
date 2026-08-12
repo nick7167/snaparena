@@ -86,8 +86,13 @@ async function main() {
       console.log(`  ${Math.min(offset + batchSize, tracks.length)}/${tracks.length}`);
     }
 
+    /**
+     * The alias is not optional. SpacetimeDB rejects an unaliased aggregate with
+     * "Aggregate expressions must have column aliases" — this line suggested one
+     * without, so the check it offered failed for everybody who ran it.
+     */
     console.log("\nDone. Check catalogue health with:");
-    console.log("  npm run stdb:sql -- \"SELECT COUNT(*) FROM track\"");
+    console.log("  npm run stdb:sql -- \"SELECT COUNT(*) AS tracks FROM track\"");
   });
 }
 
