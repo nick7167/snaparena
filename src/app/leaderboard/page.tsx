@@ -1,9 +1,14 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api } from "../../../convex/_generated/api";
+import {
+  useLadderStatus,
+  useLeaderboard,
+  useMe,
+  useMyStanding,
+  useTierCounts,
+} from "../db";
 import { PLACEMENT_MATCHES, RANK_TIERS } from "@/engine/config";
 import { rankForElo } from "@/engine/ranks";
 import { levelForXp } from "@/engine/xp";
@@ -16,6 +21,9 @@ import { RankEmblem } from "@/ui/RankEmblem";
 import { Avatar } from "@/game/ui";
 import { useConfig } from "../config";
 import type { ResolvedConfig } from "@/engine/config-merge";
+
+/** Matches LADDER_INTERVAL_MS in the module. The board says when it next rebuilds. */
+const LADDER_INTERVAL_MS = 5 * 60 * 1000;
 
 /** Rows each tier band shows before it has to be expanded. */
 const PER_BAND = 10;
@@ -39,8 +47,8 @@ const PER_BAND = 10;
  * whenever you are not already visible in the page.
  */
 export default function LeaderboardPage() {
-  const stored = useQuery(api.users.leaderboard, { limit: 500 });
-  const me = useQuery(api.users.me, {});
+  const stored = useLeaderboard(500);
+  const me = useMe();
   /**
    * Lifted from the pinned rail so the splice below can use it.
    *
@@ -48,7 +56,7 @@ export default function LeaderboardPage() {
    * one number on this page that is never stale — which is exactly what makes it the right
    * index to insert yourself at.
    */
-  const standing = useQuery(api.users.myStanding, {});
+  const standing = useMyStanding(useMe());
   const config = useConfig();
 
   /**
@@ -66,7 +74,7 @@ export default function LeaderboardPage() {
    */
   const board = spliceOwnRow(stored, me, standing?.position ?? null, config);
 
-  const myRow = board?.find((entry) => entry.userId === me?._id);
+  const myRow = board?.find((entry) => entry.userId === me?.id);
   const myAccent = me ? rankForElo(me.elo).tier.accent : undefined;
 
   /**
@@ -117,7 +125,7 @@ export default function LeaderboardPage() {
           <div className="min-w-0 flex-1">
             <Bands
               entries={board}
-              myUserId={me?._id}
+              myUserId={me?.id}
               myAccent={myAccent}
               onMeVisible={setMeVisible}
             />
@@ -176,18 +184,18 @@ function Bands({
   myAccent,
   onMeVisible,
 }: {
-  entries: LadderEntry[];
-  myUserId?: string;
+  entries: BoardRow[];
+  myUserId?: bigint;
   myAccent?: string;
   /** Reports whether the viewer's own row was actually drawn, so the rail can hide. */
   onMeVisible: (visible: boolean) => void;
 }) {
-  const counts = useQuery(api.users.tierCounts, {});
+  const counts = useTierCounts();
   // Keyed by tier, holding how many rows that band is currently showing. Absent means
   // the default ten — so the initial state is genuinely empty rather than seeded.
   const [expanded, setExpanded] = useState<Record<string, number>>({});
 
-  const bands: { tierId: string; entries: LadderEntry[] }[] = [];
+  const bands: { tierId: string; entries: BoardRow[] }[] = [];
   for (const entry of entries) {
     const tierId = rankForElo(entry.elo).tier.id;
     const last = bands[bands.length - 1];
@@ -195,7 +203,7 @@ function Bands({
     else bands.push({ tierId, entries: [entry] });
   }
 
-  const shownFor = (band: { tierId: string; entries: LadderEntry[] }) =>
+  const shownFor = (band: { tierId: string; entries: BoardRow[] }) =>
     band.entries.slice(0, expanded[band.tierId] ?? PER_BAND);
 
   /**
@@ -244,9 +252,8 @@ function Bands({
               </h2>
               {population && population.count > 0 && (
                 <span className="text-label text-muted ml-auto shrink-0 tabular-nums">
-                  {population.count}
-                  {population.approximate ? "+" : ""}{" "}
-                  {population.count === 1 && !population.approximate ? "player" : "players"}
+                  {population.count}{" "}
+                  {population.count === 1 ? "player" : "players"}
                 </span>
               )}
             </div>
@@ -284,7 +291,7 @@ function Bands({
                 cannot reach that far. */}
             {hidden === 0 &&
               population &&
-              (population.approximate || population.count > band.entries.length) && (
+              (false || population.count > band.entries.length) && (
                 <p className="text-label text-muted text-center">
                   Showing the top {band.entries.length} of {tier?.name ?? band.tierId}
                 </p>
@@ -318,7 +325,7 @@ interface LadderEntry {
  * `me` is subscribed by the sidebar on every page in the app.
  */
 function MyStanding({ accent }: { accent?: string }) {
-  const standing = useQuery(api.users.myStanding, {});
+  const standing = useMyStanding(useMe());
 
   if (standing === undefined) return <Skeleton className="h-16 w-full" />;
   if (standing === null) return null;
@@ -373,7 +380,7 @@ function Row({
   accent,
   as = "li",
 }: {
-  entry: LadderEntry;
+  entry: BoardRow;
   isMe: boolean;
   /** The viewer's own tier accent, used for the plate hairline on their row. */
   accent?: string;
@@ -447,24 +454,33 @@ function Row({
  * where the rank bots bypass the snapshot and the board really is live.
  */
 function BoardFreshness() {
-  const status = useQuery(api.ladder.status, {});
+  const status = useLadderStatus();
   const now = useNow(60_000);
 
   if (!status) return null;
 
+  /**
+   * The rebuild cadence is a client-side constant now.
+   *
+   * `ladder.status` returned it because the cron interval lived beside the query; the
+   * module's schedule owns it, and shipping it in every status row to render one line
+   * would be a column that never changes.
+   */
+  const builtAtMs = Number(status.builtAt.microsSinceUnixEpoch / 1_000n);
+
   return (
     <p className="text-label text-muted tabular-nums">
-      Board updated {timeAgo(status.builtAt, now)}
+      Board updated {timeAgo(builtAtMs, now)}
       <span className="text-faint" aria-hidden="true">
         {" · "}
       </span>
-      next in {timeUntil(status.builtAt + status.intervalMs, now)}
+      next in {timeUntil(builtAtMs + LADDER_INTERVAL_MS, now)}
     </p>
   );
 }
 
-type BoardRow = NonNullable<ReturnType<typeof useQuery<typeof api.users.leaderboard>>>[number];
-type Me = NonNullable<ReturnType<typeof useQuery<typeof api.users.me>>>;
+type BoardRow = NonNullable<ReturnType<typeof useLeaderboard>>[number];
+type Me = NonNullable<ReturnType<typeof useMe>>;
 
 /**
  * Places the viewer's own row by their LIVE rating rather than the snapshot's.
@@ -491,17 +507,22 @@ function spliceOwnRow(
   if (!stored || !me || !position) return stored;
   if (position > stored.length) return stored;
 
-  const without = stored.filter((entry) => entry.userId !== me._id);
+  const without = stored.filter((entry) => entry.userId !== me.id);
 
-  const mine: BoardRow = stored.find((entry) => entry.userId === me._id) ?? {
+  const mine: BoardRow = stored.find((entry) => entry.userId === me.id) ?? {
     rank: position,
-    userId: me._id,
+    userId: me.id,
     handle: me.handle,
     displayName: me.displayName,
     avatarUrl: me.avatarUrl,
     elo: me.elo,
     gamesPlayed: me.gamesPlayed,
-    level: levelForXp(me.xp ?? 0, config).level,
+    level: levelForXp(me.xp, config).level,
+    // The two fields a ladder row carries that `me` does not: the tier is derived from
+    // the same rating, and a synthesised row is never a bucket floor — it is the
+    // player's own exact position.
+    tierId: rankForElo(me.elo).tier.id,
+    approximate: false,
   };
 
   const spliced = [...without];

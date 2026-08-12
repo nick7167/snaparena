@@ -1,7 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useTodayStats } from "./db";
 import { REVEAL_BEATS, SCORE_TIERS } from "@/engine/config";
 import { ButtonLink } from "@/ui/Button";
 import { Card, SectionLabel } from "@/ui/Surface";
@@ -100,7 +99,7 @@ function Hero() {
  * someone play it.
  */
 function TodayCard() {
-  const stats = useQuery(api.daily.todayStats, {});
+  const stats = useTodayStats();
 
   return (
     <Card variant="hero" className="flex flex-col gap-4 p-5 sm:gap-5 sm:p-7">
@@ -111,7 +110,7 @@ function TodayCard() {
             ? ""
             : stats.players === 0
               ? "Be the first today"
-              : `${stats.players.toLocaleString()}${stats.atLeast ? "+" : ""} played today`}
+              : `${stats.players.toLocaleString()} played today`}
         </span>
       </div>
 

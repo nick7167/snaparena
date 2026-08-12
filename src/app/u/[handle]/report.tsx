@@ -1,9 +1,8 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useState } from "react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
 import { Button } from "@/ui/Button";
 import { Card } from "@/ui/Surface";
 import { Field, Input } from "@/ui/Input";
@@ -23,11 +22,11 @@ export function ReportDialog({
   displayName,
   kind,
 }: {
-  userId: Id<"users">;
+  userId: bigint;
   displayName: string;
   kind: "bio" | "avatar";
 }) {
-  const reportProfile = useMutation(api.users.reportProfile);
+  const reportProfile = useStdbReducer(reducers.reportProfile);
   const subject = kind === "bio" ? "bio" : "picture";
 
   const [open, setOpen] = useState(false);
@@ -100,8 +99,16 @@ export function ReportDialog({
             setSending(true);
             setError(null);
             try {
-              const outcome = await reportProfile({ userId, reason: reason.trim(), kind });
-              setResult({ duplicate: outcome.duplicate, hidden: outcome.hidden });
+              /**
+               * A reducer returns nothing, so the screen no longer learns whether this
+               * was a duplicate or whether it crossed the hide threshold. Both were only
+               * ever used to vary the thank-you copy, and neither is something the
+               * reporter needs to be told: "we got it" is true in every case, and telling
+               * someone their report was the third would tell them how close the next
+               * one is.
+               */
+              await reportProfile({ userId, reason: reason.trim(), kind });
+              setResult({ duplicate: false, hidden: false });
             } catch (caught) {
               setError(caught instanceof Error ? caught.message : "Could not send that");
               setSending(false);

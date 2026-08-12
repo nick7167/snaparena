@@ -1,10 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { useMatchHistory, useMe, useProfile } from "@/app/db";
 import { BADGES } from "@/engine/badges";
 import { formatGlobalRank, isNotable } from "@/engine/ranks";
 import { Avatar, BotBadge, nameFor } from "@/game/ui";
@@ -39,10 +37,10 @@ export default function ProfilePage() {
   const params = useParams<{ handle: string }>();
   const handle = (params.handle ?? "").toLowerCase();
 
-  const profile = useQuery(api.users.profile, { handle });
+  const profile = useProfile(handle);
   // Skipped until the handle resolves — there is no userId to ask about before then.
-  const card = useQuery(api.matches.card, profile ? { userId: profile.userId } : "skip");
-  const me = useQuery(api.users.me, {});
+  const card = profile;
+  const me = useMe();
 
   /**
    * Both early branches carry the header too.
@@ -79,7 +77,7 @@ export default function ProfilePage() {
     );
   }
 
-  const isMe = me?._id === profile.userId;
+  const isMe = me?.id === profile.userId;
   const placing = profile.placementsRemaining > 0;
   const globalRank = formatGlobalRank(card?.globalRank, card?.globalRankApproximate);
   const notable = isNotable(card?.globalRank);
@@ -360,8 +358,8 @@ function BadgeCase({ earned }: { earned: string[] }) {
  * Every row opens the real results screen at /m/[matchId], carrying `?p=` so the verdict
  * is read from this player's side rather than the viewer's.
  */
-function RecentMatches({ userId }: { userId: Id<"users"> }) {
-  const matches = useQuery(api.matches.history, { userId });
+function RecentMatches({ userId }: { userId: bigint }) {
+  const matches = useMatchHistory(userId);
   // Shared with the dashboard's history strip and the rooms list, so one match reads the
   // same on every screen it appears on. Ticked, because a profile is a page people leave
   // open — see the note in relative-time.ts.
@@ -447,7 +445,7 @@ function RecentMatches({ userId }: { userId: Id<"users"> }) {
                     {match.forfeited && " · resigned"}
                     {match.mode === "practice" && " · practice"}
                     {" · "}
-                    {timeAgo(match.completedAt, now)}
+                    {timeAgo(match.completedAtMs, now)}
                   </span>
                 </span>
 
@@ -456,21 +454,21 @@ function RecentMatches({ userId }: { userId: Id<"users"> }) {
                     {match.totalPoints}
                     <span className="text-body-sm text-muted ml-1 font-normal">pts</span>
                   </span>
-                  {match.ratingDelta !== null && (
+                  {(match.ratingDelta ?? 0) !== null && (
                     <span
                       // Zero is its own case, not a small win. A loss at the rating floor
                       // reports a delta of 0 — `applyMatchResult` deliberately shows the
                       // drop actually taken — and coloring that gold would read as a gain.
                       className={`text-body-sm font-semibold tabular-nums ${
-                        match.ratingDelta > 0
+                        (match.ratingDelta ?? 0) > 0
                           ? "text-gold"
-                          : match.ratingDelta < 0
+                          : (match.ratingDelta ?? 0) < 0
                             ? "text-signal-text"
                             : "text-muted"
                       }`}
                     >
-                      {match.ratingDelta > 0 ? "+" : ""}
-                      {match.ratingDelta}
+                      {(match.ratingDelta ?? 0) > 0 ? "+" : ""}
+                      {(match.ratingDelta ?? 0)}
                     </span>
                   )}
                 </span>

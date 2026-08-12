@@ -4,6 +4,7 @@ import { useTable, useSpacetimeDB } from "spacetimedb/react";
 import { useMemo } from "react";
 import { tables } from "@/module_bindings";
 import { computeStreak } from "@/engine/streak";
+import { rankForElo } from "@/engine/ranks";
 
 /**
  * The client's read layer.
@@ -575,4 +576,136 @@ export function useStoredOverrides() {
     for (const entry of version.values) overrides[entry.key] = entry.value ?? null;
     return overrides;
   }, [pointerReady, versionId, versions, versionsReady]);
+}
+
+/**
+ * A public profile, by handle.
+ *
+ * REPLACES `api.users.profile` and `api.matches.card` together. The two were separate
+ * because a Convex query paid for everything it returned and only the profile page
+ * wanted the per-category breakdown; a subscription is already open on the rows either
+ * way, so splitting them here would buy nothing and cost a second shape to keep in step.
+ *
+ * `avatarUrl` goes through the same hiding rule the module applies. A profile page is
+ * exactly the surface a reported picture must not survive on.
+ */
+export function useProfile(handle: string | undefined) {
+  const user = useUserByHandle(handle);
+  const record = useMatchRecord(user?.id);
+  const ratings = useCategoryRatings(user?.id);
+  const badges = useUserBadges(user?.id);
+  const entry = useLadderEntry(user?.id);
+  const categories = useCategories();
+
+  const [preferences, preferencesReady] = useTable(
+    tables.userPreference.where((row) => row.userId.eq(user?.id ?? 0n)),
+    { enabled: user != null },
+  );
+
+  return useMemo(() => {
+    if (handle === undefined) return null;
+    if (user === undefined) return undefined;
+    if (user === null) return null;
+    if (
+      ratings === undefined ||
+      badges === undefined ||
+      entry === undefined ||
+      categories === undefined ||
+      record === undefined ||
+      !preferencesReady
+    ) {
+      return undefined;
+    }
+
+    // Derived here rather than stored, because a tier is a pure function of a rating and
+    // storing it would be a second copy that can fall behind the first.
+    const rank = rankForElo(user.elo);
+
+    const byId = new Map(categories.map((row) => [row.id, row]));
+    const preferredIds = preferences[0]?.preferredCategoryIds ?? [];
+
+    return {
+      userId: user.id,
+      handle: user.handle,
+      displayName: user.displayName,
+      avatarUrl: publicAvatarUrl(user),
+      bio: user.bioHidden ? undefined : user.bio,
+      elo: user.elo,
+      level: user.level,
+      xp: user.xp,
+      gamesPlayed: user.gamesPlayed,
+      placementsRemaining: user.placementsRemaining,
+      isBot: user.isBot,
+      position: entry?.rank ?? null,
+      approximate: entry?.approximate ?? false,
+      globalRank: entry?.rank ?? null,
+      globalRankApproximate: entry?.approximate ?? false,
+      rankTierId: rank.tier.id,
+      rankDivision: rank.division,
+      rankAccent: rank.tier.accent,
+      rankLabel: rank.label,
+      wins: record.wins,
+      losses: record.losses,
+      badges: badges.map((row) => ({ id: row.badgeId, earnedAt: row.earnedAt })),
+      /**
+       * What they SAY they like, kept distinct from what they are measured to be good
+       * at below. Conflating the two would be a lie in both directions.
+       */
+      preferred: preferredIds
+        .map((id) => byId.get(id))
+        .filter((row) => row !== undefined)
+        .map((row) => ({ slug: row.slug, name: row.name })),
+      categories: ratings
+        .map((rating) => {
+          const category = byId.get(rating.categoryId);
+          return category
+            ? {
+                slug: category.slug,
+                name: category.name,
+                rating: rating.rating,
+                games: rating.games,
+              }
+            : null;
+        })
+        .filter((row) => row !== null)
+        .sort((a, b) => b.rating - a.rating),
+    };
+  }, [handle, user, ratings, badges, entry, categories, record, preferences, preferencesReady]);
+}
+
+/** Today's headline number for the landing page: how many have played. */
+export function useTodayStats() {
+  const players = useDailyCount();
+  return useMemo(
+    () => (players === undefined ? undefined : { players }),
+    [players],
+  );
+}
+
+/**
+ * A player's win/loss record across finished matches.
+ *
+ * `matches.card` counted these server-side; the outcome is denormalised onto
+ * `match_player`, so it is a tally over rows the profile already subscribes to.
+ */
+export function useMatchRecord(userId: bigint | undefined) {
+  const [rows, ready] = useTable(
+    tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+
+  return useMemo(() => {
+    if (userId === undefined) return { wins: 0, losses: 0, draws: 0 };
+    if (!ready) return undefined;
+
+    let wins = 0;
+    let losses = 0;
+    let draws = 0;
+    for (const row of rows) {
+      if (row.outcome === "win") wins++;
+      else if (row.outcome === "loss") losses++;
+      else if (row.outcome === "draw") draws++;
+    }
+    return { wins, losses, draws };
+  }, [userId, ready, rows]);
 }
