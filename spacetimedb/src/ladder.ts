@@ -1,6 +1,5 @@
 import { ScheduleAt } from "spacetimedb";
 import type { ReducerCtx } from "./ctx";
-import { devFeaturesEnabled } from "./config";
 import { publicAvatarUrl } from "./lib";
 import { rankForElo } from "../../src/engine/ranks";
 
@@ -75,9 +74,13 @@ function onBoard(
  * The diff is the point. A rebuild every five minutes that rewrote all 500 rows would
  * push 500 row updates to every subscriber on a board where usually nothing changed;
  * comparing first means a quiet period costs one `checkedAt` write.
+ *
+ * `showRankBots` is passed in rather than read here. Reading it would mean importing
+ * the config module, and `init` lives in the identity module which imports this one —
+ * so config → users → ladder → config closed a cycle. This module stays a leaf, which
+ * is the same rule the Convex ladder followed and for the same reason.
  */
-export function runRebuildLadder(ctx: ReducerCtx): void {
-  const showRankBots = devFeaturesEnabled(ctx);
+export function runRebuildLadder(ctx: ReducerCtx, showRankBots: boolean): void {
 
   const eligible = [];
   for (const user of ctx.db.user.iter()) {

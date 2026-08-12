@@ -29,6 +29,7 @@ import { runCleanupGuests } from "./guests";
 import { runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
 import { runFinalizeMatch } from "./progression";
 import { runRebuildLadder } from "./ladder";
+import { devFeaturesEnabled } from "./config";
 import { runBotAction as runBotActionFor } from "./bots";
 
 export const advancePhase = spacetimedb.reducer(
@@ -81,7 +82,7 @@ export const rebuildLadder = spacetimedb.reducer(
   { row: ladder_rebuild_schedule.rowType },
   (ctx, { row }) => {
     void row;
-    runRebuildLadder(ctx);
+    runRebuildLadder(ctx, devFeaturesEnabled(ctx));
   },
 );
 

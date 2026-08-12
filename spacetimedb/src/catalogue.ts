@@ -436,6 +436,11 @@ export function requireCatalogue(ctx: ReducerCtx, count: number): void {
  * Anonymous rather than per-viewer: the same song for everyone, materialised once,
  * and readable before sign-in because the tutorial runs during the welcome flow.
  *
+ * The row type is `TutorialClip`, not `TutorialTrack`: a view's own name already
+ * derives a type, so naming the inner row after the view collides with it and the
+ * module is rejected at publish — which `tsc` cannot see. Every other view here is
+ * named the same way for the same reason.
+ *
  * Pinned by `itunesTrackId` rather than by row id, because the ingest script re-creates
  * rows and an id would stop resolving after a re-ingest — silently, and forever. The
  * iTunes id is external and already indexed.
@@ -443,7 +448,7 @@ export function requireCatalogue(ctx: ReducerCtx, count: number): void {
 export const tutorialTrack = spacetimedb.anonymousView(
   { name: "tutorial_track", public: true },
   t.option(
-    t.row("TutorialTrack", {
+    t.row("TutorialClip", {
       title: t.string(),
       artist: t.string(),
       artworkUrl: t.string(),
