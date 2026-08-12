@@ -215,13 +215,15 @@ function disarmDevBotRefill(ctx: ReducerCtx): void {
  * one tick: an interval that has already been handed to the scheduler fires once more
  * after its row is deleted. This makes that firing a no-op, and cleans up after itself.
  */
-export function runRefillDevBotQueue(ctx: ReducerCtx): void {
+export function runRefillDevBotQueue(ctx: ReducerCtx, armSweep: () => void): void {
   if (!devFeaturesEnabled(ctx)) {
     disarmDevBotRefill(ctx);
     return;
   }
 
   reapStaleBotMatches(ctx);
+
+  let added = false;
 
   for (const bot of roster(ctx)) {
     const queued = ctx.db.queue_entry.userId.find(bot.id);
@@ -251,7 +253,23 @@ export function runRefillDevBotQueue(ctx: ReducerCtx): void {
        */
       isBot: true,
     });
+    added = true;
   }
+
+  /**
+   * Kick the matchmaking sweep, because adding these rows may be what made the pool
+   * matchable — and `enqueue` cannot have armed it.
+   *
+   * The order this goes wrong in is the one an operator actually takes: turn developer
+   * features on, press Find a match, then seed the roster. The human enqueued alone, so
+   * there was nothing to sweep and no chain was started; fifteen seconds later sixteen
+   * opponents appear and nobody tells anyone. They would wait forever.
+   *
+   * Passed in rather than imported so this file does not close a cycle with
+   * `matchmaking`, which imports `pickDevOpponent` from here. `schedules.ts` already
+   * imports both and is where the two are wired together.
+   */
+  if (added) armSweep();
 }
 
 /** True if this player is in a match right now, so a bot is never pulled into two. */
@@ -276,7 +294,13 @@ function reapStaleBotMatches(ctx: ReducerCtx): void {
   const cutoff = toMs(ctx.timestamp) - STALE_BOT_MATCH_MS;
 
   for (const status of ["veto", "active"] as const) {
-    for (const match of ctx.db.match.by_status.filter(status)) {
+    /**
+     * Materialised before anything is written, because the write CHANGES `status` —
+     * the very column being iterated. Updating a row out from under the index walking
+     * it is the same hazard `deleteBy` exists for, and here it would be worse: rows
+     * would be skipped silently and the bot would stay parked in a dead match.
+     */
+    for (const match of [...ctx.db.match.by_status.filter(status)]) {
       if (toMs(match.createdAt) > cutoff) continue;
       if (!match.playerIds.some((id) => isDevRankBot(ctx.db.user.id.find(id)))) continue;
 

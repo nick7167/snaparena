@@ -26,7 +26,7 @@ import {
 } from "./schema";
 import { runAdvancePhase, runDraftWatchdog, runWaitForReady } from "./phases";
 import { runCleanupGuests } from "./guests";
-import { runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
+import { armSweepIfSweepable, runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
 import { runFinalizeMatch } from "./progression";
 import { runRebuildLadder } from "./ladder";
 import { runRefillDevBotQueue } from "./devbots";
@@ -92,6 +92,8 @@ export const refillDevBotQueue = spacetimedb.reducer(
   { row: devbot_refill_schedule.rowType },
   (ctx, { row }) => {
     void row;
-    runRefillDevBotQueue(ctx);
+    // The sweep arming is handed in rather than imported by ./devbots, so that file and
+    // ./matchmaking do not import each other. This module already has both.
+    runRefillDevBotQueue(ctx, () => armSweepIfSweepable(ctx));
   },
 );

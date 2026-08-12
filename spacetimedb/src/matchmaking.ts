@@ -114,6 +114,27 @@ function sweepable(ctx: ReducerCtx): boolean {
 }
 
 /**
+ * Starts the sweep chain if the pool has become matchable and nothing is sweeping it.
+ *
+ * `enqueue` does this inline, on the transition, because it knows what the pool looked
+ * like a moment ago. Anything else that adds a queue row has to say so explicitly — see
+ * the dev-bot refill, which is the only other writer and the reason this is exported.
+ *
+ * The count guard is what keeps exactly one chain alive: a sweep re-arms itself while
+ * the pool is still matchable, so arming a second would leave the two feeding each
+ * other forever.
+ */
+export function armSweepIfSweepable(ctx: ReducerCtx): void {
+  if (!sweepable(ctx)) return;
+  if (ctx.db.matchmaking_sweep_schedule.count() > 0n) return;
+
+  ctx.db.matchmaking_sweep_schedule.insert({
+    scheduled_id: 0n,
+    scheduled_at: ScheduleAt.time(microsFrom(ctx.timestamp, 0)),
+  });
+}
+
+/**
  * Pairs everyone who can be paired, then re-arms itself while the pool still could.
  *
  * This replaces a two-second poll that every searching client ran for itself. With N
