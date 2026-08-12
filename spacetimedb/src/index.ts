@@ -70,6 +70,9 @@ export { enqueue, dequeue, surrender, myQueueStatus } from "./matchmaking";
 
 export { seedBots, startPractice } from "./bots";
 
+/** DEV ONLY. See the removal checklist at the bottom of ./devbots. */
+export { seedDevRankBots, devResolveNow, purgeDevRankBots } from "./devbots";
+
 export {
   createRoom,
   joinRoom,

@@ -1,3 +1,4 @@
+import { ScheduleAt } from "spacetimedb";
 import { t } from "spacetimedb/server";
 import { spacetimedb } from "./schema";
 import type { AnonymousViewCtx, ReducerCtx, ViewCtx } from "./ctx";
@@ -198,6 +199,16 @@ export const resetConfig = spacetimedb.reducer((ctx) => {
 });
 
 /**
+ * DEV ONLY — how often the rank-bot queue is topped back up.
+ *
+ * Defined here rather than in ./devbots, which owns everything else about them, purely
+ * so the arming below and `runRefillDevBotQueue` agree on one number without config
+ * importing devbots. It goes with the rest of the dev-bot code; see the removal
+ * checklist at the bottom of spacetimedb/src/devbots.ts.
+ */
+export const DEV_BOT_REFILL_INTERVAL_MS = 15_000;
+
+/**
  * Deployment-wide developer-features toggle. Admin only.
  *
  * Lives in the database rather than the environment because an operator has to be
@@ -216,6 +227,32 @@ export const setDevFeatures = spacetimedb.reducer(
       updatedAt: ctx.timestamp,
       updatedBy: senderUser(ctx)?.id,
     });
+
+    /**
+     * DEV ONLY — the rank-bot queue refill. See spacetimedb/src/devbots.ts.
+     *
+     * Deleting the interval row is what makes "off" cost nothing: Convex declared its
+     * cron in a file and had to gate the handler, so the job kept firing forever on a
+     * deployment that wanted none of it. Here the schedule is a row, so switching off
+     * removes it.
+     *
+     * Written INLINE rather than imported from ./devbots, which is where it belongs.
+     * That import would close a cycle — config → devbots → config, since the refill
+     * reads `devFeaturesEnabled` — and this module is already the one that a cycle
+     * bites first: it is imported by nearly everything. Two lines duplicated is the
+     * cheaper of the two, and `runRefillDevBotQueue` re-checks the flag anyway, so a
+     * row that outlives the switch deletes itself on its next firing.
+     */
+    if (!enabled) {
+      for (const row of ctx.db.devbot_refill_schedule.iter()) {
+        ctx.db.devbot_refill_schedule.scheduled_id.delete(row.scheduled_id);
+      }
+    } else if (ctx.db.devbot_refill_schedule.count() === 0n) {
+      ctx.db.devbot_refill_schedule.insert({
+        scheduled_id: 0n,
+        scheduled_at: ScheduleAt.interval(BigInt(DEV_BOT_REFILL_INTERVAL_MS) * 1_000n),
+      });
+    }
   },
 );
 

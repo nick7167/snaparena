@@ -29,6 +29,7 @@ import { runCleanupGuests } from "./guests";
 import { runSweepForfeits, runSweepMatchmaking } from "./matchmaking";
 import { runFinalizeMatch } from "./progression";
 import { runRebuildLadder } from "./ladder";
+import { runRefillDevBotQueue } from "./devbots";
 import { devFeaturesEnabled } from "./config";
 import { runBotAction as runBotActionFor } from "./bots";
 
@@ -86,9 +87,11 @@ export const rebuildLadder = spacetimedb.reducer(
   },
 );
 
+/** DEV ONLY. See spacetimedb/src/devbots.ts and its removal checklist. */
 export const refillDevBotQueue = spacetimedb.reducer(
   { row: devbot_refill_schedule.rowType },
-  (_ctx, { row }) => {
+  (ctx, { row }) => {
     void row;
+    runRefillDevBotQueue(ctx);
   },
 );

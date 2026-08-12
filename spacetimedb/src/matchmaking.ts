@@ -7,6 +7,7 @@ import { requireFullAccount } from "./users";
 import { currentVersionId, devFeaturesEnabled, resolveConfig } from "./config";
 import { enterPhase, finishMatch } from "./phases";
 import { pickVetoPool } from "./draft";
+import { pickDevOpponent } from "./devbots";
 import { requireCatalogue } from "./catalogue";
 import { eloBandFor } from "../../src/engine/matchmaking";
 import { canSurrender } from "../../src/engine/duel";
@@ -204,16 +205,21 @@ function pairFor(ctx: ReducerCtx, userId: bigint): bigint | undefined {
   /**
    * Prefer the longest-waiting opponent so nobody starves at the back of the pool.
    *
-   * DEV ONLY — the bot branch. With the rank bots seeded, "longest waiting" would
-   * return the same bot every time, because their rows are hours old. Preferring a
-   * queued human keeps the dev pool usable without changing what ranked does when
-   * the switch is off, which is the only state that ships.
+   * DEV ONLY — the bot branch. `pickDevOpponent` keeps this rule for humans and
+   * replaces it with nearest-rating for bots, because their queue rows are hours old
+   * and "longest waiting" would hand back the same bot every single time. It can also
+   * decline to pair at all for the first few seconds, so a search against a permanently
+   * stocked queue is still legible as a search. See spacetimedb/src/devbots.ts.
+   *
+   * Nothing changes when the switch is off, which is the only state that ships.
    */
   candidates.sort((a, b) => toMs(a.enqueuedAt) - toMs(b.enqueuedAt));
 
   const opponentEntry = devFeaturesEnabled(ctx)
-    ? candidates.find((entry) => !entry.isBot) ?? candidates[0]
+    ? pickDevOpponent(ctx, player, candidates, waitMs)
     : candidates[0];
+
+  if (!opponentEntry) return undefined;
 
   const opponent = ctx.db.user.id.find(opponentEntry.userId);
   if (!opponent) {

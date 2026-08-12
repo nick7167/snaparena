@@ -8,8 +8,9 @@ reading the code, and the ones that are easy to undo by accident.
 
 ```
 src/schema.ts     every table, and the schema() call that binds them
-src/schedules.ts  the nine scheduled reducers
+src/schedules.ts  the ten scheduled reducers
 src/index.ts      module entry: re-exports everything SpacetimeDB must discover
+src/devbots.ts    DEV ONLY, deleted before launch — see the checklist at its foot
 ```
 
 `index.ts` imports `./schedules` **before** `./schema`, deliberately. The two form
@@ -76,6 +77,20 @@ unique constraints. SpacetimeDB does.
 **`ADMIN_IMPORT_SECRET` is gone.** `init` captures the publisher's identity in
 `module_owner`; the import and seed scripts authenticate as the module owner
 rather than sharing a password with the deployment.
+
+## What is not here yet
+
+**Bot careers.** `convex/botprofiles.ts` played out a simulated past for every
+persona — record, level, badges, category strengths, a handful of persisted recent
+matches — so a bot read as an account rather than a placeholder. It has no
+equivalent here yet, so every seeded bot shows `0W · 0L`, Level 1 and no badges.
+
+This is cosmetic and contained: the pure half is `../src/engine/bot-career.ts`,
+which is untouched, still tested, and still produces byte-identical careers from a
+persona plus a seeded RNG. What is missing is only the writer over `user`,
+`user_badge`, `category_rating`, `match` and `match_player`. Nothing about how
+ranked *behaves* depends on it — the practice roster plays, the rank bots play, and
+the rating maths is the same either way.
 
 ## Rules for changing this module
 
