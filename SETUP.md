@@ -4,58 +4,107 @@
 cp .env.local.example .env.local
 ```
 
-`.env.local.example` documents every variable, which ones Convex writes for you, and
-which ones live on the Convex deployment rather than in the file.
+`.env.local.example` documents every variable. Note that some values do NOT live in
+that file: the module has no environment to read, so a few things are stored in the
+database itself and set once with a CLI call.
 
 ---
 
-## 1. Credentials
-
-### Convex — done
-
-`npx convex dev` has been run: `convex/_generated/` exists and `.env.local` holds
-`CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL`.
-
-With codegen in place the whole project typechecks: **`npm run typecheck` reports 0
-errors** and `npm run lint` is clean.
-
-### Clerk
-
-1. Create an application at [dashboard.clerk.com](https://dashboard.clerk.com) with
-   **Google** and **Discord** enabled as the only providers (one-click OAuth was a
-   deliberate product decision — no passwords, no email verification).
-2. Create a **JWT template** named `convex` (Clerk provides this template preset).
-3. Copy the Issuer URL from that template.
-
-Add to `.env.local`:
-
-```
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-CLERK_SECRET_KEY=sk_test_...
-NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
-```
-
-`convex/auth.config.ts` already exists and reads the issuer from the **deployment**
-environment, so you must set it there — putting it only in `.env.local` will not work,
-because JWT verification happens inside Convex, not in Next.js:
+## 1. The SpacetimeDB CLI
 
 ```bash
-npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev
+curl -sSf https://install.spacetimedb.com | sh
+spacetime --version    # must match the `spacetimedb` npm package major.minor
 ```
 
-> Heads up: `npx convex dev` will report `auth.config.ts` as invalid until that
-> variable is set on the deployment. That's the intended failure mode — auth silently
-> not working would be worse than a loud error.
+Version skew between the CLI and the `spacetimedb` package is a documented source
+of confusing build errors, so keep them in step.
 
-### Admin import secret
+## 2. A database
 
-Used by the content importer, which runs from a terminal and has no Clerk session:
+### Locally
 
 ```bash
-export ADMIN_IMPORT_SECRET="$(openssl rand -hex 24)"
-npx convex env set ADMIN_IMPORT_SECRET "$ADMIN_IMPORT_SECRET"
+spacetime start                       # in its own terminal
+npm run dev                           # publishes the module and starts Next.js
 ```
+
+`spacetime start` listens on `127.0.0.1:3000`, which is what
+`NEXT_PUBLIC_SPACETIMEDB_URI` defaults to.
+
+### On Maincloud
+
+```bash
+spacetime login
+spacetime publish <your-database-name> --server maincloud
+```
+
+**Database names are global on Maincloud.** If the name is taken you will get a 401
+or 403 that reads like an auth failure but is not — pick another name. Whatever name
+you land on goes in two places: `NEXT_PUBLIC_SPACETIMEDB_DB`, and the `snaparena`
+literal in the `stdb:*` scripts in `package.json`.
+
+Publishing captures the publisher's identity in the `module_owner` table. That
+identity is what the import and seed scripts authenticate as, and it is who grants
+the first admin — so publish as the account you intend to operate the game from.
+
+## 3. Clerk
+
+The app already uses Clerk for Google and Discord one-click sign-in; that part is
+unchanged. What changed is the bridge to the backend.
+
+1. **Create a JWT template.** Clerk dashboard → **Configure** → **JWT Templates** →
+   **New template** → **Blank**.
+   - Name it exactly **`spacetimedb`**. `src/app/providers.tsx` asks for it by name.
+   - Leave the signing algorithm on Clerk's default (RS256). SpacetimeDB fetches
+     the public keys from the issuer's OIDC discovery document, so a custom signing
+     key would have to be published somewhere it can reach.
+   - Optionally set an **audience**. Prefer to: without it, a token another
+     application legitimately issued to the same user could be replayed against
+     this database.
+   - The default token lifetime (60s) is fine. The client refreshes on a timer and
+     the token is only checked when a socket opens — see the long note in
+     `src/app/providers.tsx`.
+
+2. **Copy the Issuer URL** from that template. It looks like
+   `https://your-app.clerk.accounts.dev`.
+
+3. **Register it on the database.** This is the step that replaces
+   `npx convex env set CLERK_JWT_ISSUER_DOMAIN`:
+
+   ```bash
+   npm run stdb:auth -- '"https://your-app.clerk.accounts.dev"' '"your-audience"'
+   ```
+
+   Pass `'""'` as the audience to accept any `aud` from that issuer.
+
+   **Until you do this, every sign-in fails with "Unauthorized issuer".** That is
+   the intended failure mode, and the same call the Convex setup made: an empty
+   allow-list deliberately does not mean "accept anything", because that would
+   accept a token minted by any OIDC provider on the internet.
+
+4. **Grant yourself admin**, as the identity that published the database:
+
+   ```bash
+   spacetime call <your-database-name> set_role '"your-handle"' 'true'
+   ```
+
+## 4. Environment variables
+
+For Vercel, or `.env.local` locally:
+
+| Variable | Notes |
+|---|---|
+| `NEXT_PUBLIC_SPACETIMEDB_URI` | `https://maincloud.spacetimedb.com`, or your own host |
+| `NEXT_PUBLIC_SPACETIMEDB_DB` | the database name you published |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | unchanged |
+| `CLERK_SECRET_KEY` | unchanged |
+| `NEXT_PUBLIC_POSTHOG_KEY` | unchanged, and still optional |
+
+**Delete these** — nothing reads them any more: `CONVEX_DEPLOYMENT`,
+`NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CONVEX_SITE_URL`, `ADMIN_IMPORT_SECRET`, and
+`CLERK_JWT_ISSUER_DOMAIN` (the issuer lives in the database now, not the
+environment).
 
 ### PostHog (product analytics)
 
@@ -103,7 +152,7 @@ npm run ingest         # full run: ~120 calls, ~7 min at the rate limit
 Writes `data/tracks.json`. Verified against the live iTunes API — a smoke run
 returned 148 tracks across all 8 categories with **zero** missing preview URLs.
 
-Then, once Convex is configured:
+Then, once the module is published:
 
 ```bash
 npm run import-tracks
@@ -120,12 +169,13 @@ reproducible and reviewable before anything touches the database.
 npm run dev
 ```
 
-One command, one terminal. `dev` runs the Convex backend and the Next.js frontend
-together via `concurrently`, prefixed and colour-coded:
+One command, one terminal. `dev` runs `spacetime dev` and the Next.js frontend together via `concurrently`,
+prefixed and colour-coded. `spacetime dev` watches the module, republishes on
+change, and regenerates the client bindings in `src/module_bindings/`:
 
 ```
-[convex] ✔ Convex functions ready! (9.26s)
-[next]   ▲ Next.js 16.2.12  -  Local: http://localhost:3000
+[stdb] Build finished successfully.
+[next] ▲ Next.js 16.2.12  -  Local: http://localhost:3000
 ```
 
 `-k` links their lifetimes, so Ctrl+C stops both and a crash in either takes the other
@@ -134,7 +184,7 @@ down rather than leaving you with a half-running stack that looks fine.
 To run just one side:
 
 ```bash
-npm run dev:convex
+npm run dev:stdb
 npm run dev:next
 ```
 
@@ -145,11 +195,11 @@ npm run dev:next
 `/admin`, reachable from the account menu once your account holds the admin role.
 Nothing else links to it.
 
-The first admin cannot be granted by an admin, so it is bootstrapped from a terminal
-with the deployment secret:
+The first admin is granted by whoever published the database — the identity captured
+in `module_owner`. There is no shared secret any more:
 
 ```bash
-npx convex run roles:grantBySecret '{"secret":"…","handle":"your-handle"}'
+spacetime call <your-database-name> set_role '"your-handle"' 'true'
 ```
 
 After that, `/admin` grants the role to anyone else.
@@ -175,9 +225,9 @@ version rather than reusing the old row, because finished matches point at those
 ### Developer features
 
 The rank bots, the instant-win bar and the developer tools drawer are switched on from
-that page — **not** by `DEV_RANK_BOTS` any more. A Convex function cannot write its own
-environment, which is why the flag moved into the database; the old variable is read by
-nothing and can be removed from the deployment.
+that page — **not** by `DEV_RANK_BOTS` any more. A module cannot write its own
+environment, which is why the flag lives in the `settings` table; the old variable is
+read by nothing.
 
 > Deploying this leaves developer features **off**, even where the old variable is still
 > set. There is deliberately no fallback to it — turn them on in `/admin`.
@@ -228,10 +278,13 @@ signal (that would make latency decide who wins) and not to `audio.currentTime`
 (which resets to zero at every reveal beat, so it doesn't track round time). The
 server bounds the reported value from both directions in `validateClientClock`.
 
-**Autocomplete searches the whole catalogue on purpose.** `convex/tracks.ts`
-deliberately does not filter to the tracks in play. Scoping it to the match would
-let a player type two characters and read the answer off the dropdown.
+**Autocomplete searches the whole catalogue on purpose.** The suggestion list in
+`track_index` is deliberately not filtered to the tracks in play. Scoping it to the
+match would let a player type two characters and read the answer off the dropdown.
+It also carries titles only — never artist or artwork — so a suggestion cannot
+confirm a guess before it is submitted.
 
-**"First correct guess wins" needs no locking.** Convex mutations are serializable
+**"First correct guess wins" needs no locking.** Reducers are serializable
 transactions, so the second submitter's transaction observes the first one's write.
-This is the main reason the plan chose Convex over Neon.
+This was the main reason the original plan chose Convex over Neon, and it is the
+property SpacetimeDB preserved — it is why the guess pipeline needed no redesign.
