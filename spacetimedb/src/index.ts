@@ -44,4 +44,11 @@ export {
   myHandleProbe,
 } from "./users";
 
+export {
+  upsertCategories,
+  upsertTracks,
+  rebuildTitleIndex,
+  catalogueStats,
+} from "./catalogue";
+
 export { default } from "./schema";
