@@ -26,6 +26,7 @@ import {
 } from "./schema";
 import { runAdvancePhase, runDraftWatchdog, runWaitForReady } from "./phases";
 import { runCleanupGuests } from "./guests";
+import { runSweepMatchmaking } from "./matchmaking";
 
 export const advancePhase = spacetimedb.reducer(
   { row: phase_advance_schedule.rowType },
@@ -52,8 +53,9 @@ export const runBotAction = spacetimedb.reducer(
 
 export const sweepMatchmaking = spacetimedb.reducer(
   { row: matchmaking_sweep_schedule.rowType },
-  (_ctx, { row }) => {
+  (ctx, { row }) => {
     void row;
+    runSweepMatchmaking(ctx);
   },
 );
 

@@ -54,6 +54,10 @@ export {
 
 export { nudge } from "./phases";
 
+export { submitBan } from "./draft";
+
+export { enqueue, dequeue, surrender } from "./matchmaking";
+
 export {
   submitGuess,
   passRound,

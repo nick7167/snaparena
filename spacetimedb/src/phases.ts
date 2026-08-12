@@ -4,7 +4,8 @@ import { spacetimedb } from "./schema";
 import type { ReducerCtx } from "./ctx";
 import { microsFrom, timestampFrom, toMs } from "./lib";
 import { resolveConfig } from "./config";
-import type { MatchPhase } from "../../src/engine/config";
+import { difficultyTierForElo, pickTracksForMatch } from "./catalogue";
+import { MAX_DUEL_ROUNDS, STARTING_ELO, type MatchPhase } from "../../src/engine/config";
 import type { ResolvedConfig } from "../../src/engine/config-merge";
 import {
   damageMultiplier,
@@ -659,7 +660,55 @@ export function runDraftWatchdog(ctx: ReducerCtx, row: { matchId: bigint }): voi
  */
 export function closeDraft(ctx: ReducerCtx, match: MatchRow): void {
   if (match.phase !== "veto") return;
-  ctx.db.match.id.update({ ...match, status: "active" });
+
+  /**
+   * Tracks are chosen HERE, not at match creation, and that is what makes the bans
+   * mean anything: a banned category is banned because it never reaches this call.
+   *
+   * The previous version of this function moved straight to `veto_reveal` without
+   * choosing any, so `match_track` was never written and `trackForRound` returned
+   * undefined for every round of every match.
+   */
+  const ratings = match.playerIds.map(
+    (id) => ctx.db.user.id.find(id)?.elo ?? STARTING_ELO,
+  );
+  const averageElo =
+    ratings.reduce((sum, value) => sum + value, 0) / (ratings.length || 1);
+
+  const trackIds = pickTracksForMatch(ctx, {
+    targetTier: difficultyTierForElo(averageElo),
+    bannedCategoryIds: match.bannedCategoryIds,
+    count: MAX_DUEL_ROUNDS,
+  });
+
+  if (trackIds.length < MAX_DUEL_ROUNDS) {
+    // Not enough catalogue to run the full distance — abandon rather than repeat
+    // songs, which would let a player who already heard one score for free.
+    ctx.db.match.id.update({
+      ...match,
+      status: "abandoned",
+      phase: "match_end",
+      phaseEndsAt: undefined,
+    });
+    return;
+  }
+
+  trackIds.forEach((trackId, roundIndex) => {
+    ctx.db.match_track.insert({
+      id: 0n,
+      matchId: match.id,
+      roundIndex,
+      trackId,
+    });
+  });
+
+  ctx.db.match.id.update({ ...match, status: "active", currentRound: 0 });
+
+  /**
+   * A beat to show what the draft produced, before the countdown takes over. The
+   * tracks are already picked by the time we get here, so the reveal is showing a
+   * settled fact rather than holding anything up.
+   */
   enterPhase(ctx, match.id, "veto_reveal");
 }
 
