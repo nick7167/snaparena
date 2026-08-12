@@ -8,6 +8,7 @@ import { matchupLabel, rankForElo } from "@/engine/ranks";
 import { damageMultiplier, wonRound } from "@/engine/duel";
 import { revealBeatAt } from "@/engine/scoring";
 import type { ResolvedConfig } from "@/engine/config-merge";
+import { VETO_BANS_PER_PLAYER } from "@/engine/config";
 
 /**
  * The client's read layer.
@@ -960,4 +961,72 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
     matchId, match, players, results, users, usersReady,
     reveals, revealsReady, logs, logsReady, me, config,
   ]);
+}
+
+/** Bans placed across the whole draft, both players combined. Mirrors the module. */
+const TOTAL_BANS = VETO_BANS_PER_PLAYER * 2;
+
+/**
+ * The ban draft: the pool, whose turn it is, and who you are drafting against.
+ *
+ * REPLACES `api.ranked.draftState`. Everything it needs is on the match row — the pool,
+ * the bans placed, the turn order and the deadline — so this resolves category names and
+ * the opponent and does the turn arithmetic the module does, from the same fields.
+ *
+ * The opponent is NAMED rather than called "your opponent": watching a specific player
+ * take away country is a read on who you are about to play, which is the point of a draft.
+ */
+export function useDraftState(matchId: bigint | undefined) {
+  const me = useMe();
+  const match = useMatch(matchId);
+  const categories = useCategories();
+  const [users, usersReady] = useTable(tables.user, { enabled: matchId !== undefined });
+
+  return useMemo(() => {
+    if (matchId === undefined) return null;
+    if (match === undefined || categories === undefined || me === undefined) {
+      return undefined;
+    }
+    if (!usersReady) return undefined;
+    if (match === null || me === null) return null;
+
+    const byId = new Map(categories.map((row) => [row.id, row]));
+    const banned = new Set(match.bannedCategoryIds);
+
+    const opponentId = match.playerIds.find((id) => id !== me.id);
+    const opponent = opponentId === undefined ? null : users.find((row) => row.id === opponentId);
+
+    /**
+     * Whose turn it is. The order alternates through `banOrder`, wrapping for the second
+     * round of bans — the same arithmetic `draftTurnOwner` does in the module, because
+     * two copies of a turn rule is how a draft starts disagreeing with itself.
+     */
+    const turnOwner =
+      match.banOrder.length === 0 || match.banTurn >= TOTAL_BANS
+        ? undefined
+        : match.banOrder[match.banTurn % match.banOrder.length];
+
+    return {
+      pool: match.vetoPoolIds
+        .map((id) => byId.get(id))
+        .filter((row) => row !== undefined)
+        .map((row) => ({ id: row.id, name: row.name, banned: banned.has(row.id) })),
+      bansPlaced: match.banTurn,
+      totalBans: TOTAL_BANS,
+      isMyTurn: turnOwner === me.id,
+      deadline:
+        match.vetoDeadline === undefined
+          ? null
+          : Number(match.vetoDeadline.microsSinceUnixEpoch / 1_000n),
+      opponent: opponent
+        ? {
+            displayName: opponent.displayName,
+            handle: opponent.handle,
+            avatarUrl: publicAvatarUrl(opponent) ?? null,
+            elo: opponent.elo,
+            isBot: opponent.isBot,
+          }
+        : null,
+    };
+  }, [matchId, match, categories, me, users, usersReady]);
 }

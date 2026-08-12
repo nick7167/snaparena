@@ -1,19 +1,19 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useMutation, useQuery } from "convex/react";
+import { useReducer as useStdbReducer } from "spacetimedb/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   getDevToolsServerSnapshot,
   getDevToolsSnapshot,
   subscribeDevTools,
 } from "@/ui/dev-tools";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { reducers } from "@/module_bindings";
+import { useDraftState, useIsAdmin, useMatchState } from "@/app/db";
+import { useConfig, useDevFeatures } from "@/app/config";
 import { VETO_PHASE_MS } from "@/engine/config";
 import { play } from "@/audio/sfx";
 import { Avatar, BotBadge, PhaseTimer, nameFor } from "./ui";
-import { useOnForeground } from "./usePageLifecycle";
 import { Button } from "@/ui/Button";
 import { RoundRunner } from "./RoundRunner";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -28,46 +28,24 @@ import { snap } from "@/ui/motion";
  * so the draft, the presence heartbeat and the forfeit rule can never drift between
  * them. Lifted out of ranked/page.tsx when practice got its own route.
  */
-export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeave: () => void }) {
-  const match = useQuery(api.matches.state, { matchId });
-  const heartbeat = useMutation(api.ranked.heartbeat);
+export function DuelMatch({ matchId, onLeave }: { matchId: bigint; onLeave: () => void }) {
+  const config = useConfig();
+  const match = useMatchState(matchId, config);
 
   /**
-   * Presence: silence past the grace period forfeits, which is what stops a losing
-   * player from simply closing the tab.
+   * PRESENCE IS NO LONGER SOMETHING THIS SCREEN SENDS.
    *
-   * Gated on the match still being live. Hooks cannot sit below the `if (!match)` return
-   * further down, so the guard goes inside the effect instead — without it this kept
-   * firing twice every five seconds for as long as the results screen stayed open, which
-   * is unbounded: nothing makes you leave it. Presence past the final round is read by
-   * nobody, since `claimForfeit` itself returns early unless the match is active.
+   * A five-second heartbeat existed because Convex could not observe a closed socket, so
+   * liveness had to be inferred from a client writing a timestamp on a timer — and the
+   * whole apparatus around it, the visibility handler included, existed because a frozen
+   * interval could burn the entire reconnect grace before the first beat landed. That is
+   * how glancing at a notification could lose a rated match.
    *
-   * `status`, not `phase` — the draft runs under `status: "veto"`, and `match_end` is
-   * also the phase an abandoned match is left in.
-   *
-   * One call, not two: `heartbeat` runs the forfeit sweep itself now. Reporting that you
-   * are here and noticing that your opponent is not are the same moment, and splitting
-   * them across two mutations doubled the traffic to say it.
+   * SpacetimeDB delivers the disconnection. `onDisconnect` arms the forfeit sweep at the
+   * moment the socket drops and the sweep re-checks the connection table when it fires,
+   * so a player who comes back inside the grace window has forfeited nothing and never
+   * had to say so.
    */
-  const live = match?.status === "veto" || match?.status === "active";
-  useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => void heartbeat({ matchId }), 5000);
-    return () => clearInterval(id);
-  }, [live, matchId, heartbeat]);
-
-  /**
-   * Report back the instant the tab is visible again, rather than up to five seconds later.
-   *
-   * The interval above is frozen while the page is hidden, so the entire twenty-second
-   * reconnect grace can be spent before the first beat lands — which is how glancing at a
-   * notification turned into losing a rated match. This cannot forfeit the returning
-   * player: `heartbeat` writes presence before it sweeps, so the first call back refreshes
-   * this player's own timestamp before anything looks at it.
-   */
-  useOnForeground(() => {
-    if (live) void heartbeat({ matchId });
-  });
 
   if (!match) return <p className="text-body text-muted px-4">Loading…</p>;
 
@@ -97,9 +75,8 @@ export function DuelMatch({ matchId, onLeave }: { matchId: Id<"matches">; onLeav
  * holds the admin role. The flag is a database row read from the server rather than a
  * NEXT_PUBLIC_ variable, so there is nothing to keep in sync with Vercel.
  */
-function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
-  const dev = useQuery(api.devbots.enabled, {});
-  const resolveNow = useMutation(api.devbots.resolveNow);
+function DevResolveBar({ matchId }: { matchId: bigint }) {
+  const dev = useDevFeatures();
   /**
    * The role gate, matching `DevPanel`.
    *
@@ -109,7 +86,7 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
    * obscurity rather than a gate. `devbots.resolveNow` enforces the same rule server-side;
    * this is what stops the control being drawn in the first place.
    */
-  const me = useQuery(api.roles.amIAdmin, {});
+  const me = useIsAdmin();
   /**
    * The third gate.
    *
@@ -125,7 +102,17 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
     getDevToolsServerSnapshot,
   );
 
-  if (!dev?.enabled || !me?.admin || !tools.resolveBar) return null;
+  /**
+   * Held closed until the dev-bot module is ported.
+   *
+   * `devbots.resolveNow` forced a rated match to a chosen outcome, and there is no
+   * reducer behind it yet. Drawing a button that cannot act is worse than drawing none,
+   * so the bar stays hidden rather than pretending — the gates below are unchanged and
+   * come back with it.
+   */
+  const resolveNowAvailable = false;
+
+  if (!dev || !me || !tools.resolveBar || !resolveNowAvailable) return null;
 
   return (
     // Top right, clear of the guess combobox and the HP bars — this is a scaffold, and a
@@ -137,7 +124,7 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
           key={outcome}
           variant="secondary"
           size="sm"
-          onClick={() => void resolveNow({ matchId, outcome })}
+          onClick={() => undefined}
         >
           {outcome === "win" ? "Win" : outcome === "loss" ? "Lose" : "Random"}
         </Button>
@@ -152,14 +139,18 @@ function DevResolveBar({ matchId }: { matchId: Id<"matches"> }) {
  * Alternating rather than simultaneous, so each ban is a read on your opponent.
  * The lower-rated player bans first.
  */
-function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
+function VetoPhase({ matchId }: { matchId: bigint }) {
   // The draft is part of the match, and used to be the one screen that did not say so —
   // the mobile tab bar reappeared for its fifteen seconds and then vanished again.
   useImmersive();
 
-  const draft = useQuery(api.ranked.draftState, { matchId });
-  const submitBan = useMutation(api.ranked.submitBan);
-  const expireVeto = useMutation(api.ranked.expireVeto);
+  const draft = useDraftState(matchId);
+  const submitBan = useStdbReducer(reducers.submitBan);
+  /**
+   * `ranked.expireVeto` is gone. It was a client-driven fallback so an idle opponent
+   * could not stall the draft forever; the module arms a watchdog for every draft when
+   * it opens, so a draft nobody is driving closes itself without a browser being open.
+   */
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
 
@@ -171,20 +162,11 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
    * round trip that could only ever no-op — two players' worth, every two seconds, for
    * the whole draft.
    */
-  const vetoDeadline = draft?.deadline ?? null;
-  useEffect(() => {
-    if (!vetoDeadline) return;
-    const id = setInterval(() => {
-      if (Date.now() > vetoDeadline + 1_500) void expireVeto({ matchId });
-    }, 2000);
-    return () => clearInterval(id);
-  }, [vetoDeadline, matchId, expireVeto]);
-
   if (!draft) return <p className="text-body text-muted px-4">Loading draft…</p>;
 
   const opponentName = draft.opponent ? nameFor(draft.opponent) : "Opponent";
 
-  async function ban(categoryId: Id<"categories">) {
+  async function ban(categoryId: bigint) {
     setPlacing(true);
     setError(null);
     try {
@@ -293,10 +275,10 @@ function VetoPhase({ matchId }: { matchId: Id<"matches"> }) {
  * Reads the same `draftState` the draft does, so no new query and no new server data —
  * the `banned` flags were already on the wire.
  */
-function VetoResult({ matchId }: { matchId: Id<"matches"> }) {
+function VetoResult({ matchId }: { matchId: bigint }) {
   useImmersive();
 
-  const draft = useQuery(api.ranked.draftState, { matchId });
+  const draft = useDraftState(matchId);
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
