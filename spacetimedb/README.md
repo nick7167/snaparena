@@ -84,6 +84,24 @@ unique constraints. SpacetimeDB does.
 `module_owner`; the import and seed scripts authenticate as the module owner
 rather than sharing a password with the deployment.
 
+## What is not here yet
+
+**The backend test suite.** Every Convex *function* is ported; its ~2,700 lines of
+tests are not. They lived in `convex/*.test.ts` and ran under `convex-test`, an
+in-memory harness with no SpacetimeDB equivalent — a reducer needs a running
+database, so the replacement is integration tests against a local `spacetime
+start` rather than a port. `vitest.config.mts` records the same thing next to the
+`include` that no longer picks them up.
+
+What that leaves covered, and what it does not: the 378 engine tests are the
+regression net for every gameplay number, because the module imports
+`../src/engine/` rather than reimplementing any of it — scoring, Elo, XP, badges
+and rank thresholds cannot drift without them going red. The e2e suite drives the
+real database end to end. What has no automated coverage is the reducer layer in
+between: phase transitions, forfeit sweeps, ladder rebuilds and matchmaking
+pairing, which is where `convex/phases.test.ts` and `convex/matchmaking.test.ts`
+used to be.
+
 ## Rules for changing this module
 
 1. Adding a column to a public table? Ask whether it names a song that has not
