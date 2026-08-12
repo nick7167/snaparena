@@ -1106,6 +1106,23 @@ const matchmaking_sweep_schedule = table(
   },
 );
 
+/**
+ * Applies rating, XP and badges after a match ends.
+ *
+ * Scheduled at zero delay rather than called inline, so the phase machine stays
+ * independent of the progression rules — the same separation the Convex version
+ * kept by scheduling `progression.finalizeMatch`. It also means a change to how a
+ * match pays out cannot break the machine that ends one.
+ */
+const finalize_schedule = table(
+  { name: "finalize_schedule", scheduled: (): any => finalizeMatch },
+  {
+    scheduled_id: t.u64().primaryKey().autoInc(),
+    scheduled_at: t.scheduleAt(),
+    matchId: t.u64(),
+  },
+);
+
 /** Armed when a player's last connection drops mid-ranked-match. */
 const forfeit_sweep_schedule = table(
   { name: "forfeit_sweep_schedule", scheduled: (): any => sweepForfeits },
@@ -1191,6 +1208,7 @@ export const spacetimedb = schema({
   draft_watchdog_schedule,
   bot_action_schedule,
   matchmaking_sweep_schedule,
+  finalize_schedule,
   forfeit_sweep_schedule,
   guest_cleanup_schedule,
   ladder_rebuild_schedule,
@@ -1218,6 +1236,7 @@ export {
   draft_watchdog_schedule,
   bot_action_schedule,
   matchmaking_sweep_schedule,
+  finalize_schedule,
   forfeit_sweep_schedule,
   guest_cleanup_schedule,
   ladder_rebuild_schedule,
@@ -1228,6 +1247,7 @@ export {
 // Defined in the reducer modules; imported here only to close the cycle.
 import {
   advancePhase,
+  finalizeMatch,
   waitForReady,
   draftWatchdog,
   runBotAction,

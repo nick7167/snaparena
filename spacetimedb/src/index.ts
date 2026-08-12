@@ -22,6 +22,7 @@ export {
   cleanupGuests,
   rebuildLadder,
   refillDevBotQueue,
+  finalizeMatch,
 } from "./schedules";
 
 export {
@@ -50,5 +51,15 @@ export {
   rebuildTitleIndex,
   catalogueStats,
 } from "./catalogue";
+
+export { nudge } from "./phases";
+
+export {
+  saveConfig,
+  revertConfig,
+  resetConfig,
+  setDevFeatures,
+  currentConfigVersion,
+} from "./config";
 
 export { default } from "./schema";

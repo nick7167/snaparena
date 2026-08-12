@@ -1,5 +1,5 @@
 import { SenderError } from "spacetimedb/server";
-import type { Timestamp } from "spacetimedb";
+import { Timestamp } from "spacetimedb";
 
 /**
  * Shared helpers. Nothing here defines a reducer, a view or a table, so this
@@ -39,6 +39,17 @@ export function msToMicros(ms: number): bigint {
 /** A point `deltaMs` in the future, in the microseconds `ScheduleAt.time` takes. */
 export function microsFrom(now: Timestamp, deltaMs: number): bigint {
   return now.microsSinceUnixEpoch + BigInt(Math.max(0, Math.round(deltaMs))) * MICROS_PER_MS;
+}
+
+/**
+ * The same point as a `Timestamp`, for writing into a column.
+ *
+ * `ScheduleAt.time` wants raw microseconds while a timestamp column wants the
+ * class, so both shapes are needed and building the object literal by hand does
+ * not typecheck — `Timestamp` carries methods, not just the field.
+ */
+export function timestampFrom(now: Timestamp, deltaMs: number): Timestamp {
+  return new Timestamp(microsFrom(now, deltaMs));
 }
 
 /**
