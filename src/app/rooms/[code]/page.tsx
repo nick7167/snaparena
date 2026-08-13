@@ -32,11 +32,12 @@ export default function RoomPage() {
    * Arriving via a shared link should put you in the room, not just show it to you.
    * Deliberately not attempted for a closed room, which cannot be joined.
    *
-   * `room` is a subscription result, so it is a fresh object on every push, and the
-   * server REFUSES a full or in-progress room by returning a status rather than by
-   * throwing. Together that meant a non-member looking at such a room re-sent `join` on
-   * every push — and one member toggling ready is a push, so a lobby of eight idly
-   * flicking Ready amplified into a mutation each time.
+   * `room` is a subscription result, so it is a fresh object on every push. `joinRoom`
+   * REJECTS a full or in-progress room — `reject()` throws a `SenderError`, it does not
+   * return a status — so without the latch below a non-member looking at such a room
+   * re-sent `join` on every push and ate the rejection silently every time, and one
+   * member toggling ready is a push, so a lobby of eight idly flicking Ready amplified
+   * into a mutation each time.
    *
    * The latch is the joinability-relevant shape of the room rather than the room itself,
    * so a retry still happens exactly when one could newly succeed: a seat coming free
@@ -45,6 +46,7 @@ export default function RoomPage() {
    * arrived and then emptied.
    */
   const attempted = useRef<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
   useEffect(() => {
     if (!room || !me) return;
     if (room.status === "closed") return;
@@ -54,7 +56,13 @@ export default function RoomPage() {
     if (attempted.current === shape) return;
     attempted.current = shape;
 
-    void join({ code });
+    // Unguarded before: a rejection (full, in progress) was an unhandled promise
+    // rejection with nothing on screen — the roster just sat there as if joining had
+    // never been attempted.
+    setJoinError(null);
+    join({ code }).catch((caught) => {
+      setJoinError(caught instanceof Error ? caught.message : "Could not join this room.");
+    });
   }, [room, me, join, code]);
 
   if (room === undefined) {
@@ -246,6 +254,12 @@ export default function RoomPage() {
                   ? "Start match"
                   : `Start anyway · ${notReady} not ready`}
             </Button>
+          ) : joinError && !isMember ? (
+            // The auto-join above failed (full, mid-match) — "Waiting for the host" would
+            // be wrong here, since this viewer was never seated.
+            <p className="text-body-sm text-signal-text text-center" role="alert">
+              {joinError}
+            </p>
           ) : (
             <p className="text-body text-muted text-center" role="status">
               Waiting for the host to start…

@@ -87,7 +87,10 @@ function Daily() {
   }, [me]);
 
   const [matchId, setMatchId] = useState<bigint | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // The only reason `startDaily` rejects — see `begin` below. There is no
+  // "already played" status alongside it: that case does not reject at all, the
+  // reducer just no-ops, so `myRun` catching up is what handles it, not this.
+  const [status, setStatus] = useState<"catalogue-too-small" | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,6 +128,7 @@ function Daily() {
   async function begin() {
     setStarting(true);
     setError(null);
+    setStatus(null);
     try {
       /**
        * The one place a guest identity is created — the module mints it for the
@@ -140,8 +144,20 @@ function Daily() {
       // `is_guest` is the denominator of the guest-to-signup funnel, and nothing in the
       // app could previously report it.
       track("daily_start", { is_guest: !isSignedIn, resumed: activeRun !== null });
-    } catch {
-      setError("Could not start today's run. Check your connection and try again.");
+    } catch (caught) {
+      /**
+       * `startDaily` has exactly one rejection: the catalogue is too thin to build
+       * five songs (`daily.ts:109`, `reject("Not enough playable songs yet")`). That
+       * used to have nowhere to go — `setStatus` was declared and never called, so
+       * this branch fell into the same "check your connection" copy as a genuine
+       * network failure, which tells a player to retry something retrying cannot fix.
+       */
+      const message = caught instanceof Error ? caught.message : "";
+      if (message.includes("Not enough playable songs yet")) {
+        setStatus("catalogue-too-small");
+      } else {
+        setError("Could not start today's run. Check your connection and try again.");
+      }
     } finally {
       setStarting(false);
     }
@@ -180,18 +196,6 @@ function Daily() {
           <Empty
             title="The catalogue is too small"
             body="There aren't enough tracks to build today's set yet."
-          />
-        ) : status === "already-played" ? (
-          /**
-           * Handled explicitly rather than falling through to `Landing`.
-           *
-           * `myRun` normally resolves first and renders the result, so this is a race
-           * — a second tab, or a slow subscription. It used to land on "Five songs… /
-           * Start", which invites someone to start a run the server has already refused.
-           */
-          <Empty
-            title="You've already played today"
-            body="Your result is on its way — refresh if it doesn't appear."
           />
         ) : (
           <Landing

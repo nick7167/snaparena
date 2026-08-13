@@ -22,14 +22,6 @@ import { timeAgo } from "@/ui/relative-time";
 const NOT_CODE = /[^ABCDEFGHJKMNPQRSTUVWXYZ23456789]/g;
 const CODE_LENGTH = 5;
 
-function joinError(status: string): string {
-  if (status === "no-such-room") return "No room with that code.";
-  if (status === "full") return "That room is full.";
-  if (status === "in-progress") return "That room is mid-match — try again shortly.";
-  if (status === "closed") return "That room has closed.";
-  return "Could not join.";
-}
-
 export default function RoomsPage() {
   return (
     <LobbyColumn>
@@ -83,6 +75,11 @@ function CreateAndJoin() {
   const knownRooms = useRef<Set<bigint>>(new Set());
   const awaitingCreate = useRef(false);
 
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
+
   useEffect(() => {
     if (!awaitingCreate.current || !rooms) return;
 
@@ -90,13 +87,13 @@ function CreateAndJoin() {
     if (!fresh) return;
 
     awaitingCreate.current = false;
+    // The spinner has to stop here, not in `handleCreate`'s `try` — that block resolves
+    // the instant the reducer call is acknowledged, well before the new room actually
+    // shows up in `rooms`. Without this the button spun until something else re-rendered
+    // the page, which on a quiet subscription could be never.
+    setCreating(false);
     router.push(`/rooms/${fresh.code}`);
   }, [rooms, router]);
-
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [joining, setJoining] = useState(false);
 
   /**
    * Both actions used to run bare — no pending flag, no disable, no catch. On a slow
@@ -104,6 +101,16 @@ function CreateAndJoin() {
    * reading was "that did not work" and a second tap made a second room.
    */
   async function handleCreate() {
+    /**
+     * `rooms` is `undefined` until `useMyRooms` has actually loaded, and `?? []` used to
+     * paper over that by seeding an empty set. A fast tap on Create before that first
+     * load then had nothing to diff the new room out of — the effect below found
+     * whichever pre-existing room happened to already be sitting in the subscription and
+     * routed there instead. Falling back to only new-room-tracking once the roster is
+     * genuinely known avoids diffing against a set that was never real.
+     */
+    if (rooms === undefined) return;
+
     setCreating(true);
     setError(null);
     try {
@@ -113,7 +120,7 @@ function CreateAndJoin() {
        * routes into it — which is also what makes this survive a slow round trip that
        * the old `await` would have raced.
        */
-      knownRooms.current = new Set(rooms?.map((room) => room.id) ?? []);
+      knownRooms.current = new Set(rooms.map((room) => room.id));
       awaitingCreate.current = true;
       await create();
     } catch {
@@ -142,7 +149,15 @@ function CreateAndJoin() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Button size="lg" block loading={creating} onClick={() => void handleCreate()}>
+      <Button
+        size="lg"
+        block
+        loading={creating}
+        // `rooms` has to have loaded once before `handleCreate` can safely diff a new
+        // room out of it; see the guard there.
+        disabled={rooms === undefined}
+        onClick={() => void handleCreate()}
+      >
         <Glyph name="timer" filled />
         Create a room
       </Button>

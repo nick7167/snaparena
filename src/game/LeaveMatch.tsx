@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { reducers } from "@/module_bindings";
 import { SURRENDER_FROM_ROUND } from "@/engine/config";
 import { useQueue } from "@/app/queue-driver";
+import { useMe, useMyRooms } from "@/app/db";
 import { Button } from "@/ui/Button";
 import { Dialog } from "@/ui/Dialog";
 import { Glyph } from "@/ui/Glyph";
@@ -24,11 +25,29 @@ const EXIT_HREF: Record<LeaveMode, string> = {
  * What leaving actually costs, per mode. Stated plainly rather than softened — a confirm
  * that undersells the consequence is worse than no confirm at all.
  */
-const CONSEQUENCE: Record<LeaveMode, { title: string; body: string; action: string }> = {
+const CONSEQUENCE: Record<
+  LeaveMode | "rankedEarly",
+  { title: string; body: string; action: string }
+> = {
   ranked: {
     title: "Leave this duel?",
     body: "This counts as a loss and your rating will drop.",
     action: "Leave and forfeit",
+  },
+  /**
+   * Rounds 0-1 of a ranked duel, where `surrender` no-ops server-side (see `canSurrender`
+   * in matchmaking.ts). "Leave and forfeit" was a lie here: no reducer ran, the match
+   * stayed live, and the player was routed to `/ranked` — the page that was already
+   * showing the match — so it kept showing it. Closing the connection is the only thing
+   * that starts the forfeit clock this early.
+   */
+  rankedEarly: {
+    title: "Leave this duel?",
+    body:
+      `You can't resign before round ${SURRENDER_FROM_ROUND + 1} — the server ignores it. ` +
+      "The match stays live and this screen keeps showing it. Close the tab if you need to " +
+      "go; it counts as a loss once the forfeit sweep notices you're gone.",
+    action: "Leave anyway",
   },
   practice: {
     title: "Leave this match?",
@@ -85,6 +104,7 @@ export function LeaveMatch({
   const queue = useQueue();
   const surrender = useStdbReducer(reducers.surrender);
   const forfeitDaily = useStdbReducer(reducers.forfeitDaily);
+  const leaveRoom = useStdbReducer(reducers.leaveRoom);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
   /** Lets the unload guard stand down for a departure the player already agreed to. */
@@ -92,29 +112,54 @@ export function LeaveMatch({
 
   const rated = mode === "ranked" || mode === "practice";
 
+  /**
+   * Ranked keeps the early-round gate: before `SURRENDER_FROM_ROUND` the server ignores
+   * `surrender` outright (see `canSurrender` in matchmaking.ts), and there is no other
+   * write that ends the match — closing the connection is what actually starts the
+   * forfeit clock this early. Practice has no such gate: the forfeit sweep only looks
+   * at ranked matches, so an unresigned practice match would stay `active` forever and
+   * keep routing the player back into it. Practice moves no rating, so resigning
+   * immediately costs nothing and is the only thing that ends it.
+   */
+  const canResign = mode === "practice" || (currentRound ?? 0) >= SURRENDER_FROM_ROUND;
+
+  /**
+   * `leaveRoom` takes the room's own id, not the match id this component is handed —
+   * they are different sequences. There is no prop carrying it (the match row's
+   * `roomId` is not surfaced by `useMatchState`), so it is recovered from the rooms the
+   * player is currently in, matched by which one's match is this one.
+   */
+  const me = useMe();
+  const myRooms = useMyRooms(mode === "room" ? me?.id : undefined, 20);
+  const roomId = myRooms?.find((room) => room.activeMatchId === matchId)?.roomId;
+
   const leave = useCallback(async () => {
     setLeaving(true);
     departing.current = true;
 
-    /**
-     * Resign properly when the server will take it, so the opponent is released
-     * immediately rather than waiting out the presence grace period.
-     *
-     * Ranked keeps the early-round gate: before `SURRENDER_FROM_ROUND` the server refuses,
-     * that is deliberate, and leaving early instead stops the heartbeat so the forfeit
-     * sweep resolves it. Either way it is a loss, which is what the confirm said.
-     *
-     * Practice does NOT, and must not, because nothing would ever resolve it: the sweep
-     * only looks at ranked matches, so an unresigned practice match stays `active` forever
-     * and `ranked.activeMatch` keeps routing the player back into it. Practice moves no
-     * rating, so resigning immediately costs nothing and is the only thing that ends it.
-     */
-    const canResign = mode === "practice" || (currentRound ?? 0) >= SURRENDER_FROM_ROUND;
+    // A resignation the server accepts is a loss, which is what the confirm says from
+    // round `SURRENDER_FROM_ROUND` on. Before that it is not attempted at all — the
+    // `rankedEarly` copy says so instead of promising a forfeit that will not happen.
     if (rated && matchId && canResign && live) {
       try {
         await surrender({ matchId });
       } catch {
         // A refused resignation still means leaving; the forfeit path covers it.
+      }
+    }
+
+    /**
+     * Rooms have no concede — `surrender` no-ops for `mode === "room"` on the server,
+     * because a room eliminates rather than concedes. `leaveRoom` is the only write that
+     * records the departure; it drops the player from the room's roster (and hands off
+     * the host, or closes the room, if that was the last seat) without touching the
+     * match itself, which keeps running for whoever is left.
+     */
+    if (mode === "room" && roomId !== undefined) {
+      try {
+        await leaveRoom({ roomId });
+      } catch {
+        // Nothing useful to retry from a confirm dialog; the player is leaving either way.
       }
     }
 
@@ -136,15 +181,33 @@ export function LeaveMatch({
     }
 
     // Ranked holds the match id in the queue driver so a reload drops you back in. Without
-    // clearing it, navigating to /ranked would put you straight back into the match.
+    // clearing it, navigating to /ranked would put you straight back into the match — and
+    // for an early-round ranked leave, where nothing above actually ended the match, the
+    // driver's own reconciliation re-adopts it anyway; see queue-driver.tsx's `announced`
+    // effect for why that no longer forces navigation back onto whatever page this was.
     queue.clearMatch();
     router.push(EXIT_HREF[mode]);
-  }, [rated, matchId, currentRound, live, surrender, forfeitDaily, queue, router, mode]);
+  }, [
+    rated,
+    matchId,
+    canResign,
+    live,
+    surrender,
+    forfeitDaily,
+    mode,
+    roomId,
+    leaveRoom,
+    queue,
+    router,
+  ]);
 
   // Only rated, in-progress matches have anything to lose to a stray Back press.
   useDepartureWarning(rated && live, departing, () => setConfirming(true));
 
-  const copy = CONSEQUENCE[mode];
+  // Rounds 0-1 of a ranked duel get the honest variant: "Leave and forfeit" implies a
+  // write happens on confirm, and here none does.
+  const copy =
+    mode === "ranked" && live && !canResign ? CONSEQUENCE.rankedEarly : CONSEQUENCE[mode];
 
   return (
     <>

@@ -4,6 +4,7 @@ import { useTable, useReducer, useSpacetimeDB } from "spacetimedb/react";
 import { useEffect, useMemo } from "react";
 import { reducers, tables } from "@/module_bindings";
 import { computeStreak } from "@/engine/streak";
+import { sortBadges } from "@/engine/badges";
 import { matchupLabel, rankForElo } from "@/engine/ranks";
 import { damageMultiplier, wonRound } from "@/engine/duel";
 import { revealBeatAt } from "@/engine/scoring";
@@ -767,6 +768,17 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
     tables.roundLog.where((row) => row.matchId.eq(matchId ?? 0n)),
     { enabled: matchId !== undefined },
   );
+  /**
+   * The opponent-card extras below need both tables in full, unfiltered like `users`
+   * above: `user_badge` and `category_rating` are keyed by userId, not matchId, so
+   * there is no server-side filter that narrows to "this match's roster" — the client
+   * does that the same way it already does for `users`.
+   */
+  const [badges, badgesReady] = useTable(tables.userBadge, { enabled: matchId !== undefined });
+  const [ratings, ratingsReady] = useTable(tables.categoryRating, {
+    enabled: matchId !== undefined,
+  });
+  const categories = useCategories();
 
   return useMemo(() => {
     if (matchId === undefined) return null;
@@ -774,10 +786,20 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
       return undefined;
     }
     if (!usersReady || !revealsReady || !logsReady) return undefined;
+    if (!badgesReady || !ratingsReady || categories === undefined) return undefined;
     if (match === null) return null;
 
     const byId = new Map(users.map((row) => [row.id, row]));
+    const categoryById = new Map(categories.map((row) => [row.id, row]));
     const round = match.currentRound;
+
+    /** The genre a player's rating is highest in — `null` until they have any rated games. */
+    const bestCategoryFor = (userId: bigint): string | null => {
+      const mine = ratings.filter((row) => row.userId === userId);
+      if (mine.length === 0) return null;
+      const top = mine.reduce((best, row) => (row.rating > best.rating ? row : best));
+      return categoryById.get(top.categoryId)?.name ?? null;
+    };
 
     const revealFor = (index: number) =>
       reveals.find((row) => row.roundIndex === index) ?? null;
@@ -850,11 +872,16 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
            * The opponent-card extras. `playerCard` resolved these per player on every
            * state read; here they come off rows the screen is already subscribed to, and
            * the record is a tally rather than a query.
+           *
+           * `losses` is derived rather than stored: the schema keeps `rankedWins` but no
+           * `rankedLosses`, so every non-win ranked match is a loss by elimination.
            */
-          wins: 0,
-          losses: 0,
-          bestCategory: null as string | null,
-          badges: [] as { id: string; name: string; emoji: string }[],
+          wins: user?.rankedWins ?? 0,
+          losses: user ? Math.max(0, user.gamesPlayed - user.rankedWins) : 0,
+          bestCategory: bestCategoryFor(player.userId),
+          badges: sortBadges(
+            badges.filter((row) => row.userId === player.userId).map((row) => row.badgeId),
+          ),
           bio: user?.bioHidden ? undefined : user?.bio,
           handle: user?.handle ?? "player",
           displayName: user?.displayName ?? "Player",
@@ -983,6 +1010,7 @@ export function useMatchState(matchId: bigint | undefined, config: ResolvedConfi
   }, [
     matchId, match, players, results, users, usersReady,
     reveals, revealsReady, logs, logsReady, me, config,
+    badges, badgesReady, ratings, ratingsReady, categories,
   ]);
 }
 
@@ -1350,27 +1378,66 @@ export function useActiveDailyMatch(userId: bigint | undefined, date = todayKey(
  */
 export function useMyDailyPlacing(userId: bigint | undefined, date = todayKey()) {
   const [rows, ready] = useTable(tables.dailyRun.where((row) => row.date.eq(date)));
+  /**
+   * `daily_run` has no `xpEarned` column — the port wrote the payout onto
+   * `match_player`, keyed by match rather than by day, so it takes a join to find:
+   * the daily match for this date, then this player's row on it.
+   */
+  const [memberships, membershipsReady] = useTable(
+    tables.matchPlayer.where((row) => row.userId.eq(userId ?? 0n)),
+    { enabled: userId !== undefined },
+  );
+  const [matches, matchesReady] = useTable(tables.match, { enabled: userId !== undefined });
 
   return useMemo(() => {
     if (userId === undefined) return null;
     if (!ready) return undefined;
 
-    const ranked = rows
-      .filter((row) => !row.isGuest)
-      .sort((a, b) => b.totalPoints - a.totalPoints);
-
     const mine = rows.find((row) => row.userId === userId);
     if (!mine) return null;
 
+    /**
+     * The board excludes guests because they have no handle to list — that is a
+     * board-MEMBERSHIP rule, not proof a guest has no placing. Ranking every non-guest
+     * row plus the caller's own gives a guest a real position among the field they
+     * would be shown alongside, rather than the `rank: 0` this used to return for them
+     * (dropped by the `!row.isGuest` filter, then never found in the ranked list at
+     * all) — which `DailyResult` printed as "Rank 0 of N today" and `ordinal(0)` turned
+     * into "0th", including in the text a guest would share.
+     */
+    const ranked = rows
+      .filter((row) => !row.isGuest || row.userId === userId)
+      .sort((a, b) => b.totalPoints - a.totalPoints);
+
     const index = ranked.findIndex((row) => row.userId === userId);
+
+    /**
+     * `null` for a guest — `applyProgression` never pays them XP, so their row's
+     * figure is a real zero, not "none earned", and the results screen distinguishes
+     * that from a signed-in player's payout by not printing a line at all — and
+     * `null` until progression has settled, the same signal `useMatchHistory` reads
+     * off this same `completedAt` for the duel results screen.
+     */
+    let xpEarned: number | null = null;
+    if (!mine.isGuest && membershipsReady && matchesReady) {
+      const finished = memberships.find((player) => {
+        if (player.mode !== "daily" || player.completedAt === undefined) return false;
+        const match = matches.find((row) => row.id === player.matchId);
+        return (
+          match !== undefined &&
+          todayKey(Number(match.createdAt.microsSinceUnixEpoch / 1_000n)) === date
+        );
+      });
+      if (finished) xpEarned = finished.xpEarned;
+    }
 
     return {
       ...mine,
-      // A guest is off the board, so they have a score but no placing.
-      rank: index >= 0 ? index + 1 : 0,
+      rank: index + 1,
       totalPlayers: ranked.length,
+      xpEarned,
     };
-  }, [userId, ready, rows, date]);
+  }, [userId, ready, rows, date, memberships, membershipsReady, matches, matchesReady]);
 }
 
 /**

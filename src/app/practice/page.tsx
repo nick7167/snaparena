@@ -127,17 +127,24 @@ function Start({ onStarted }: { onStarted: (id: bigint) => void }) {
                    */
                   await startPractice();
                   play("whoosh");
-                  return;
+                } catch {
                   /**
-                   * Both failures are the catalogue being unready, which is nothing a
-                   * player did and nothing they can fix. The old copy told them to run
-                   * `npm run seed-bots` — a developer instruction shipped to players.
+                   * Both failures `startPractice` can reject with — "No practice
+                   * opponents seeded yet" and "Not enough playable songs yet" — are the
+                   * catalogue being unready, which is nothing a player did and nothing
+                   * they can fix. The old copy told them to run `npm run seed-bots` — a
+                   * developer instruction shipped to players.
                    */
                   setError("Practice isn't available right now. Try again shortly.");
-                } catch {
-                  setError("Something went wrong starting that match.");
+                } finally {
+                  /**
+                   * `finally`, not the last statement of `try`: a bare `return` after
+                   * `play("whoosh")` used to skip this on the success path entirely,
+                   * leaving the button disabled/spinning — `Button` renders `loading` as
+                   * disabled — until the arena mounted underneath it.
+                   */
+                  setStarting(false);
                 }
-                setStarting(false);
               }}
             >
               <Glyph name="bot" />

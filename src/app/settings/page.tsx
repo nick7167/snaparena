@@ -74,7 +74,19 @@ function AvatarSection() {
         <AvatarUpload
           currentUrl={me.avatarUrl}
           name={me.handle}
-          label={me.avatarUrl?.startsWith("http") ? "Replace picture" : "Upload a picture"}
+          /**
+           * `avatar-upload.tsx` stores a picture as a `data:` URL now (see
+           * `toDataUrl`), not an `https` one — the `startsWith("http")` check this
+           * used to make was written against the old Clerk-picture-only contract, so
+           * every player who had ever uploaded a photo still read "Upload a picture"
+           * afterwards. Only the onboarding `color:#rrggbb` swatch counts as "no real
+           * picture yet"; both an `https` Clerk picture and a `data:` upload are one.
+           */
+          label={
+            me.avatarUrl && !me.avatarUrl.startsWith("color:")
+              ? "Replace picture"
+              : "Upload a picture"
+          }
         />
         <p className="text-body-sm text-muted">
           Shown on the leaderboard, on your profile, and to your opponents.

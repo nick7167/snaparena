@@ -188,23 +188,6 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   const waitingMs = status?.enqueuedAtMs ? Math.max(0, now - status.enqueuedAtMs) : 0;
 
   /**
-   * Landing a match, from either route.
-   *
-   * The id is held here as well as being derivable from `activeMatch` so the arena can
-   * mount on the same tick the match is created, rather than a round trip later.
-   */
-  const onMatched = useCallback(
-    (id: bigint) => {
-      play("match_found");
-      setHeld(id);
-      // Ranked is where a duel is rendered. Arriving from anywhere else — the ladder, a
-      // profile, settings — has to end up there or the match plays out unwatched.
-      if (pathname !== "/ranked") router.push("/ranked");
-    },
-    [pathname, router],
-  );
-
-  /**
    * Let go of a match that is over and behind you.
    *
    * Holding it forever is the cost of the id outliving the page it used to live on:
@@ -294,7 +277,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
        */
       await startBotMatch();
     });
-  }, [run, startBotMatch, onMatched]);
+  }, [run, startBotMatch]);
 
   /**
    * Landing a match the server paired for us.
@@ -313,10 +296,20 @@ export function QueueProvider({ children }: { children: ReactNode }) {
    * without it every re-render would re-fire the sound and the navigation. It also
    * adopts whatever is already live on the first resolution after mount: reloading
    * mid-duel is not a match being found, and should be silent.
+   *
+   * The baseline used to be taken from the first non-`undefined` `activeMatch`, but
+   * `useActiveMatch` returns `null` — not `undefined` — for as long as `userId` itself is
+   * `undefined`, which is exactly the state this provider is in on every mount until
+   * Clerk resolves and `ensureUser` has run (see `ready` above). That `null` got baselined
+   * as "settled: no match", so the moment `me` resolved into a match that already existed,
+   * this saw the id appear for the "first" time and played `match_found` and pushed to
+   * `/ranked` — yanking a player out of the daily or a room they had reloaded into. Gating
+   * on `ready` as well as on `activeMatch` itself means the baseline is never taken from
+   * that placeholder `null`; it waits for a read that actually came from the subscription.
    */
   const announced = useRef<bigint | null | undefined>(undefined);
   useEffect(() => {
-    if (activeMatch === undefined) return;
+    if (!ready || activeMatch === undefined) return;
 
     if (announced.current === undefined) {
       announced.current = activeMatch;
@@ -331,7 +324,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     // Ranked is where a duel is rendered. Arriving from anywhere else — the ladder, a
     // profile, settings — has to end up there or the match plays out unwatched.
     if (pathname !== "/ranked") router.push("/ranked");
-  }, [activeMatch, pathname, router]);
+  }, [ready, activeMatch, pathname, router]);
 
   /**
    * Safety net, not the mechanism.
